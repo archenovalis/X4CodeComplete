@@ -14,6 +14,8 @@ added documentation tooltips and bug fixes (whitespace changes too)
 
 t-file text
 
+(1.2.1) added preferred language display option and bug fix
+
 # x4codecomplete README
 
 To install, go to releases & download the .vsix file. Then install it like any other program.
