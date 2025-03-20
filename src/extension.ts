@@ -11,6 +11,7 @@ import * as path from 'path';
 // your extension is activated the very first time the command is executed
 var debug = false;
 var exceedinglyVerbose: boolean = false;
+var limitLanguage: boolean = false;
 var rootpath: string;
 var scriptPropertiesPath: string;
 var extensionsFolder: string;
@@ -554,6 +555,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string) {
 function findLanguageText(pageId: string, textId: string): string {
 	const config = vscode.workspace.getConfiguration("x4CodeComplete");
 	const preferredLanguageNumber = config.get("languageNumber") || "44";
+	limitLanguage = config.get("limitLanguageOutput") || false;
 
 	interface Match {
 		fileNumber: string;
@@ -602,10 +604,20 @@ function findLanguageText(pageId: string, textId: string): string {
 
 				console.log(`Extracted fileNumber: ${fileNumber} from ${fileName}`);
 
-				allMatches.push({
-					fileNumber,
-					text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
-				});
+				if (limitLanguage){
+                    if (fileNumber == preferredLanguageNumber){
+						allMatches.push({
+							fileNumber,
+							text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
+						});
+                    }
+                }
+                else {
+					allMatches.push({
+						fileNumber,
+						text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
+					});            
+                }
 			}
 		}
 	}

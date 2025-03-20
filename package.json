@@ -2,7 +2,7 @@
   "name": "x4codecomplete",
   "displayName": "X4CodeComplete",
   "description": "",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/archenovalis/X4CodeComplete"
@@ -34,10 +34,15 @@
           "default": "",
           "description": "Path to your extensions directory."
         },
-        "x4CodeComplete.language": {
+        "x4CodeComplete.languageNumber": {
           "type": "string",
           "default": "44",
           "description": "Preferred language number (e.g., '44' for English). Files matching this number will be displayed first."
+        },
+        "x4CodeComplete.limitLanguageOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Limits the language output to show only the preferred language."
         },
         "x4CodeComplete.exceedinglyVerbose": {
           "type": "boolean",
