@@ -605,19 +605,19 @@ function findLanguageText(pageId: string, textId: string): string {
 				console.log(`Extracted fileNumber: ${fileNumber} from ${fileName}`);
 
 				if (limitLanguage){
-                    if (fileNumber == preferredLanguageNumber){
-						allMatches.push({
-							fileNumber,
-							text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
-						});
-                    }
-                }
-                else {
+		                    if (fileNumber == preferredLanguageNumber){
+					allMatches.push({
+						fileNumber,
+						text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
+					});
+		                    }
+		                }
+		                else {
 					allMatches.push({
 						fileNumber,
 						text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
 					});            
-                }
+		                }
 			}
 		}
 	}
