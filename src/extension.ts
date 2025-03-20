@@ -553,6 +553,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string) {
     vscode.window.showErrorMessage('Failed to load language files from t directories');
   }
 }
+
 function findLanguageText(pageId: string, textId: string): string {
   const config = vscode.workspace.getConfiguration('x4CodeComplete');
   const preferredLanguageNumber = config.get('languageNumber') || '44';
