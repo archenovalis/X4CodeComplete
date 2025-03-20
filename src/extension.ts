@@ -23,7 +23,7 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
         'unpackedFileLocation',
         'extensionsFolder'
     ];
-    
+
     let isValid = true;
 		requiredSettings.forEach(setting => {
 			if (!config.get(setting)) {
@@ -33,7 +33,7 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
 				isValid = false;
 			}
     });
-    
+
     return isValid;
 }
 
@@ -116,7 +116,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 			return;
 		}
 
-		
+
 		let result = new vscode.CompletionItem(complete);
 		if (info !== undefined) {
 			result.detail = info;
@@ -192,7 +192,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 			}
 			return;
 		}
-	
+
 		for (const prop of entry.properties.entries()) {
 			this.buildProperty(prefix, typeName, prop[0], prop[1], items, depth + 1);
 		}
@@ -212,7 +212,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 		let items = new Map<string,vscode.CompletionItem>();
 		let prefix= document.lineAt(position).text.substring(0, position.character);
 		let interesting = findRelevantPortion(prefix);
-		if (interesting === null){	
+		if (interesting === null){
 			if (exceedinglyVerbose){
 				console.log("no relevant portion detected");
 			}
@@ -237,7 +237,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 				if (exceedinglyVerbose){
 					console.log("Matching on type!");
 				}
-				
+
 				entry.properties.forEach((v, k)=> {
 					if (exceedinglyVerbose){
 						console.log("Top level property: ", k, v);
@@ -524,10 +524,10 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string) {
 		// Process all found 't' directories
 		for (const tDir of tDirectories) {
 			const files = fs.readdirSync(tDir);
-			const languageFilesFiltered = files.filter(file => 
+			const languageFilesFiltered = files.filter(file =>
 				file.startsWith('0001') && file.endsWith('.xml')
 			);
-			
+
 			for (const file of languageFilesFiltered) {
 				const filePath = path.join(tDir, file);
 				try {
@@ -537,7 +537,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string) {
 							console.error(`Error parsing ${file} in ${tDir}: ${err}`);
 							return;
 						}
-						languageFiles.set(filePath, result);				
+						languageFiles.set(filePath, result);
 					});
 				} catch (fileError) {
 					console.error(`Error reading ${file} in ${tDir}: ${fileError}`);
@@ -564,14 +564,20 @@ function findLanguageText(pageId: string, textId: string): string {
 	let allMatches: Match[] = [];
 
 	for (const [filePath, xmlData] of languageFiles) {
-		if (!xmlData?.language?.page) continue;
+		// To process the diff format of the translation files
+		if (!(xmlData?.language?.page || Array.isArray(xmlData?.diff?.add))) continue;
 
-		const page = xmlData.language.page.find((p: any) => 
+		const pages = [
+			...(xmlData.language?.page || []),
+			...(xmlData.diff?.add?.flatMap((item: any) => item.page) || [])
+		];
+
+		const page = pages.find((p: any) =>
 			p?.$?.id === pageId
 		);
 
 		if (page?.t) {
-			const text = page.t.find((t: any) => 
+			const text = page.t.find((t: any) =>
 				t?.$?.id === textId
 			);
 			if (text?._) {
@@ -595,7 +601,7 @@ function findLanguageText(pageId: string, textId: string): string {
 						} else {
 							// Fallback for any number after 0001- or 0001
 							const fallbackMatch = fileName.match(/0001-?[a-zA-Z]?(\d+)/);
-							fileNumber = fallbackMatch && fallbackMatch[1] 
+							fileNumber = fallbackMatch && fallbackMatch[1]
 								? fallbackMatch[1].replace(/^0+/, '')
 								: 'Unknown';
 						}
@@ -616,8 +622,8 @@ function findLanguageText(pageId: string, textId: string): string {
 					allMatches.push({
 						fileNumber,
 						text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
-					});            
-		                }
+					});
+				}
 			}
 		}
 	}
@@ -628,7 +634,7 @@ function findLanguageText(pageId: string, textId: string): string {
 		return a.fileNumber.localeCompare(b.fileNumber);
 	});
 
-	return allMatches.length > 0 
+	return allMatches.length > 0
 		? allMatches.map(match => match.text).join('\n\n')
 		: '';
 }
@@ -643,7 +649,7 @@ function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[
   const pseudo = keyword.$.pseudo;
   const suffix = keyword.$.suffix;
   const result = keyword.$.result;
-  
+
   let hoverText = `Keyword: ${keyword.$.name}\n
   ${description ? 'Description: ' + description + '\n' : ''}
   ${pseudo ? 'Pseudo: ' + pseudo + '\n' : ''}
@@ -656,7 +662,7 @@ function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[
   // Iterate over parts of the path (excluding the first part which is the keyword itself)
   for (let i = 1; i < parts.length; i++) {
     let properties: ScriptProperty[] = [];
-    
+
     // Ensure currentPropertyList is iterable
     if (!Array.isArray(currentPropertyList)) {
       currentPropertyList = [];
@@ -672,7 +678,7 @@ function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[
       });
     } else {
       // For intermediate parts, exact match
-      properties = currentPropertyList.filter((p: ScriptProperty) => 
+      properties = currentPropertyList.filter((p: ScriptProperty) =>
         p && p.$ && p.$.name === parts[i]
       );
 
@@ -682,7 +688,7 @@ function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[
           if (property && property.$ && property.$.type) {
             const type = datatypes.find((d: Datatype) => d && d.$ && d.$.name === property.$.type);
             if (type && Array.isArray(type.property)) {
-              properties.push(...type.property.filter((p: ScriptProperty) => 
+              properties.push(...type.property.filter((p: ScriptProperty) =>
                 p && p.$ && p.$.name === parts[i]
               ));
             }
@@ -720,19 +726,19 @@ function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[
 
 function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes: Datatype[]): string {
   let hoverText = '';
-  
+
   // Find keywords that match the hoverWord either in their name or property names
   const matchingKeynames = keywords.filter((k: Keyword) =>
     k.$.name.includes(hoverWord) ||
     k.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord))
   );
-  
+
   // Find datatypes that match the hoverWord either in their name or property names
   const matchingDatatypes = datatypes.filter((d: Datatype) =>
     d.$.name.includes(hoverWord) || // Check if datatype name includes hoverWord
     d.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord)) // Check if any property name includes hoverWord
   );
-  
+
   if (debug) {
     console.log("matchingKeynames:", matchingKeynames);
     console.log("matchingDatatypes:", matchingDatatypes);
@@ -805,7 +811,7 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
 			});
 		}
 	});
-	
+
 	let matches = '';
   // Sort and build the final hoverText string
   Object.keys(groupedMatches).sort().forEach((header) => {
@@ -858,7 +864,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Load language files
 	loadLanguageFiles(rootpath, extensionsFolder);
-	
+
 
 	let keywords = [] as Keyword[];
 	let datatypes = [] as Keyword[];
@@ -918,7 +924,7 @@ export function activate(context: vscode.ExtensionContext) {
 						return undefined;
 					}
 				}
-				
+
 				const hoverWord = document.getText(document.getWordRangeAtPosition(position));
 				const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
 				const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
@@ -926,7 +932,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
 				const parts = slicedPhrase.split('.');
 				let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-				
+
 				if (debug) {
 					console.log("Hover word: ", hoverWord);
 					console.log("Phrase: ", phrase);
