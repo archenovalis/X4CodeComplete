@@ -553,79 +553,71 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string) {
     vscode.window.showErrorMessage('Failed to load language files from t directories');
   }
 }
-
 function findLanguageText(pageId: string, textId: string): string {
-	const config = vscode.workspace.getConfiguration("x4CodeComplete");
-	const preferredLanguageNumber = config.get("languageNumber") || "44";
-	limitLanguage = config.get("limitLanguageOutput") || false;
+  const config = vscode.workspace.getConfiguration('x4CodeComplete');
+  const preferredLanguageNumber = config.get('languageNumber') || '44';
+  limitLanguage = config.get('limitLanguageOutput') || false;
 
-	interface Match {
-		fileNumber: string;
-		text: string;
-	}
-	let allMatches: Match[] = [];
+  interface Match {
+    fileNumber: string;
+    text: string;
+  }
+  let allMatches: Match[] = [];
 
-	for (const [filePath, xmlData] of languageFiles) {
-		if (!xmlData?.language?.page) continue;
+  for (const [filePath, xmlData] of languageFiles) {
+    if (!xmlData?.language?.page) continue;
 
-		const page = xmlData.language.page.find((p: any) => 
-			p?.$?.id === pageId
-		);
+    const page = xmlData.language.page.find((p: any) => p?.$?.id === pageId);
 
-		if (page?.t) {
-			const text = page.t.find((t: any) => 
-				t?.$?.id === textId
-			);
-			if (text?._) {
-				const fileName = path.basename(filePath);
-				let fileNumber: string;
+    if (page?.t) {
+      const text = page.t.find((t: any) => t?.$?.id === textId);
+      if (text?._) {
+        const fileName = path.basename(filePath);
+        let fileNumber: string;
 
-				console.log(`Processing filename: ${fileName}`);
+        console.log(`Processing filename: ${fileName}`);
 
-				if (fileName === '0001.xml') {
-					fileNumber = '*'; // Special case for 0001.xml
-				} else {
-					// Try matching 0001-<letter><number>.xml (e.g., 0001-l007.xml)
-					const matchWithLetter = fileName.match(/0001-[a-zA-Z](\d+)\.xml$/);
-					if (matchWithLetter && matchWithLetter[1]) {
-						fileNumber = matchWithLetter[1].replace(/^0+/, '');
-					} else {
-						// Original match for 0001-<number>.xml
-						const match = fileName.match(/0001-(\d+)\.xml$/);
-						if (match && match[1]) {
-							fileNumber = match[1].replace(/^0+/, '');
-						} else {
-							// Fallback for any number after 0001- or 0001
-							const fallbackMatch = fileName.match(/0001-?[a-zA-Z]?(\d+)/);
-							fileNumber = fallbackMatch && fallbackMatch[1] 
-								? fallbackMatch[1].replace(/^0+/, '')
-								: 'Unknown';
-						}
-					}
-				}
+        if (fileName === '0001.xml') {
+          fileNumber = '*'; // Special case for 0001.xml
+        } else {
+          // Try matching 0001-<letter><number>.xml (e.g., 0001-l007.xml)
+          const matchWithLetter = fileName.match(/0001-[a-zA-Z](\d+)\.xml$/);
+          if (matchWithLetter && matchWithLetter[1]) {
+            fileNumber = matchWithLetter[1].replace(/^0+/, '');
+          } else {
+            // Original match for 0001-<number>.xml
+            const match = fileName.match(/0001-(\d+)\.xml$/);
+            if (match && match[1]) {
+              fileNumber = match[1].replace(/^0+/, '');
+            } else {
+              // Fallback for any number after 0001- or 0001
+              const fallbackMatch = fileName.match(/0001-?[a-zA-Z]?(\d+)/);
+              fileNumber = fallbackMatch && fallbackMatch[1] ? fallbackMatch[1].replace(/^0+/, '') : 'Unknown';
+            }
+          }
+        }
 
-				console.log(`Extracted fileNumber: ${fileNumber} from ${fileName}`);
+        console.log(`Extracted fileNumber: ${fileNumber} from ${fileName}`);
 
-				// simplify the code by using a single if statement
-				if (!limitLanguage || fileNumber == '*' || fileNumber == preferredLanguageNumber) {
-					allMatches.push({
-						fileNumber,
-						text: text._.split('\n').map((line: string) => `${fileNumber}: ${line}`).join('\n')
-					});            
-		    }
-			}
-		}
-	}
+        if (!limitLanguage || fileNumber == '*' || fileNumber == preferredLanguageNumber) {
+          allMatches.push({
+            fileNumber,
+            text: text._.split('\n')
+              .map((line: string) => `${fileNumber}: ${line}`)
+              .join('\n'),
+          });
+        }
+      }
+    }
+  }
 
-	allMatches.sort((a, b) => {
-		if (a.fileNumber === preferredLanguageNumber && b.fileNumber !== preferredLanguageNumber) return -1;
-		if (b.fileNumber === preferredLanguageNumber && a.fileNumber !== preferredLanguageNumber) return 1;
-		return a.fileNumber.localeCompare(b.fileNumber);
-	});
+  allMatches.sort((a, b) => {
+    if (a.fileNumber === preferredLanguageNumber && b.fileNumber !== preferredLanguageNumber) return -1;
+    if (b.fileNumber === preferredLanguageNumber && a.fileNumber !== preferredLanguageNumber) return 1;
+    return a.fileNumber.localeCompare(b.fileNumber);
+  });
 
-	return allMatches.length > 0 
-		? allMatches.map(match => match.text).join('\n\n')
-		: '';
+  return allMatches.length > 0 ? allMatches.map((match) => match.text).join('\n\n') : '';
 }
 
 function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
