@@ -15,7 +15,7 @@ var limitLanguage: boolean = false;
 var rootpath: string;
 var scriptPropertiesPath: string;
 var extensionsFolder: string;
-let languageFiles: Map<string, any> = new Map();
+let languageData: Map<string, Map<string, string>> = new Map();
 
 // Map to store languageSubId for each document
 const documentLanguageSubIdMap: Map<string, string> = new Map();
@@ -766,131 +766,159 @@ function processDatatypes(rawData: string, datatypes: any[]): Datatype[] {
 }
 
 // load and parse language files
-function loadLanguageFiles(basePath: string, extensionsFolder: string) {
-  console.log('Loading Language Files');
-  try {
-    // Array to store all valid 't' directory paths
-    const tDirectories: string[] = [];
+function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration('x4CodeComplete');
+  let preferredLanguage: string = config.get('languageNumber') || '44';
+  const limitLanguage: Boolean = config.get('limitLanguageOutput') || false;
+  languageData = new Map();
+  console.log('Loading Language Files. %s', Date.now());
+  return new Promise((resolve, reject) => {
+    try {
+      const tDirectories: string[] = [];
+      let pendingFiles = 0; // Counter to track pending file parsing operations
+      let countProcessed = 0; // Counter to track processed files
 
-    // Check root 't' directory under unpackedFileLocation
-    const rootTPath = path.join(basePath, 't');
-    if (fs.existsSync(rootTPath) && fs.statSync(rootTPath).isDirectory()) {
-      tDirectories.push(rootTPath);
-    }
-    // Check 't' directories under languageFilesFolder subdirectories
-    if (fs.existsSync(extensionsFolder) && fs.statSync(extensionsFolder).isDirectory()) {
-      const subdirectories = fs
-        .readdirSync(extensionsFolder, { withFileTypes: true })
-        .filter((item) => item.isDirectory())
-        .map((item) => item.name);
+      // Collect all valid 't' directories
+      const rootTPath = path.join(basePath, 't');
+      if (fs.existsSync(rootTPath) && fs.statSync(rootTPath).isDirectory()) {
+        tDirectories.push(rootTPath);
+      }
+      // Check 't' directories under languageFilesFolder subdirectories
+      if (fs.existsSync(extensionsFolder) && fs.statSync(extensionsFolder).isDirectory()) {
+        const subdirectories = fs
+          .readdirSync(extensionsFolder, { withFileTypes: true })
+          .filter((item) => item.isDirectory())
+          .map((item) => item.name);
 
-      for (const subdir of subdirectories) {
-        const tPath = path.join(extensionsFolder, subdir, 't');
-        if (fs.existsSync(tPath) && fs.statSync(tPath).isDirectory()) {
-          tDirectories.push(tPath);
+        for (const subdir of subdirectories) {
+          const tPath = path.join(extensionsFolder, subdir, 't');
+          if (fs.existsSync(tPath) && fs.statSync(tPath).isDirectory()) {
+            tDirectories.push(tPath);
+          }
         }
       }
-    }
 
-    // Process all found 't' directories
-    for (const tDir of tDirectories) {
-      const files = fs.readdirSync(tDir);
-      const languageFilesFiltered = files.filter((file) => file.startsWith('0001') && file.endsWith('.xml'));
+      // Process all found 't' directories
+      for (const tDir of tDirectories) {
+        const files = fs.readdirSync(tDir).filter((file) => file.startsWith('0001') && file.endsWith('.xml'));
 
-      for (const file of languageFilesFiltered) {
-        const filePath = path.join(tDir, file);
-        try {
-          const rawData = fs.readFileSync(filePath, 'utf-8');
-          xml2js.parseString(rawData, (err: any, result: any) => {
-            if (err) {
-              console.error(`Error parsing ${file} in ${tDir}: ${err}`);
-              return;
+        for (const file of files) {
+          const languageId = getLanguageIdFromFileName(file);
+          if (limitLanguage && languageId !== preferredLanguage && languageId !== '*' && languageId !== '44') {
+            continue;
+          }
+          const filePath = path.join(tDir, file);
+          pendingFiles++; // Increment the counter for each file being processed
+          try {
+            parseLanguageFile(filePath, () => {
+              pendingFiles--; // Decrement the counter when a file is processed
+              countProcessed++; // Increment the counter for processed files
+              if (pendingFiles === 0) {
+                console.log(
+                  `Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories. %s`,
+                  Date.now()
+                );
+                resolve(); // Resolve the promise when all files are processed
+              }
+            });
+          } catch (fileError) {
+            console.log(`Error reading ${file} in ${tDir}: ${fileError}`);
+            pendingFiles--; // Decrement the counter even if there's an error
+            if (pendingFiles === 0) {
+              resolve(); // Resolve the promise when all files are processed
             }
-            languageFiles.set(filePath, result);
-          });
-        } catch (fileError) {
-          console.error(`Error reading ${file} in ${tDir}: ${fileError}`);
+          }
         }
       }
-    }
 
-    console.log(`Loaded ${languageFiles.size} language files from ${tDirectories.length} 't' directories`);
-  } catch (error) {
-    console.error(`Error loading language files: ${error}`);
-    vscode.window.showErrorMessage('Failed to load language files from t directories');
-  }
+      if (pendingFiles === 0) {
+        resolve(); // Resolve immediately if no files are found
+      }
+    } catch (error) {
+      console.log(`Error loading language files: ${error}`);
+      reject(error); // Reject the promise if there's an error
+    }
+  });
+}
+
+function getLanguageIdFromFileName(fileName: string): string {
+  const match = fileName.match(/0001-[lL]?(\d+).xml/);
+  return match && match[1] ? match[1].replace(/^0+/, '') : '*';
+}
+
+function parseLanguageFile(filePath: string, onComplete: () => void) {
+  const parser = sax.createStream(true); // Create a streaming parser in strict mode
+  let currentPageId: string | null = null;
+  let currentTextId: string | null = null;
+  const fileName: string = path.basename(filePath);
+  let languageId: string = getLanguageIdFromFileName(fileName);
+
+  parser.on('opentag', (node) => {
+    if (node.name === 'page' && node.attributes.id) {
+      currentPageId = node.attributes.id;
+    } else if (node.name === 't' && currentPageId && node.attributes.id) {
+      currentTextId = node.attributes.id;
+    }
+  });
+
+  parser.on('text', (text) => {
+    if (currentPageId && currentTextId) {
+      const key = `${currentPageId}:${currentTextId}`;
+      let textData: Map<string, string> = languageData.get(key) || new Map<string, string>();
+      textData.set(languageId, text.trim());
+      languageData.set(key, textData);
+    }
+  });
+
+  parser.on('closetag', (nodeName) => {
+    if (nodeName === 't') {
+      currentTextId = null; // Reset text ID after closing the tag
+    } else if (nodeName === 'page') {
+      currentPageId = null; // Reset page ID after closing the tag
+    }
+  });
+
+  parser.on('end', () => {
+    onComplete(); // Notify that this file has been fully processed
+  });
+
+  parser.on('error', (err) => {
+    console.log(`Error parsing standard language file ${filePath}: ${err.message}`);
+    onComplete(); // Notify even if there's an error
+  });
+
+  fs.createReadStream(filePath).pipe(parser);
 }
 
 function findLanguageText(pageId: string, textId: string): string {
   const config = vscode.workspace.getConfiguration('x4CodeComplete');
-  const preferredLanguageNumber = config.get('languageNumber') || '44';
-  limitLanguage = config.get('limitLanguageOutput') || false;
+  let preferredLanguage: string = config.get('languageNumber') || '44';
+  const limitLanguage: Boolean = config.get('limitLanguageOutput') || false;
 
-  interface Match {
-    fileNumber: string;
-    text: string;
-  }
-  let allMatches: Match[] = [];
-
-  for (const [filePath, xmlData] of languageFiles) {
-    // To process the diff format of the translation files
-    if (!(xmlData?.language?.page || Array.isArray(xmlData?.diff?.add))) continue;
-
-    const pages = [...(xmlData.language?.page || []), ...(xmlData.diff?.add?.flatMap((item: any) => item.page) || [])];
-
-    const page = pages.find((p: any) => p?.$?.id === pageId);
-
-    if (page?.t) {
-      const text = page.t.find((t: any) => t?.$?.id === textId);
-      if (text?._) {
-        const fileName = path.basename(filePath);
-        let fileNumber: string;
-
-        if (exceedinglyVerbose) {
-          console.log(`Processing filename: ${fileName}`);
-        }
-        if (fileName === '0001.xml') {
-          fileNumber = '*'; // Special case for 0001.xml
-        } else {
-          // Try matching 0001-<letter><number>.xml (e.g., 0001-l007.xml)
-          const matchWithLetter = fileName.match(/0001-[a-zA-Z](\d+)\.xml$/);
-          if (matchWithLetter && matchWithLetter[1]) {
-            fileNumber = matchWithLetter[1].replace(/^0+/, '');
-          } else {
-            // Original match for 0001-<number>.xml
-            const match = fileName.match(/0001-(\d+)\.xml$/);
-            if (match && match[1]) {
-              fileNumber = match[1].replace(/^0+/, '');
-            } else {
-              // Fallback for any number after 0001- or 0001
-              const fallbackMatch = fileName.match(/0001-?[a-zA-Z]?(\d+)/);
-              fileNumber = fallbackMatch && fallbackMatch[1] ? fallbackMatch[1].replace(/^0+/, '') : 'Unknown';
-            }
-          }
-        }
-
-        if (exceedinglyVerbose) {
-          console.log(`Extracted fileNumber: ${fileNumber} from ${fileName}`);
-        }
-        if (!limitLanguage || fileNumber == '*' || fileNumber == preferredLanguageNumber) {
-          allMatches.push({
-            fileNumber,
-            text: text._.split('\n')
-              .map((line: string) => `${fileNumber}: ${line}`)
-              .join('\n'),
-          });
-        }
+  const textData: Map<string, string> = languageData.get(`${pageId}:${textId}`);
+  let result: string = '';
+  if (textData) {
+    let textDataKeys = Array.from(textData.keys()).sort((a, b) =>
+      a === preferredLanguage
+        ? -1
+        : b === preferredLanguage
+          ? 1
+          : (a === '*' ? 0 : parseInt(a)) - (b === '*' ? 0 : parseInt(b))
+    );
+    if (limitLanguage && !textData.has(preferredLanguage)) {
+      if (textData.has('*')) {
+        preferredLanguage = '*';
+      } else if (textData.has('44')) {
+        preferredLanguage = '44';
+      }
+    }
+    for (const language of textDataKeys) {
+      if (!limitLanguage || language == preferredLanguage) {
+        result += (result == '' ? '' : `\n\n`) + `${language}: ${textData.get(language)}`;
       }
     }
   }
-
-  allMatches.sort((a, b) => {
-    if (a.fileNumber === preferredLanguageNumber && b.fileNumber !== preferredLanguageNumber) return -1;
-    if (b.fileNumber === preferredLanguageNumber && a.fileNumber !== preferredLanguageNumber) return 1;
-    return a.fileNumber.localeCompare(b.fileNumber);
-  });
-
-  return allMatches.length > 0 ? allMatches.map((match) => match.text).join('\n\n') : '';
+  return result;
 }
 
 function generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
@@ -1123,248 +1151,297 @@ export function activate(context: vscode.ExtensionContext) {
   exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
   scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
 
-  // Load language files
-  loadLanguageFiles(rootpath, extensionsFolder);
+  // Load language files and wait for completion
+  loadLanguageFiles(rootpath, extensionsFolder)
+    .then(() => {
+      console.log('Language files loaded successfully.');
+      // Proceed with the rest of the activation logic
+      let keywords = [] as Keyword[];
+      let datatypes = [] as Keyword[];
+      ({ keywords, datatypes } = readScriptProperties(scriptPropertiesPath));
 
-  let keywords = [] as Keyword[];
-  let datatypes = [] as Keyword[];
-  ({ keywords, datatypes } = readScriptProperties(scriptPropertiesPath));
+      let sel: vscode.DocumentSelector = { language: 'xml' };
 
-  let sel: vscode.DocumentSelector = { language: 'xml' };
+      let disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(
+        sel,
+        completionProvider,
+        '.',
+        '"',
+        '{'
+      );
+      context.subscriptions.push(disposableCompleteProvider);
 
-  let disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(
-    sel,
-    completionProvider,
-    '.',
-    '"',
-    '{'
-  );
-  context.subscriptions.push(disposableCompleteProvider);
+      let disposableDefinitionProvider = vscode.languages.registerDefinitionProvider(sel, definitionProvider);
+      context.subscriptions.push(disposableDefinitionProvider);
 
-  let disposableDefinitionProvider = vscode.languages.registerDefinitionProvider(sel, definitionProvider);
-  context.subscriptions.push(disposableDefinitionProvider);
-
-  // Hover provider to display tooltips
-  context.subscriptions.push(
-    vscode.languages.registerHoverProvider(sel, {
-      provideHover: async (
-        document: vscode.TextDocument,
-        position: vscode.Position
-      ): Promise<vscode.Hover | undefined> => {
-        if (getDocumentScriptType(document) == '') {
-          return undefined; // Skip if the document is not valid
-        }
-
-        const tPattern =
-          /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
-        // matches:
-        // {1015,7} or {1015, 7}
-        // readtext.{1015}.{7}
-        // page="1015" line="7"
-
-        const range = document.getWordRangeAtPosition(position, tPattern);
-        if (range) {
-          const text = document.getText(range);
-          const matches = tPattern.exec(text);
-          tPattern.lastIndex = 0; // Reset regex state
-
-          if (matches && matches.length >= 3) {
-            let pageId: string | undefined;
-            let textId: string | undefined;
-            if (matches[1] && matches[2]) {
-              // {1015,7} or {1015, 7}
-              pageId = matches[1];
-              textId = matches[2];
-            } else if (matches[3] && matches[4]) {
-              // readtext.{1015}.{7}
-              pageId = matches[3];
-              textId = matches[4];
-            } else if (matches[5] && matches[6]) {
-              // page="1015" line="7"
-              pageId = matches[5];
-              textId = matches[6];
+      // Hover provider to display tooltips
+      context.subscriptions.push(
+        vscode.languages.registerHoverProvider(sel, {
+          provideHover: async (
+            document: vscode.TextDocument,
+            position: vscode.Position
+          ): Promise<vscode.Hover | undefined> => {
+            if (getDocumentScriptType(document) == '') {
+              return undefined; // Skip if the document is not valid
             }
 
-            if (pageId && textId) {
+            const tPattern =
+              /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
+            // matches:
+            // {1015,7} or {1015, 7}
+            // readtext.{1015}.{7}
+            // page="1015" line="7"
+
+            const range = document.getWordRangeAtPosition(position, tPattern);
+            if (range) {
+              const text = document.getText(range);
+              const matches = tPattern.exec(text);
+              tPattern.lastIndex = 0; // Reset regex state
+
+              if (matches && matches.length >= 3) {
+                let pageId: string | undefined;
+                let textId: string | undefined;
+                if (matches[1] && matches[2]) {
+                  // {1015,7} or {1015, 7}
+                  pageId = matches[1];
+                  textId = matches[2];
+                } else if (matches[3] && matches[4]) {
+                  // readtext.{1015}.{7}
+                  pageId = matches[3];
+                  textId = matches[4];
+                } else if (matches[5] && matches[6]) {
+                  // page="1015" line="7"
+                  pageId = matches[5];
+                  textId = matches[6];
+                }
+
+                if (pageId && textId) {
+                  if (exceedinglyVerbose) {
+                    console.log(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
+                  }
+                  const languageText = findLanguageText(pageId, textId);
+                  if (languageText) {
+                    const hoverText = new vscode.MarkdownString();
+                    hoverText.appendMarkdown('```plaintext\n');
+                    hoverText.appendMarkdown(languageText);
+                    hoverText.appendMarkdown('\n```');
+                    return new vscode.Hover(hoverText, range);
+                  }
+                }
+                return undefined;
+              }
+            }
+
+            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+            if (variableAtPosition !== null) {
               if (exceedinglyVerbose) {
-                console.log(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
+                console.log(`Hovering over variable: ${variableAtPosition.name}`);
               }
-              const languageText = findLanguageText(pageId, textId);
-              if (languageText) {
-                const hoverText = new vscode.MarkdownString();
-                hoverText.appendMarkdown('```plaintext\n');
-                hoverText.appendMarkdown(languageText);
-                hoverText.appendMarkdown('\n```');
-                return new vscode.Hover(hoverText, range);
+              // Generate hover text for the variable
+              const hoverText = new vscode.MarkdownString();
+              hoverText.appendMarkdown(
+                `${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}: \`${variableAtPosition.name}\`\n\n`
+              );
+              return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
+            }
+
+            const hoverWord = document.getText(document.getWordRangeAtPosition(position));
+            const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
+            const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
+            const hoverWordIndex = phrase.lastIndexOf(hoverWord);
+            const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
+            const parts = slicedPhrase.split('.');
+            let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
+
+            if (debug) {
+              console.log('Hover word: ', hoverWord);
+              console.log('Phrase: ', phrase);
+              console.log('Sliced phrase: ', slicedPhrase);
+              console.log('Parts: ', parts);
+              console.log('First part: ', firstPart);
+            }
+
+            let hoverText = '';
+            while (hoverText === '' && parts.length > 0) {
+              let keyword = keywords.find((k: Keyword) => k.$.name === firstPart);
+              if (!keyword || keyword.import) {
+                keyword = datatypes.find((d: Datatype) => d.$.name === firstPart);
+              }
+              if (keyword && firstPart !== hoverWord) {
+                hoverText += generateKeywordText(keyword, datatypes, parts);
+              }
+              // Always append hover word details, ensuring full datatype properties for exact matches
+              hoverText += generateHoverWordText(hoverWord, keywords, datatypes);
+              if (hoverText === '' && parts.length > 1) {
+                parts.shift();
+                firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
+              } else {
+                break;
               }
             }
-            return undefined;
-          }
-        }
+            return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
+          },
+        })
+      );
 
-
+      definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
           if (exceedinglyVerbose) {
-            console.log(`Hovering over variable: ${variableAtPosition.name}`);
-          }
-          // Generate hover text for the variable
-          const hoverText = new vscode.MarkdownString();
-          hoverText.appendMarkdown(
-            `${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}: \`${variableAtPosition.name}\`\n\n`
-          );
-          return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
-        }
-
-        const hoverWord = document.getText(document.getWordRangeAtPosition(position));
-        const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
-        const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
-        const hoverWordIndex = phrase.lastIndexOf(hoverWord);
-        const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
-        const parts = slicedPhrase.split('.');
-        let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-
-        if (debug) {
-          console.log('Hover word: ', hoverWord);
-          console.log('Phrase: ', phrase);
-          console.log('Sliced phrase: ', slicedPhrase);
-          console.log('Parts: ', parts);
-          console.log('First part: ', firstPart);
-        }
-
-        let hoverText = '';
-        while (hoverText === '' && parts.length > 0) {
-          let keyword = keywords.find((k: Keyword) => k.$.name === firstPart);
-          if (!keyword || keyword.import) {
-            keyword = datatypes.find((d: Datatype) => d.$.name === firstPart);
-          }
-          if (keyword && firstPart !== hoverWord) {
-            hoverText += generateKeywordText(keyword, datatypes, parts);
-          }
-          // Always append hover word details, ensuring full datatype properties for exact matches
-          hoverText += generateHoverWordText(hoverWord, keywords, datatypes);
-          if (hoverText === '' && parts.length > 1) {
-            parts.shift();
-            firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-          } else {
-            break;
-          }
-        }
-        return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
-      },
-    })
-  );
-
-  definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
-    const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-    if (variableAtPosition !== null) {
-      if (exceedinglyVerbose) {
-        console.log(`Definition found for variable: ${variableAtPosition.name}`);
-        console.log(`Locations:`, variableAtPosition.locations);
-      }
-      return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined; // Return the first location or undefined
-    }
-    return undefined;
-  };
-
-  context.subscriptions.push(
-    vscode.languages.registerReferenceProvider(sel, {
-      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
-        if (getDocumentScriptType(document) == '') {
-          return undefined; // Skip if the document is not valid
-        }
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
-          if (exceedinglyVerbose) {
-            console.log(`References found for variable: ${variableAtPosition.name}`);
+            console.log(`Definition found for variable: ${variableAtPosition.name}`);
             console.log(`Locations:`, variableAtPosition.locations);
           }
-          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
-        }
-        return [];
-      },
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.languages.registerRenameProvider(sel, {
-      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
-        if (getDocumentScriptType(document) == '') {
-          return undefined; // Skip if the document is not valid
-        }
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
-          const variableName = variableAtPosition.name;
-          const variableType = variableAtPosition.type;
-          const locations = variableAtPosition.locations;
-
-          if (exceedinglyVerbose) {
-            // Debug log: Print old name, new name, and locations
-            console.log(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
-            console.log(`Variable type: ${variableType}`);
-            console.log(`Locations to update:`, locations);
-          }
-          const workspaceEdit = new vscode.WorkspaceEdit();
-          locations.forEach((location) => {
-            // Debug log: Print each edit
-            const rangeText = location.range ? document.getText(location.range) : '';
-            const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-            if (exceedinglyVerbose) {
-              console.log(
-                `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
-              );
-            }
-            workspaceEdit.replace(location.uri, location.range, replacementText);
-          });
-
-          // Update the tracker with the new name
-          variableTracker.updateVariableName(variableType, variableName, newName, document);
-
-          return workspaceEdit;
-        }
-
-        // Debug log: No variable name found
-        if (exceedinglyVerbose) {
-          console.log(`No variable name found at position: ${position}`);
+          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined; // Return the first location or undefined
         }
         return undefined;
-      },
+      };
+
+      context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(sel, {
+          provideReferences(
+            document: vscode.TextDocument,
+            position: vscode.Position,
+            context: vscode.ReferenceContext
+          ) {
+            if (getDocumentScriptType(document) == '') {
+              return undefined; // Skip if the document is not valid
+            }
+            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+            if (variableAtPosition !== null) {
+              if (exceedinglyVerbose) {
+                console.log(`References found for variable: ${variableAtPosition.name}`);
+                console.log(`Locations:`, variableAtPosition.locations);
+              }
+              return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
+            }
+            return [];
+          },
+        })
+      );
+
+      context.subscriptions.push(
+        vscode.languages.registerRenameProvider(sel, {
+          provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
+            if (getDocumentScriptType(document) == '') {
+              return undefined; // Skip if the document is not valid
+            }
+            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+            if (variableAtPosition !== null) {
+              const variableName = variableAtPosition.name;
+              const variableType = variableAtPosition.type;
+              const locations = variableAtPosition.locations;
+
+              if (exceedinglyVerbose) {
+                // Debug log: Print old name, new name, and locations
+                console.log(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
+                console.log(`Variable type: ${variableType}`);
+                console.log(`Locations to update:`, locations);
+              }
+              const workspaceEdit = new vscode.WorkspaceEdit();
+              locations.forEach((location) => {
+                // Debug log: Print each edit
+                const rangeText = location.range ? document.getText(location.range) : '';
+                const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
+                if (exceedinglyVerbose) {
+                  console.log(
+                    `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
+                  );
+                }
+                workspaceEdit.replace(location.uri, location.range, replacementText);
+              });
+
+              // Update the tracker with the new name
+              variableTracker.updateVariableName(variableType, variableName, newName, document);
+
+              return workspaceEdit;
+            }
+
+            // Debug log: No variable name found
+            if (exceedinglyVerbose) {
+              console.log(`No variable name found at position: ${position}`);
+            }
+            return undefined;
+          },
+        })
+      );
+
+      // Track variables in open documents
+      vscode.workspace.onDidOpenTextDocument((document) => {
+        if (getDocumentScriptType(document)) {
+          trackVariablesInDocument(document);
+        }
+      });
+
+      // Refresh variable locations when a document is edited
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        if (getDocumentScriptType(event.document)) {
+          trackVariablesInDocument(event.document);
+        }
+      });
+
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (getDocumentScriptType(document)) {
+          trackVariablesInDocument(document);
+        }
+      });
+
+      // Clear the cached languageSubId when a document is closed
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        documentLanguageSubIdMap.delete(document.uri.toString());
+        if (exceedinglyVerbose) {
+          console.log(`Removed cached languageSubId for document: ${document.uri.toString()}`);
+        }
+      });
+      // Track variables in all currently open documents
+      vscode.workspace.textDocuments.forEach((document) => {
+        if (getDocumentScriptType(document)) {
+          trackVariablesInDocument(document);
+        }
+      });
+    })
+    .catch((error) => {
+      console.log('Failed to load language files:', error);
+    });
+
+  // React to configuration changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('x4CodeComplete')) {
+        console.log('Configuration changed. Reloading settings...');
+        config = vscode.workspace.getConfiguration('x4CodeComplete');
+
+        // Update settings
+        rootpath = config.get('unpackedFileLocation') || '';
+        extensionsFolder = config.get('extensionsFolder') || '';
+        exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
+
+        // Reload language files if paths have changed or reloadLanguageData is toggled
+        if (
+          event.affectsConfiguration('x4CodeComplete.unpackedFileLocation') ||
+          event.affectsConfiguration('x4CodeComplete.extensionsFolder') ||
+          event.affectsConfiguration('x4CodeComplete.languageNumber') ||
+          event.affectsConfiguration('x4CodeComplete.limitLanguageOutput') ||
+          event.affectsConfiguration('x4CodeComplete.reloadLanguageData')
+        ) {
+          console.log('Reloading language files due to configuration changes...');
+          loadLanguageFiles(rootpath, extensionsFolder)
+            .then(() => {
+              console.log('Language files reloaded successfully.');
+            })
+            .catch((error) => {
+              console.log('Failed to reload language files:', error);
+            });
+
+          // Reset the reloadLanguageData flag to false after reloading
+          if (event.affectsConfiguration('x4CodeComplete.reloadLanguageData')) {
+            vscode.workspace
+              .getConfiguration()
+              .update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
+          }
+        }
+      }
     })
   );
-
-  // Track variables in open documents
-  vscode.workspace.onDidOpenTextDocument((document) => {
-    if (getDocumentScriptType(document)) {
-      trackVariablesInDocument(document);
-    }
-  });
-
-  // Refresh variable locations when a document is edited
-  vscode.workspace.onDidChangeTextDocument((event) => {
-    if (getDocumentScriptType(event.document)) {
-      trackVariablesInDocument(event.document);
-    }
-  });
-
-  vscode.workspace.onDidSaveTextDocument((document) => {
-    if (getDocumentScriptType(document)) {
-      trackVariablesInDocument(document);
-    }
-  });
-
-  // Clear the cached languageSubId when a document is closed
-  vscode.workspace.onDidCloseTextDocument((document) => {
-    documentLanguageSubIdMap.delete(document.uri.toString());
-    if (exceedinglyVerbose) {
-      console.log(`Removed cached languageSubId for document: ${document.uri.toString()}`);
-    }
-  });
-  // Track variables in all currently open documents
-  vscode.workspace.textDocuments.forEach((document) => {
-    if (getDocumentScriptType(document)) {
-      trackVariablesInDocument(document);
-    }
-  });
 }
 
 // this method is called when your extension is deactivated

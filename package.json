@@ -48,6 +48,11 @@
           "type": "boolean",
           "default": false,
           "description": "Spams the log with info on autocomplete options. Useful for development and debugging, and not much else. May degrade performance significantly."
+        },
+        "x4CodeComplete.reloadLanguageData": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reloads the language data when toggled. Useful for refreshing language files without restarting the extension."
         }
       }
     }
