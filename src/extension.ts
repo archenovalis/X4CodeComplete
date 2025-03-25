@@ -2,11 +2,11 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as xml2js from 'xml2js';
 import * as path from 'path';
 import * as https from 'https'; // Import the built-in https module
 import { JSDOM } from 'jsdom'; // Import jsdom
 import TurndownService from 'turndown'; // Import TurndownService
+import sax from 'sax'; // Import sax  (Simple API for XML)
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -14,7 +14,7 @@ let exceedinglyVerbose: boolean = false;
 let limitLanguage: boolean = false;
 let rootpath: string;
 let extensionsFolder: string;
-const languageFiles: Map<string, any> = new Map();
+let languageData: Map<string, Map<string, string>> = new Map();
 let luaFunctionInfo: Map<string, string> = new Map();
 const luaTypeDefinitions: Map<string, string> = new Map(); // Store type definitions
 const LuaFunctionCompletionItems: vscode.CompletionItem[] = [];
@@ -40,125 +40,157 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
 }
 
 // load and parse language files
-function loadLanguageFiles(basePath: string, extensionsFolder: string) {
-  console.log('Loading Language Files');
-  try {
-    // Array to store all valid 't' directory paths
-    const tDirectories: string[] = [];
+function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<void> {
+  const config = vscode.workspace.getConfiguration('x4CodeComplete');
+  let preferredLanguage: string = config.get('languageNumber') || '44';
+  const limitLanguage: Boolean = config.get('limitLanguageOutput') || false;
+  languageData = new Map();
+  console.log('Loading Language Files.');
+  return new Promise((resolve, reject) => {
+    try {
+      const tDirectories: string[] = [];
+      let pendingFiles = 0; // Counter to track pending file parsing operations
+      let countProcessed = 0; // Counter to track processed files
 
-    // Check root 't' directory under unpackedFileLocation
-    const rootTPath = path.join(basePath, 't');
-    if (fs.existsSync(rootTPath) && fs.statSync(rootTPath).isDirectory()) {
-      tDirectories.push(rootTPath);
-    }
-    // Check 't' directories under languageFilesFolder subdirectories
-    if (fs.existsSync(extensionsFolder) && fs.statSync(extensionsFolder).isDirectory()) {
-      const subdirectories = fs
-        .readdirSync(extensionsFolder, { withFileTypes: true })
-        .filter((item) => item.isDirectory())
-        .map((item) => item.name);
+      // Collect all valid 't' directories
+      const rootTPath = path.join(basePath, 't');
+      if (fs.existsSync(rootTPath) && fs.statSync(rootTPath).isDirectory()) {
+        tDirectories.push(rootTPath);
+      }
+      // Check 't' directories under languageFilesFolder subdirectories
+      if (fs.existsSync(extensionsFolder) && fs.statSync(extensionsFolder).isDirectory()) {
+        const subdirectories = fs
+          .readdirSync(extensionsFolder, { withFileTypes: true })
+          .filter((item) => item.isDirectory())
+          .map((item) => item.name);
 
-      for (const subdir of subdirectories) {
-        const tPath = path.join(extensionsFolder, subdir, 't');
-        if (fs.existsSync(tPath) && fs.statSync(tPath).isDirectory()) {
-          tDirectories.push(tPath);
+        for (const subdir of subdirectories) {
+          const tPath = path.join(extensionsFolder, subdir, 't');
+          if (fs.existsSync(tPath) && fs.statSync(tPath).isDirectory()) {
+            tDirectories.push(tPath);
+          }
         }
       }
-    }
 
-    // Process all found 't' directories
-    for (const tDir of tDirectories) {
-      const files = fs.readdirSync(tDir);
-      const languageFilesFiltered = files.filter((file) => file.startsWith('0001') && file.endsWith('.xml'));
+      // Process all found 't' directories
+      for (const tDir of tDirectories) {
+        const files = fs.readdirSync(tDir).filter((file) => file.startsWith('0001') && file.endsWith('.xml'));
 
-      for (const file of languageFilesFiltered) {
-        const filePath = path.join(tDir, file);
-        try {
-          const rawData = fs.readFileSync(filePath, 'utf-8');
-          xml2js.parseString(rawData, (err: any, result: any) => {
-            if (err) {
-              console.error(`Error parsing ${file} in ${tDir}: ${err}`);
-              return;
-            }
-            languageFiles.set(filePath, result);
-          });
-        } catch (fileError) {
-          console.error(`Error reading ${file} in ${tDir}: ${fileError}`);
-        }
-      }
-    }
-
-    console.log(`Loaded ${languageFiles.size} language files from ${tDirectories.length} 't' directories`);
-  } catch (error) {
-    console.error(`Error loading language files: ${error}`);
-    vscode.window.showErrorMessage('Failed to load language files from t directories');
-  }
-}
-
-function findLanguageText(pageId: string, textId: string): string {
-  const config = vscode.workspace.getConfiguration('x4CodeComplete-lua');
-  const preferredLanguageNumber = config.get('languageNumber') || '44';
-  limitLanguage = config.get('limitLanguageOutput') || false;
-
-  interface Match {
-    fileNumber: string;
-    text: string;
-  }
-  const allMatches: Match[] = [];
-
-  for (const [filePath, xmlData] of languageFiles) {
-    // To process the diff format of the translation files
-    if (!(xmlData?.language?.page || Array.isArray(xmlData?.diff?.add))) continue;
-
-    const pages = [...(xmlData.language?.page || []), ...(xmlData.diff?.add?.flatMap((item: any) => item.page) || [])];
-
-    const page = pages.find((p: any) => p?.$?.id === pageId);
-
-    if (page?.t) {
-      const text = page.t.find((t: any) => t?.$?.id === textId);
-      if (text?._) {
-        const fileName = path.basename(filePath);
-        let fileNumber: string;
-
-        if (fileName === '0001.xml') {
-          fileNumber = '*'; // Special case for 0001.xml
-        } else {
-          // Try matching 0001-<letter><number>.xml (e.g., 0001-l007.xml)
-          const matchWithLetter = fileName.match(/0001-[a-zA-Z](\d+)\.xml$/);
-          if (matchWithLetter && matchWithLetter[1]) {
-            fileNumber = matchWithLetter[1].replace(/^0+/, '');
-          } else {
-            // Original match for 0001-<number>.xml
-            const match = fileName.match(/0001-(\d+)\.xml$/);
-            if (match && match[1]) {
-              fileNumber = match[1].replace(/^0+/, '');
-            } else {
-              // Fallback for any number after 0001- or 0001
-              const fallbackMatch = fileName.match(/0001-?[a-zA-Z]?(\d+)/);
-              fileNumber = fallbackMatch && fallbackMatch[1] ? fallbackMatch[1].replace(/^0+/, '') : 'Unknown';
+        for (const file of files) {
+          const languageId = getLanguageIdFromFileName(file);
+          if (limitLanguage && languageId !== preferredLanguage && languageId !== '*' && languageId !== '44') {
+            // always show 0001.xml and 0001-0044.xml (any language and english, to assist with creating translations)
+            continue;
+          }
+          const filePath = path.join(tDir, file);
+          pendingFiles++; // Increment the counter for each file being processed
+          try {
+            parseLanguageFile(filePath, () => {
+              pendingFiles--; // Decrement the counter when a file is processed
+              countProcessed++; // Increment the counter for processed files
+              if (pendingFiles === 0) {
+                console.log(`Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories.`);
+                resolve(); // Resolve the promise when all files are processed
+              }
+            });
+          } catch (fileError) {
+            console.log(`Error reading ${file} in ${tDir}: ${fileError}`);
+            pendingFiles--; // Decrement the counter even if there's an error
+            if (pendingFiles === 0) {
+              resolve(); // Resolve the promise when all files are processed
             }
           }
         }
+      }
 
-        if (!limitLanguage || fileNumber == '*' || fileNumber == preferredLanguageNumber) {
-          allMatches.push({
-            fileNumber,
-            text: text._.split('\n')
-              .map((line: string) => `${fileNumber}: ${line}`)
-              .join('\n'),
-          });
-        }
+      if (pendingFiles === 0) {
+        resolve(); // Resolve immediately if no files are found
+      }
+    } catch (error) {
+      console.log(`Error loading language files: ${error}`);
+      reject(error); // Reject the promise if there's an error
+    }
+  });
+}
+
+function getLanguageIdFromFileName(fileName: string): string {
+  const match = fileName.match(/0001-[lL]?(\d+).xml/);
+  return match && match[1] ? match[1].replace(/^0+/, '') : '*';
+}
+
+function parseLanguageFile(filePath: string, onComplete: () => void) {
+  const parser = sax.createStream(true); // Create a streaming parser in strict mode
+  let currentPageId: string | null = null;
+  let currentTextId: string | null = null;
+  const fileName: string = path.basename(filePath);
+  let languageId: string = getLanguageIdFromFileName(fileName);
+
+  parser.on('opentag', (node) => {
+    if (node.name === 'page' && node.attributes.id) {
+      currentPageId = node.attributes.id;
+    } else if (node.name === 't' && currentPageId && node.attributes.id) {
+      currentTextId = node.attributes.id;
+    }
+  });
+
+  parser.on('text', (text) => {
+    if (currentPageId && currentTextId) {
+      const key = `${currentPageId}:${currentTextId}`;
+      let textData: Map<string, string> = languageData.get(key) || new Map<string, string>();
+      textData.set(languageId, text.trim());
+      languageData.set(key, textData);
+    }
+  });
+
+  parser.on('closetag', (nodeName) => {
+    if (nodeName === 't') {
+      currentTextId = null; // Reset text ID after closing the tag
+    } else if (nodeName === 'page') {
+      currentPageId = null; // Reset page ID after closing the tag
+    }
+  });
+
+  parser.on('end', () => {
+    onComplete(); // Notify that this file has been fully processed
+  });
+
+  parser.on('error', (err) => {
+    console.log(`Error parsing standard language file ${filePath}: ${err.message}`);
+    onComplete(); // Notify even if there's an error
+  });
+
+  fs.createReadStream(filePath).pipe(parser);
+}
+
+function findLanguageText(pageId: string, textId: string): string {
+  const config = vscode.workspace.getConfiguration('x4CodeComplete');
+  let preferredLanguage: string = config.get('languageNumber') || '44';
+  const limitLanguage: Boolean = config.get('limitLanguageOutput') || false;
+
+  const textData: Map<string, string> = languageData.get(`${pageId}:${textId}`);
+  let result: string = '';
+  if (textData) {
+    let textDataKeys = Array.from(textData.keys()).sort((a, b) =>
+      a === preferredLanguage
+        ? -1
+        : b === preferredLanguage
+          ? 1
+          : (a === '*' ? 0 : parseInt(a)) - (b === '*' ? 0 : parseInt(b))
+    );
+    if (limitLanguage && !textData.has(preferredLanguage)) {
+      if (textData.has('*')) {
+        preferredLanguage = '*';
+      } else if (textData.has('44')) {
+        preferredLanguage = '44';
+      }
+    }
+    for (const language of textDataKeys) {
+      if (!limitLanguage || language == preferredLanguage) {
+        result += (result == '' ? '' : `\n\n`) + `${language}: ${textData.get(language)}`;
       }
     }
   }
-
-  allMatches.sort((a, b) => {
-    if (a.fileNumber === preferredLanguageNumber && b.fileNumber !== preferredLanguageNumber) return -1;
-    if (b.fileNumber === preferredLanguageNumber && a.fileNumber !== preferredLanguageNumber) return 1;
-    return a.fileNumber.localeCompare(b.fileNumber);
-  });
-
-  return allMatches.length > 0 ? allMatches.map((match) => match.text).join('\n\n') : '';
+  return result;
 }
 
 // Key for storing parsed data in globalState
@@ -561,6 +593,30 @@ export function activate(context: vscode.ExtensionContext) {
         if (event.affectsConfiguration('x4CodeComplete-lua.unpackedFileLocation')) {
           rootpath = config.get('unpackedFileLocation');
           fetchLuaFunctionInfoFromWiki(context);
+        }
+        // Reload language files if paths have changed or reloadLanguageData is toggled
+        if (
+          event.affectsConfiguration('x4CodeComplete-lua.unpackedFileLocation') ||
+          event.affectsConfiguration('x4CodeComplete-lua.extensionsFolder') ||
+          event.affectsConfiguration('x4CodeComplete-lua.languageNumber') ||
+          event.affectsConfiguration('x4CodeComplete-lua.limitLanguageOutput') ||
+          event.affectsConfiguration('x4CodeComplete-lua.reloadLanguageData') === true
+        ) {
+          console.log('Reloading language files due to configuration changes...');
+          loadLanguageFiles(rootpath, extensionsFolder)
+            .then(() => {
+              console.log('Language files reloaded successfully.');
+            })
+            .catch((error) => {
+              console.log('Failed to reload language files:', error);
+            });
+
+          // Reset the reloadLanguageData flag to false after reloading
+        }
+        if (event.affectsConfiguration('x4CodeComplete-lua.reloadLanguageData')) {
+          vscode.workspace
+            .getConfiguration()
+            .update('x4CodeComplete-lua.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
         }
       }
     })

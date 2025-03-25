@@ -45,10 +45,10 @@
           "default": false,
           "description": "Limits the language output to show only the preferred language."
         },
-        "x4CodeComplete-lua.exceedinglyVerbose": {
+        "x4CodeComplete-lua.reloadLanguageData": {
           "type": "boolean",
           "default": false,
-          "description": "Spams the log with info on autocomplete options. Useful for development and debugging, and not much else. May degrade performance significantly."
+          "description": "Reloads the language data when toggled. Useful for refreshing language files without restarting the extension."
         },
         "x4CodeComplete-lua.loadLuaFunctionsFromWiki": {
           "type": "boolean",
@@ -64,6 +64,11 @@
           "type": "boolean",
           "default": false,
           "description": "Reload Lua functions descriptions from the Community Wiki when toggled."
+        },
+        "x4CodeComplete-lua.exceedinglyVerbose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Spams the log with info on autocomplete options. Useful for development and debugging, and not much else. May degrade performance significantly."
         }
       }
     }
@@ -99,8 +104,8 @@
   },
   "dependencies": {
     "jsdom": "^26.0.0",
+    "sax": "^1.4.1",
     "turndown": "^7.2.0",
-    "xml2js": "^0.6.2",
     "xml2js-xpath": "^0.13.0"
   }
 }
