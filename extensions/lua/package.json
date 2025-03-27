@@ -2,7 +2,7 @@
   "name": "x4codecomplete-lua",
   "displayName": "X4CodeComplete-Lua",
   "description": "",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/archenovalis/X4CodeComplete"
