@@ -770,7 +770,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<
   const preferredLanguage: string = config.get('languageNumber') || '44';
   const limitLanguage: boolean = config.get('limitLanguageOutput') || false;
   languageData = new Map();
-  console.log('Loading Language Files. %s', Date.now());
+  console.log('Loading Language Files.');
   return new Promise((resolve, reject) => {
     try {
       const tDirectories: string[] = [];
@@ -814,10 +814,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<
               pendingFiles--; // Decrement the counter when a file is processed
               countProcessed++; // Increment the counter for processed files
               if (pendingFiles === 0) {
-                console.log(
-                  `Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories. %s`,
-                  Date.now()
-                );
+                console.log(`Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories.`);
                 resolve(); // Resolve the promise when all files are processed
               }
             });
