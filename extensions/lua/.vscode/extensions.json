@@ -1,3 +1,6 @@
 {
-
+  "recommendations": [
+    "rvest.vs-code-prettier-eslint",
+    "amodio.tsl-problem-matcher"
+  ]
 }
