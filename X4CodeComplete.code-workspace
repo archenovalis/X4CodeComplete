@@ -1,0 +1,16 @@
+{
+  "folders": [
+    {
+      "name": "scripts",
+      "path": "extensions/scripts"
+    },
+    {
+      "name": "lua",
+      "path": "extensions/lua"
+    },	
+    {
+      "name": ".",
+      "path": "."
+    }
+  ]
+}

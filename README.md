@@ -1,55 +1,16 @@
-# X4CodeComplete
+# X4CodeComplete and X4CodeComplete-Lua
 
-## Version History
+This is a Visual Studio Code extension for the game X4: Foundations. It provides code completion for the game's script properties and Lua functions.
 
-### 1.3
+More information about each extension can be found in their respective README files.
 
-(1.3.0) Variables support
+## X4CodeComplete
 
-Go to Definition, Find All References, and Symbol Rename - i.e. F2 on variable name.
-Notice: Doesn't support namespaces yet. Scope of variable now the whole file.
+[README](extensions/scripts/README.md)
 
-### 1.2
+## X4CodeComplete-Lua
 
-t-file text
-
-(1.2.1) added preferred language display option and bug fix
-
-(1.2.2) additional bug fixes and diff add handling
-
-### 1.1
-
-added documentation tooltips and bug fixes (whitespace changes too)
-
-(1.1.1) typescript types and bug fixes
-
-(1.1.2) added sorting and grouping
-
-(1.1.3) bug fixes
-
-## README
-
-To install, go to releases & download the .vsix file. Then install it like any other program.
-I highly recommend using this in conjunction with [these instructions](https://forum.egosoft.com/viewtopic.php?f=181&t=416621) by ledhead900, but it's not technically a requirement.
-
-## Features
-
-XML code complete for Visual Studio Code. Currently completes entries from scriptproperties.xml.
-
-Hover documentation for script and xsd properties.
-
-Hovertext for t-file references.
-
-Basic support of variables, i.e. possibility to use next points in context menu on it:
-`Go to Definition`, `Find All References`, and `Symbol Rename` - i.e. `F2` on variable name.
-Can separately process with "usual" variables and "remote" ones or table fields.
-**Notice:** Doesn't support namespaces yet. Scope of variable now the whole file.
-
-## Extension Settings
-
-Paths: extensions folder and vanilla extracted files folder. Default: none
-
-Exceedingly Verbose: enables debug logging. Default: false
+[README](extensions/lua/README.md)
 
 ## Original Release Notes (thank you Cgetty)
 

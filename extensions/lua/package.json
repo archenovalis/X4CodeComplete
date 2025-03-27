@@ -1,0 +1,111 @@
+{
+  "name": "x4codecomplete-lua",
+  "displayName": "X4CodeComplete-Lua",
+  "description": "",
+  "version": "1.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/archenovalis/X4CodeComplete"
+  },
+  "publisher": "Archie",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.33.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:lua"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "X4 Code Complete-Lua Settings",
+      "properties": {
+        "x4CodeComplete-lua.unpackedFileLocation": {
+          "type": "string",
+          "default": "",
+          "description": "Path to unpacked vanilla files."
+        },
+        "x4CodeComplete-lua.extensionsFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Path to your extensions directory."
+        },
+        "x4CodeComplete-lua.languageNumber": {
+          "type": "string",
+          "default": "44",
+          "description": "Preferred language number (e.g., '44' for English). Files matching this number will be displayed first."
+        },
+        "x4CodeComplete-lua.limitLanguageOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Limits the language output to show only the preferred language."
+        },
+        "x4CodeComplete-lua.reloadLanguageData": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reloads the language data when toggled. Useful for refreshing language files without restarting the extension."
+        },
+        "x4CodeComplete-lua.loadLuaFunctionsFromWiki": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load Lua functions descriptions from the Community Wiki."
+        },
+        "x4CodeComplete-lua.luaFunctionWikiUrl": {
+          "type": "string",
+          "default": "https://wiki.egosoft.com:1337/X%20Rebirth%20Wiki/Modding%20support/UI%20Modding%20support/Lua%20function%20overview/",
+          "description": "URL of the Lua function overview on the Community Wiki."
+        },
+        "x4CodeComplete-lua.reloadLuaFunctionsFromWiki": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reload Lua functions descriptions from the Community Wiki when toggled."
+        },
+        "x4CodeComplete-lua.exceedinglyVerbose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Spams the log with info on autocomplete options. Useful for development and debugging, and not much else. May degrade performance significantly."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "postinstall": "node ./node_modules/vscode/bin/install",
+    "test": "npm run compile && node ./node_modules/vscode/bin/test",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/jsdom": "^21.1.7",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.2",
+    "@types/turndown": "^5.0.5",
+    "@types/xml2js": "^0.4.14",
+    "@typescript-eslint/parser": "^8.27.0",
+    "eslint": "^9.23.0",
+    "globals": "^16.0.0",
+    "minimatch": "^10.0.1",
+    "minimist": "^1.2.8",
+    "mkdirp": "^3.0.1",
+    "mocha": "^11.0.1",
+    "prettier": "^3.1.0",
+    "prettier-eslint": "^16.1.2",
+    "tslint": "^5.20.1",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.27.0",
+    "vscode": "^1.1.34"
+  },
+  "dependencies": {
+    "jsdom": "^26.0.0",
+    "sax": "^1.4.1",
+    "turndown": "^7.2.0",
+    "xml2js-xpath": "^0.13.0"
+  }
+}

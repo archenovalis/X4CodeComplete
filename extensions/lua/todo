@@ -1,0 +1,10 @@
+
+add these checks:
+
+<diff>
+  <add/replace sel="/language">
+    <page>
+    </page>
+  </add/replace>
+  <add/replace sel="/language/page[@id='20221']/t[@id='3061']/text()[1]">Cruiser</add/replace>
+</diff>

@@ -1,0 +1,75 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  repository-projects: read # needed for 'gh pr edit' https://github.com/cli/cli/issues/6274
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the repository
+      -
+        name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+
+      # Step 2: Release Please Action
+      - name: Release Please Action
+        uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 3: Set Environment Variable Based on Release Created
+      -
+        name: Set Environment Variable
+        id: detect-release
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        run: |
+          if [[ "${{ steps.release.outputs['extensions/scripts--release_created'] }}" == "true" ]]; then
+            echo "working_folder=extensions/scripts" >> $GITHUB_ENV
+            echo "tag_name=${{ steps.release.outputs['extensions/scripts--tag_name'] }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.release.outputs['extensions/lua--release_created'] }}" == "true" ]]; then
+            echo "working_folder=extensions/lua" >> $GITHUB_ENV
+            echo "tag_name=${{ steps.release.outputs['extensions/lua--tag_name'] }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Step 4: Setup Node.js environment
+      -
+        name: Setup Node.js environment
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        uses: actions/setup-node@v4.3.0
+        with:
+          node-version: '22'
+          check-latest: true
+
+      # Step 5: Build Extension .vsix
+      -
+        name: Build Extension .vsix
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        run: |
+          cd $working_folder
+          npm install
+          npm install -g vsce
+          vsce package
+
+
+      # Step 6: Attach Extension .vsix to Release
+      -
+        name: Attach Extension .vsix to Release
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.detect-release.outputs['tag_name'] }}
+          files: |
+             extensions/*/*.vsix
