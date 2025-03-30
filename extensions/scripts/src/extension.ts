@@ -6,6 +6,21 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
 import * as path from 'path';
 import * as sax from 'sax';
+import * as winston from 'winston';
+import { OutputChannelTransport, LogOutputChannelTransport } from 'winston-transport-vscode';
+
+const { combine, timestamp, prettyPrint, simple } = winston.format;
+
+const outputChannel = vscode.window.createOutputChannel('X4CodeComplete', {
+  log: true,
+});
+
+const logger = winston.createLogger({
+  level: 'trace',
+  levels: LogOutputChannelTransport.config.levels,
+  format: LogOutputChannelTransport.format(),
+  transports: [new LogOutputChannelTransport({ outputChannel })],
+});
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -117,7 +132,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
     if (items.has(complete)) {
       if (exceedinglyVerbose) {
-        console.log('\t\tSkipped existing completion: ', complete);
+        logger.info('\t\tSkipped existing completion: ', complete);
       }
       return;
     }
@@ -129,7 +144,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       result.detail = complete;
     }
     if (exceedinglyVerbose) {
-      console.log('\t\tAdded completion: ' + complete + ' info: ' + result.detail);
+      logger.info('\t\tAdded completion: ' + complete + ' info: ' + result.detail);
     }
     items.set(complete, result);
   }
@@ -150,7 +165,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       return;
     }
     if (exceedinglyVerbose) {
-      console.log('\tBuilding Property', typeName + '.' + propertyName, 'depth: ', depth, 'prefix: ', prefix);
+      logger.info('\tBuilding Property', typeName + '.' + propertyName, 'depth: ', depth, 'prefix: ', prefix);
     }
     let completion: string;
     if (prefix !== '') {
@@ -181,7 +196,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       return;
     }
     if (exceedinglyVerbose) {
-      console.log('Building Type: ', typeName, 'depth: ', depth, 'prefix: ', prefix);
+      logger.info('Building Type: ', typeName, 'depth: ', depth, 'prefix: ', prefix);
     }
     const entry = this.typeDict.get(typeName);
     if (entry === undefined) {
@@ -189,7 +204,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
     if (depth > 1) {
       if (exceedinglyVerbose) {
-        console.log('\t\tMax depth reached, returning');
+        logger.info('\t\tMax depth reached, returning');
       }
       return;
     }
@@ -200,7 +215,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
     if (items.size > 1000) {
       if (exceedinglyVerbose) {
-        console.log('\t\tMax count reached, returning');
+        logger.info('\t\tMax count reached, returning');
       }
       return;
     }
@@ -210,7 +225,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
     if (entry.supertype !== undefined) {
       if (exceedinglyVerbose) {
-        console.log('Recursing on supertype: ', entry.supertype);
+        logger.info('Recursing on supertype: ', entry.supertype);
       }
       this.buildType(typeName, entry.supertype, items, depth + 1);
     }
@@ -228,32 +243,32 @@ class CompletionDict implements vscode.CompletionItemProvider {
     const interesting = findRelevantPortion(prefix);
     if (interesting === null) {
       if (exceedinglyVerbose) {
-        console.log('no relevant portion detected');
+        logger.info('no relevant portion detected');
       }
       return this.makeCompletionList(items);
     }
     const prevToken = interesting[0];
     const newToken = interesting[1];
     if (exceedinglyVerbose) {
-      console.log('Previous token: ', interesting[0], ' New token: ', interesting[1]);
+      logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
     }
     // If we have a previous token & it's in the typeDictionary, only use that's entries
     if (prevToken !== '') {
       const entry = this.typeDict.get(prevToken);
       if (entry === undefined) {
         if (exceedinglyVerbose) {
-          console.log('Missing previous token!');
+          logger.info('Missing previous token!');
         }
         // TODO backtrack & search
         return;
       } else {
         if (exceedinglyVerbose) {
-          console.log('Matching on type!');
+          logger.info('Matching on type!');
         }
 
         entry.properties.forEach((v, k) => {
           if (exceedinglyVerbose) {
-            console.log('Top level property: ', k, v);
+            logger.info('Top level property: ', k, v);
           }
           this.buildProperty('', prevToken, k, v, items, 0);
         });
@@ -263,21 +278,21 @@ class CompletionDict implements vscode.CompletionItemProvider {
     // Ignore tokens where all we have is a short string and no previous data to go off of
     if (prevToken === '' && newToken.length < 2) {
       if (exceedinglyVerbose) {
-        console.log('Ignoring short token without context!');
+        logger.info('Ignoring short token without context!');
       }
       return this.makeCompletionList(items);
     }
     // Now check for the special hard to complete onles
     if (prevToken.startsWith('{')) {
       if (exceedinglyVerbose) {
-        console.log('Matching bracketed type');
+        logger.info('Matching bracketed type');
       }
       const token = prevToken.substring(1);
 
       const entry = this.typeDict.get(token);
       if (entry === undefined) {
         if (exceedinglyVerbose) {
-          console.log('Failed to match bracketed type');
+          logger.info('Failed to match bracketed type');
         }
       } else {
         entry.literals.forEach((value) => {
@@ -287,7 +302,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     if (exceedinglyVerbose) {
-      console.log('Trying fallback');
+      logger.info('Trying fallback');
     }
     // Otherwise fall back to looking at keys of the typeDictionary for the new string
     for (const key of this.typeDict.keys()) {
@@ -336,7 +351,7 @@ class LocationDict implements vscode.DefinitionProvider {
     );
     const matches = rawData.match(re);
     if (matches === null || matches.index === undefined) {
-      console.log("strangely couldn't find property named:", name, 'parent:', parent);
+      logger.info("strangely couldn't find property named:", name, 'parent:', parent);
       return;
     }
     const rawIdx = matches.index + matches[0].indexOf(matches[1]);
@@ -480,7 +495,7 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
   if (cachedLanguageSubId) {
     languageSubId = cachedLanguageSubId;
     if (exceedinglyVerbose) {
-      console.log(`Using cached languageSubId: ${cachedLanguageSubId} for document: ${document.uri.toString()}`);
+      logger.info(`Using cached languageSubId: ${cachedLanguageSubId} for document: ${document.uri.toString()}`);
     }
     return languageSubId; // If cached, no need to re-validate
   }
@@ -506,7 +521,7 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
     // Cache the languageSubId for future use
     documentLanguageSubIdMap.set(document.uri.toString(), languageSubId);
     if (exceedinglyVerbose) {
-      console.log(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
+      logger.info(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
     }
     return languageSubId;
   }
@@ -601,7 +616,7 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   };
 
   parser.onerror = (err) => {
-    console.error(`Error parsing XML document: ${err.message}`);
+    logger.error(`Error parsing XML document: ${err.message}`);
     parser.resume(); // Continue parsing despite the error
   };
 
@@ -612,7 +627,7 @@ const completionProvider = new CompletionDict();
 const definitionProvider = new LocationDict();
 
 function readScriptProperties(filepath: string) {
-  console.log('Attempting to read scriptproperties.xml');
+  logger.info('Attempting to read scriptproperties.xml');
   // Can't move on until we do this so use sync version
   const rawData = fs.readFileSync(filepath).toString();
   let keywords = [] as Keyword[];
@@ -629,7 +644,7 @@ function readScriptProperties(filepath: string) {
 
     completionProvider.addTypeLiteral('boolean', '==true');
     completionProvider.addTypeLiteral('boolean', '==false');
-    console.log('Parsed scriptproperties.xml');
+    logger.info('Parsed scriptproperties.xml');
   });
 
   return { keywords, datatypes };
@@ -646,7 +661,7 @@ function escapeRegex(text: string) {
 function processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
   const name = prop.$.name;
   if (exceedinglyVerbose) {
-    console.log('\tProperty read: ', name);
+    logger.info('\tProperty read: ', name);
   }
   definitionProvider.addPropertyLocation(rawData, name, parent, parentType);
   completionProvider.addProperty(parent, name, prop.$.type);
@@ -656,7 +671,7 @@ function processKeyword(rawData: string, e: Keyword) {
   const name = e.$.name;
   definitionProvider.addNonPropertyLocation(rawData, name, 'keyword');
   if (exceedinglyVerbose) {
-    console.log('Keyword read: ' + name);
+    logger.info('Keyword read: ' + name);
   }
 
   if (e.import !== undefined) {
@@ -675,7 +690,7 @@ interface XPathResult {
 }
 function processKeywordImport(name: string, src: string, select: string, targetName: string) {
   const path = rootpath + '/libraries/' + src;
-  console.log('Attempting to import: ' + src);
+  logger.info('Attempting to import: ' + src);
   // Can't move on until we do this so use sync version
   const rawData = fs.readFileSync(path).toString();
   xml2js.parseString(rawData, function (err: any, result: any) {
@@ -735,7 +750,7 @@ function processDatatype(rawData: any, e: Datatype) {
   const name = e.$.name;
   definitionProvider.addNonPropertyLocation(rawData, name, 'datatype');
   if (exceedinglyVerbose) {
-    console.log('Datatype read: ' + name);
+    logger.info('Datatype read: ' + name);
   }
   if (e.property === undefined) {
     return;
@@ -770,7 +785,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<
   const preferredLanguage: string = config.get('languageNumber') || '44';
   const limitLanguage: boolean = config.get('limitLanguageOutput') || false;
   languageData = new Map();
-  console.log('Loading Language Files.');
+  logger.info('Loading Language Files.');
   return new Promise((resolve, reject) => {
     try {
       const tDirectories: string[] = [];
@@ -814,12 +829,12 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<
               pendingFiles--; // Decrement the counter when a file is processed
               countProcessed++; // Increment the counter for processed files
               if (pendingFiles === 0) {
-                console.log(`Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories.`);
+                logger.info(`Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories.`);
                 resolve(); // Resolve the promise when all files are processed
               }
             });
           } catch (fileError) {
-            console.log(`Error reading ${file} in ${tDir}: ${fileError}`);
+            logger.info(`Error reading ${file} in ${tDir}: ${fileError}`);
             pendingFiles--; // Decrement the counter even if there's an error
             if (pendingFiles === 0) {
               resolve(); // Resolve the promise when all files are processed
@@ -832,7 +847,7 @@ function loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<
         resolve(); // Resolve immediately if no files are found
       }
     } catch (error) {
-      console.log(`Error loading language files: ${error}`);
+      logger.info(`Error loading language files: ${error}`);
       reject(error); // Reject the promise if there's an error
     }
   });
@@ -880,7 +895,7 @@ function parseLanguageFile(filePath: string, onComplete: () => void) {
   });
 
   parser.on('error', (err) => {
-    console.log(`Error parsing standard language file ${filePath}: ${err.message}`);
+    logger.info(`Error parsing standard language file ${filePath}: ${err.message}`);
     onComplete(); // Notify even if there's an error
   });
 
@@ -1015,8 +1030,8 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
   );
 
   if (debug) {
-    console.log('matchingKeynames:', matchingKeynames);
-    console.log('matchingDatatypes:', matchingDatatypes);
+    logger.info('matchingKeynames:', matchingKeynames);
+    logger.info('matchingDatatypes:', matchingDatatypes);
   }
 
   // Define the type for the grouped matches
@@ -1151,260 +1166,258 @@ export function activate(context: vscode.ExtensionContext) {
   // Load language files and wait for completion
   loadLanguageFiles(rootpath, extensionsFolder)
     .then(() => {
-      console.log('Language files loaded successfully.');
+      logger.info('Language files loaded successfully.');
       // Proceed with the rest of the activation logic
-      let keywords = [] as Keyword[];
-      let datatypes = [] as Keyword[];
-      ({ keywords, datatypes } = readScriptProperties(scriptPropertiesPath));
+    })
+    .catch((error) => {
+      logger.error('Error loading language files:', error);
+      vscode.window.showErrorMessage('Error loading language files: ' + error);
+    });
+  // Load script properties
+  let keywords = [] as Keyword[];
+  let datatypes = [] as Keyword[];
+  ({ keywords, datatypes } = readScriptProperties(scriptPropertiesPath));
 
-      const sel: vscode.DocumentSelector = { language: 'xml' };
+  const sel: vscode.DocumentSelector = { language: 'xml' };
 
-      const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(
-        sel,
-        completionProvider,
-        '.',
-        '"',
-        '{'
-      );
-      context.subscriptions.push(disposableCompleteProvider);
+  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(
+    sel,
+    completionProvider,
+    '.',
+    '"',
+    '{'
+  );
+  context.subscriptions.push(disposableCompleteProvider);
 
-      const disposableDefinitionProvider = vscode.languages.registerDefinitionProvider(sel, definitionProvider);
-      context.subscriptions.push(disposableDefinitionProvider);
+  const disposableDefinitionProvider = vscode.languages.registerDefinitionProvider(sel, definitionProvider);
+  context.subscriptions.push(disposableDefinitionProvider);
 
-      // Hover provider to display tooltips
-      context.subscriptions.push(
-        vscode.languages.registerHoverProvider(sel, {
-          provideHover: async (
-            document: vscode.TextDocument,
-            position: vscode.Position
-          ): Promise<vscode.Hover | undefined> => {
-            if (getDocumentScriptType(document) == '') {
-              return undefined; // Skip if the document is not valid
+  // Hover provider to display tooltips
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(sel, {
+      provideHover: async (
+        document: vscode.TextDocument,
+        position: vscode.Position
+      ): Promise<vscode.Hover | undefined> => {
+        if (getDocumentScriptType(document) == '') {
+          return undefined; // Skip if the document is not valid
+        }
+
+        const tPattern =
+          /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
+        // matches:
+        // {1015,7} or {1015, 7}
+        // readtext.{1015}.{7}
+        // page="1015" line="7"
+
+        const range = document.getWordRangeAtPosition(position, tPattern);
+        if (range) {
+          const text = document.getText(range);
+          const matches = tPattern.exec(text);
+          tPattern.lastIndex = 0; // Reset regex state
+
+          if (matches && matches.length >= 3) {
+            let pageId: string | undefined;
+            let textId: string | undefined;
+            if (matches[1] && matches[2]) {
+              // {1015,7} or {1015, 7}
+              pageId = matches[1];
+              textId = matches[2];
+            } else if (matches[3] && matches[4]) {
+              // readtext.{1015}.{7}
+              pageId = matches[3];
+              textId = matches[4];
+            } else if (matches[5] && matches[6]) {
+              // page="1015" line="7"
+              pageId = matches[5];
+              textId = matches[6];
             }
 
-            const tPattern =
-              /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
-            // matches:
-            // {1015,7} or {1015, 7}
-            // readtext.{1015}.{7}
-            // page="1015" line="7"
-
-            const range = document.getWordRangeAtPosition(position, tPattern);
-            if (range) {
-              const text = document.getText(range);
-              const matches = tPattern.exec(text);
-              tPattern.lastIndex = 0; // Reset regex state
-
-              if (matches && matches.length >= 3) {
-                let pageId: string | undefined;
-                let textId: string | undefined;
-                if (matches[1] && matches[2]) {
-                  // {1015,7} or {1015, 7}
-                  pageId = matches[1];
-                  textId = matches[2];
-                } else if (matches[3] && matches[4]) {
-                  // readtext.{1015}.{7}
-                  pageId = matches[3];
-                  textId = matches[4];
-                } else if (matches[5] && matches[6]) {
-                  // page="1015" line="7"
-                  pageId = matches[5];
-                  textId = matches[6];
-                }
-
-                if (pageId && textId) {
-                  if (exceedinglyVerbose) {
-                    console.log(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
-                  }
-                  const languageText = findLanguageText(pageId, textId);
-                  if (languageText) {
-                    const hoverText = new vscode.MarkdownString();
-                    hoverText.appendMarkdown('```plaintext\n');
-                    hoverText.appendMarkdown(languageText);
-                    hoverText.appendMarkdown('\n```');
-                    return new vscode.Hover(hoverText, range);
-                  }
-                }
-                return undefined;
-              }
-            }
-
-            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-            if (variableAtPosition !== null) {
+            if (pageId && textId) {
               if (exceedinglyVerbose) {
-                console.log(`Hovering over variable: ${variableAtPosition.name}`);
+                logger.info(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
               }
-              // Generate hover text for the variable
-              const hoverText = new vscode.MarkdownString();
-              hoverText.appendMarkdown(
-                `${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}: \`${variableAtPosition.name}\`\n\n`
-              );
-              return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
-            }
-
-            const hoverWord = document.getText(document.getWordRangeAtPosition(position));
-            const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
-            const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
-            const hoverWordIndex = phrase.lastIndexOf(hoverWord);
-            const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
-            const parts = slicedPhrase.split('.');
-            let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-
-            if (debug) {
-              console.log('Hover word: ', hoverWord);
-              console.log('Phrase: ', phrase);
-              console.log('Sliced phrase: ', slicedPhrase);
-              console.log('Parts: ', parts);
-              console.log('First part: ', firstPart);
-            }
-
-            let hoverText = '';
-            while (hoverText === '' && parts.length > 0) {
-              let keyword = keywords.find((k: Keyword) => k.$.name === firstPart);
-              if (!keyword || keyword.import) {
-                keyword = datatypes.find((d: Datatype) => d.$.name === firstPart);
-              }
-              if (keyword && firstPart !== hoverWord) {
-                hoverText += generateKeywordText(keyword, datatypes, parts);
-              }
-              // Always append hover word details, ensuring full datatype properties for exact matches
-              hoverText += generateHoverWordText(hoverWord, keywords, datatypes);
-              if (hoverText === '' && parts.length > 1) {
-                parts.shift();
-                firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-              } else {
-                break;
+              const languageText = findLanguageText(pageId, textId);
+              if (languageText) {
+                const hoverText = new vscode.MarkdownString();
+                hoverText.appendMarkdown('```plaintext\n');
+                hoverText.appendMarkdown(languageText);
+                hoverText.appendMarkdown('\n```');
+                return new vscode.Hover(hoverText, range);
               }
             }
-            return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
-          },
-        })
-      );
+            return undefined;
+          }
+        }
 
-      definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
           if (exceedinglyVerbose) {
-            console.log(`Definition found for variable: ${variableAtPosition.name}`);
-            console.log(`Locations:`, variableAtPosition.locations);
+            logger.info(`Hovering over variable: ${variableAtPosition.name}`);
           }
-          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined; // Return the first location or undefined
+          // Generate hover text for the variable
+          const hoverText = new vscode.MarkdownString();
+          hoverText.appendMarkdown(
+            `${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}: \`${variableAtPosition.name}\`\n\n`
+          );
+          return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
+        }
+
+        const hoverWord = document.getText(document.getWordRangeAtPosition(position));
+        const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
+        const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
+        const hoverWordIndex = phrase.lastIndexOf(hoverWord);
+        const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
+        const parts = slicedPhrase.split('.');
+        let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
+
+        if (debug) {
+          logger.info('Hover word: ', hoverWord);
+          logger.info('Phrase: ', phrase);
+          logger.info('Sliced phrase: ', slicedPhrase);
+          logger.info('Parts: ', parts);
+          logger.info('First part: ', firstPart);
+        }
+
+        let hoverText = '';
+        while (hoverText === '' && parts.length > 0) {
+          let keyword = keywords.find((k: Keyword) => k.$.name === firstPart);
+          if (!keyword || keyword.import) {
+            keyword = datatypes.find((d: Datatype) => d.$.name === firstPart);
+          }
+          if (keyword && firstPart !== hoverWord) {
+            hoverText += generateKeywordText(keyword, datatypes, parts);
+          }
+          // Always append hover word details, ensuring full datatype properties for exact matches
+          hoverText += generateHoverWordText(hoverWord, keywords, datatypes);
+          if (hoverText === '' && parts.length > 1) {
+            parts.shift();
+            firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
+          } else {
+            break;
+          }
+        }
+        return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
+      },
+    })
+  );
+
+  definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
+    const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+    if (variableAtPosition !== null) {
+      if (exceedinglyVerbose) {
+        logger.info(`Definition found for variable: ${variableAtPosition.name}`);
+        logger.info(`Locations:`, variableAtPosition.locations);
+      }
+      return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined; // Return the first location or undefined
+    }
+    return undefined;
+  };
+
+  context.subscriptions.push(
+    vscode.languages.registerReferenceProvider(sel, {
+      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
+        if (getDocumentScriptType(document) == '') {
+          return undefined; // Skip if the document is not valid
+        }
+        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+        if (variableAtPosition !== null) {
+          if (exceedinglyVerbose) {
+            logger.info(`References found for variable: ${variableAtPosition.name}`);
+            logger.info(`Locations:`, variableAtPosition.locations);
+          }
+          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
+        }
+        return [];
+      },
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.languages.registerRenameProvider(sel, {
+      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
+        if (getDocumentScriptType(document) == '') {
+          return undefined; // Skip if the document is not valid
+        }
+        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+        if (variableAtPosition !== null) {
+          const variableName = variableAtPosition.name;
+          const variableType = variableAtPosition.type;
+          const locations = variableAtPosition.locations;
+
+          if (exceedinglyVerbose) {
+            // Debug log: Print old name, new name, and locations
+            logger.info(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
+            logger.info(`Variable type: ${variableType}`);
+            logger.info(`Locations to update:`, locations);
+          }
+          const workspaceEdit = new vscode.WorkspaceEdit();
+          locations.forEach((location) => {
+            // Debug log: Print each edit
+            const rangeText = location.range ? document.getText(location.range) : '';
+            const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
+            if (exceedinglyVerbose) {
+              logger.info(
+                `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
+              );
+            }
+            workspaceEdit.replace(location.uri, location.range, replacementText);
+          });
+
+          // Update the tracker with the new name
+          variableTracker.updateVariableName(variableType, variableName, newName, document);
+
+          return workspaceEdit;
+        }
+
+        // Debug log: No variable name found
+        if (exceedinglyVerbose) {
+          logger.info(`No variable name found at position: ${position}`);
         }
         return undefined;
-      };
-
-      context.subscriptions.push(
-        vscode.languages.registerReferenceProvider(sel, {
-          provideReferences(
-            document: vscode.TextDocument,
-            position: vscode.Position,
-            context: vscode.ReferenceContext
-          ) {
-            if (getDocumentScriptType(document) == '') {
-              return undefined; // Skip if the document is not valid
-            }
-            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-            if (variableAtPosition !== null) {
-              if (exceedinglyVerbose) {
-                console.log(`References found for variable: ${variableAtPosition.name}`);
-                console.log(`Locations:`, variableAtPosition.locations);
-              }
-              return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
-            }
-            return [];
-          },
-        })
-      );
-
-      context.subscriptions.push(
-        vscode.languages.registerRenameProvider(sel, {
-          provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
-            if (getDocumentScriptType(document) == '') {
-              return undefined; // Skip if the document is not valid
-            }
-            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-            if (variableAtPosition !== null) {
-              const variableName = variableAtPosition.name;
-              const variableType = variableAtPosition.type;
-              const locations = variableAtPosition.locations;
-
-              if (exceedinglyVerbose) {
-                // Debug log: Print old name, new name, and locations
-                console.log(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
-                console.log(`Variable type: ${variableType}`);
-                console.log(`Locations to update:`, locations);
-              }
-              const workspaceEdit = new vscode.WorkspaceEdit();
-              locations.forEach((location) => {
-                // Debug log: Print each edit
-                const rangeText = location.range ? document.getText(location.range) : '';
-                const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-                if (exceedinglyVerbose) {
-                  console.log(
-                    `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
-                  );
-                }
-                workspaceEdit.replace(location.uri, location.range, replacementText);
-              });
-
-              // Update the tracker with the new name
-              variableTracker.updateVariableName(variableType, variableName, newName, document);
-
-              return workspaceEdit;
-            }
-
-            // Debug log: No variable name found
-            if (exceedinglyVerbose) {
-              console.log(`No variable name found at position: ${position}`);
-            }
-            return undefined;
-          },
-        })
-      );
-
-      // Track variables in open documents
-      vscode.workspace.onDidOpenTextDocument((document) => {
-        if (getDocumentScriptType(document)) {
-          trackVariablesInDocument(document);
-        }
-      });
-
-      // Refresh variable locations when a document is edited
-      vscode.workspace.onDidChangeTextDocument((event) => {
-        if (getDocumentScriptType(event.document)) {
-          trackVariablesInDocument(event.document);
-        }
-      });
-
-      vscode.workspace.onDidSaveTextDocument((document) => {
-        if (getDocumentScriptType(document)) {
-          trackVariablesInDocument(document);
-        }
-      });
-
-      // Clear the cached languageSubId when a document is closed
-      vscode.workspace.onDidCloseTextDocument((document) => {
-        documentLanguageSubIdMap.delete(document.uri.toString());
-        if (exceedinglyVerbose) {
-          console.log(`Removed cached languageSubId for document: ${document.uri.toString()}`);
-        }
-      });
-      // Track variables in all currently open documents
-      vscode.workspace.textDocuments.forEach((document) => {
-        if (getDocumentScriptType(document)) {
-          trackVariablesInDocument(document);
-        }
-      });
+      },
     })
-    .catch((error) => {
-      console.log('Failed to load language files:', error);
-    });
+  );
+
+  // Track variables in open documents
+  vscode.workspace.onDidOpenTextDocument((document) => {
+    if (getDocumentScriptType(document)) {
+      trackVariablesInDocument(document);
+    }
+  });
+
+  // Refresh variable locations when a document is edited
+  vscode.workspace.onDidChangeTextDocument((event) => {
+    if (getDocumentScriptType(event.document)) {
+      trackVariablesInDocument(event.document);
+    }
+  });
+
+  vscode.workspace.onDidSaveTextDocument((document) => {
+    if (getDocumentScriptType(document)) {
+      trackVariablesInDocument(document);
+    }
+  });
+
+  // Clear the cached languageSubId when a document is closed
+  vscode.workspace.onDidCloseTextDocument((document) => {
+    documentLanguageSubIdMap.delete(document.uri.toString());
+    if (exceedinglyVerbose) {
+      logger.info(`Removed cached languageSubId for document: ${document.uri.toString()}`);
+    }
+  });
+  // Track variables in all currently open documents
+  vscode.workspace.textDocuments.forEach((document) => {
+    if (getDocumentScriptType(document)) {
+      trackVariablesInDocument(document);
+    }
+  });
 
   // React to configuration changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('x4CodeComplete')) {
-        console.log('Configuration changed. Reloading settings...');
+        logger.info('Configuration changed. Reloading settings...');
         config = vscode.workspace.getConfiguration('x4CodeComplete');
 
         // Update settings
@@ -1420,13 +1433,13 @@ export function activate(context: vscode.ExtensionContext) {
           event.affectsConfiguration('x4CodeComplete.limitLanguageOutput') ||
           event.affectsConfiguration('x4CodeComplete.reloadLanguageData')
         ) {
-          console.log('Reloading language files due to configuration changes...');
+          logger.info('Reloading language files due to configuration changes...');
           loadLanguageFiles(rootpath, extensionsFolder)
             .then(() => {
-              console.log('Language files reloaded successfully.');
+              logger.info('Language files reloaded successfully.');
             })
             .catch((error) => {
-              console.log('Failed to reload language files:', error);
+              logger.info('Failed to reload language files:', error);
             });
 
           // Reset the reloadLanguageData flag to false after reloading
@@ -1443,5 +1456,5 @@ export function activate(context: vscode.ExtensionContext) {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
-  console.log('Deactivated');
+  logger.info('Deactivated');
 }

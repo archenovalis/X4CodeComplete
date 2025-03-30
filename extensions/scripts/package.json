@@ -71,6 +71,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.2",
     "@types/sax": "^1.2.7",
+    "@types/vscode": "^1.98.0",
     "@types/xml2js": "^0.4.14",
     "@typescript-eslint/parser": "^8.27.0",
     "eslint": "^8.52.0",
@@ -91,6 +92,8 @@
   },
   "dependencies": {
     "sax": "^1.4.1",
+    "winston": "^3.17.0",
+    "winston-transport-vscode": "^0.1.0",
     "xml2js": "^0.6.2",
     "xml2js-xpath": "^0.13.0"
   }
