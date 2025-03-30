@@ -480,6 +480,32 @@ class VariableTracker {
     // Remove all variables associated with the document
     this.documentVariables.delete(uri.toString());
   }
+
+  // New method to get all variables for a document
+  getAllVariablesForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+    const result: vscode.CompletionItem[] = [];
+    const documentData = this.documentVariables.get(uri.toString());
+    if (!documentData) {
+      return result;
+    }
+
+    // Process all variable types (normal and tableKey)
+    for (const [type, variablesMap] of documentData.variables) {
+      for (const [name, locations] of variablesMap) {
+        const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+        item.detail = `${scriptTypes[documentData.scriptType] || 'Script'} ${variableTypes[type] || 'Variable'}`;
+        item.documentation = new vscode.MarkdownString(
+          `Used ${locations.length} time${locations.length !== 1 ? 's' : ''}`
+        );
+
+        // Don't include the $ in the insert text since the user has already typed it
+        item.insertText = name;
+        result.push(item);
+      }
+    }
+
+    return result;
+  }
 }
 
 const variableTracker = new VariableTracker();
@@ -1377,6 +1403,29 @@ export function activate(context: vscode.ExtensionContext) {
         return undefined;
       },
     })
+  );
+
+  // Register variable completion provider (when $ is typed)
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      sel,
+      {
+        provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+          if (getDocumentScriptType(document) === '') {
+            return []; // Skip if the document is not valid
+          }
+
+          // Check if we're in a position where variable completion makes sense
+          const linePrefix = document.lineAt(position).text.substring(0, position.character);
+          if (!linePrefix.endsWith('$')) {
+            return []; // Only provide completions right after '$'
+          }
+
+          return variableTracker.getAllVariablesForDocument(document.uri);
+        },
+      },
+      '$' // Trigger character
+    )
   );
 
   // Track variables in open documents
