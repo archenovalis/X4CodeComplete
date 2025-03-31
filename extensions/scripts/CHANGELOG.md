@@ -2,6 +2,13 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.3.4](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.3.3...X4CodeComplete@v1.3.4) (2025-03-31)
+
+
+### Bug Fixes
+
+* **scripts:** include '(' in variable start index check as valid precedence symbol ([e788d6d](https://github.com/archenovalis/X4CodeComplete/commit/e788d6d9e69f282133c2c3308290e0e2c81137b3))
+
 ## [1.3.3](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.3.2...X4CodeComplete@v1.3.3) (2025-03-31)
 
 
