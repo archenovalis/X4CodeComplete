@@ -2,7 +2,7 @@
   "name": "x4codecomplete",
   "displayName": "X4CodeComplete",
   "description": "",
-  "version": "1.3.3",
+  "version": "1.3.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/archenovalis/X4CodeComplete"
@@ -71,7 +71,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.10.2",
     "@types/sax": "^1.2.7",
-    "@types/vscode": "^1.98.0",
+    "@types/vscode": "^1.33.0",
     "@types/xml2js": "^0.4.14",
     "@typescript-eslint/parser": "^8.27.0",
     "eslint": "^8.52.0",
