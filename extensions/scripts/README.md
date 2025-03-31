@@ -4,6 +4,12 @@
 
 ### 1.3
 
+(1.3.3) Added completion for the variables
+
+(1.3.2) Bug fixes
+
+(1.3.1) Internal code structure changes
+
 (1.3.0) Variables support
 
 Go to Definition, Find All References, and Symbol Rename - i.e. F2 on variable name.

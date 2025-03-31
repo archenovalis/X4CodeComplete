@@ -482,7 +482,7 @@ class VariableTracker {
   }
 
   // New method to get all variables for a document
-  getAllVariablesForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+  getAllVariablesForDocument(uri: vscode.Uri, exclude: string = ''): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
     const documentData = this.documentVariables.get(uri.toString());
     if (!documentData) {
@@ -492,6 +492,9 @@ class VariableTracker {
     // Process all variable types (normal and tableKey)
     for (const [type, variablesMap] of documentData.variables) {
       for (const [name, locations] of variablesMap) {
+        if (name === exclude) {
+          continue; // Skip the excluded variable if it has only one location
+        }
         const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
         item.detail = `${scriptTypes[documentData.scriptType] || 'Script'} ${variableTypes[type] || 'Variable'}`;
         item.documentation = new vscode.MarkdownString(
@@ -1415,16 +1418,40 @@ export function activate(context: vscode.ExtensionContext) {
             return []; // Skip if the document is not valid
           }
 
-          // Check if we're in a position where variable completion makes sense
+          // Get the current line up to the cursor position
           const linePrefix = document.lineAt(position).text.substring(0, position.character);
-          if (!linePrefix.endsWith('$')) {
-            return []; // Only provide completions right after '$'
+
+          // First scenario: $ was just typed
+          if (linePrefix.endsWith('$')) {
+            return variableTracker.getAllVariablesForDocument(document.uri);
           }
 
-          return variableTracker.getAllVariablesForDocument(document.uri);
+          // Second scenario: We're editing an existing variable
+          // Find the last $ character before the cursor
+          const lastDollarIndex = linePrefix.lastIndexOf('$');
+          if (lastDollarIndex >= 0) {
+            // Check if we're within a variable (no whitespace or special chars between $ and cursor)
+            const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
+
+            // If this text is a valid variable name part
+            if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
+              // Get the partial variable name we're typing (without the $)
+              const partialName = textBetweenDollarAndCursor;
+              // Get all variables and filter them by the current prefix
+              const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
+              // Filter variables that match the partial name
+              return allVariables.filter((item) =>
+                item.label.toString().toLowerCase().startsWith(partialName.toLowerCase())
+              );
+            }
+          }
+
+          return []; // No completions if not in a variable context
         },
       },
-      '$' // Trigger character
+      '$', // Trigger character (still needed for the initial $ typing)
+      '.', // Trigger character for dot completion
+      '"'
     )
   );
 
@@ -1438,7 +1465,20 @@ export function activate(context: vscode.ExtensionContext) {
   // Refresh variable locations when a document is edited
   vscode.workspace.onDidChangeTextDocument((event) => {
     if (getDocumentScriptType(event.document)) {
+      const activeEditor = vscode.window.activeTextEditor;
+      if (!activeEditor || event.document !== activeEditor.document) return;
+
       trackVariablesInDocument(event.document);
+      const cursorPos = activeEditor.selection.active;
+      const textBeforeCursor = event.document.getText(new vscode.Range(cursorPos.with(undefined, 0), cursorPos));
+
+      // Detect if the cursor is inside quotes after an attribute (e.g., Name="|")
+      const isLooksLikeVariable = /\$[a-zA-Z_0-9]*$/.test(textBeforeCursor);
+
+      if (isLooksLikeVariable) {
+        // Programmatically trigger suggestions
+        vscode.commands.executeCommand('editor.action.triggerSuggest');
+      }
     }
   });
 
