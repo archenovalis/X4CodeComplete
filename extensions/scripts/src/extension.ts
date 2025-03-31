@@ -601,7 +601,7 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
             if (
               variableStartIndex == 0 ||
               (tableIsFound == false &&
-                [',', '"', '[', '{', '@', ' ', '.'].includes(text.charAt(variableStartIndex - 1))) ||
+                [',', '"', '[', '{', '@', ' ', '.', '('].includes(text.charAt(variableStartIndex - 1))) ||
               (tableIsFound == true && [',', ' ', '['].includes(text.charAt(variableStartIndex - 1)))
             ) {
               const start = document.positionAt(variableStartIndex);
