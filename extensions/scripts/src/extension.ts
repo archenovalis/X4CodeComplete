@@ -53,9 +53,6 @@ const labelElementAttributeMap: { [element: string]: string[] } = {
   abort_called_scripts: ['resume'],
 };
 
-// For backward compatibility and simpler checks
-const labelAttributes = ['label', 'resume']; // 'label' in <resume>, 'resume' in <run_interrupt_script> and <abort_called_scripts>
-
 // Map of elements and their attributes that can contain action references
 const actionElementAttributeMap: { [element: string]: string[] } = {
   include_interrupt_actions: ['ref'],
@@ -557,10 +554,14 @@ class LabelTracker {
     }
   }
 
-  addLabelReference(name: string, uri: vscode.Uri, range: vscode.Range): void {
+  addLabelReference(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
     // Get or create the label map for the document
     if (!this.documentLabels.has(uri.toString())) {
-      return; // Skip if document not tracked yet
+      this.documentLabels.set(uri.toString(), {
+        scriptType: scriptType,
+        labels: new Map(),
+        references: new Map(),
+      });
     }
     const labelData = this.documentLabels.get(uri.toString())!;
 
@@ -681,10 +682,14 @@ class ActionTracker {
     }
   }
 
-  addActionReference(name: string, uri: vscode.Uri, range: vscode.Range): void {
+  addActionReference(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
     // Get or create the action map for the document
     if (!this.documentActions.has(uri.toString())) {
-      return; // Skip if document not tracked yet
+      this.documentActions.set(uri.toString(), {
+        scriptType: scriptType,
+        actions: new Map(),
+        references: new Map(),
+      });
     }
     const actionData = this.documentActions.get(uri.toString())!;
 
@@ -877,29 +882,33 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
         actionTracker.addAction(actionName, scriptType, document.uri, new vscode.Range(start, end));
       }
     }
-
-    // Check for variables in attributes and label/action references
+    let validLabelAttributes;
+    let validActionAttributes;
+    if (scriptType === aiScript) {
+      // Handle label references - check if this element+attribute combination is valid for labels
+      validLabelAttributes = labelElementAttributeMap[node.name];
+      // Handle action references (only for AIScript)
+      validActionAttributes = actionElementAttributeMap[node.name];
+      // Check for variables in attributes and label/action references
+    }
     for (const [attrName, attrValue] of Object.entries(node.attributes)) {
       let match: RegExpExecArray | null;
       let tableIsFound = false;
 
-      // Handle label references - check if this element+attribute combination is valid for labels
-      const validLabelAttributes = labelElementAttributeMap[node.name];
-      if (validLabelAttributes && validLabelAttributes.includes(attrName) && typeof attrValue === 'string') {
-        const labelRefValue = attrValue as string;
-        const attrStartIndex = text.indexOf(labelRefValue, currentElementStartIndex || 0);
-
-        if (attrStartIndex >= 0) {
-          const start = document.positionAt(attrStartIndex);
-          const end = document.positionAt(attrStartIndex + labelRefValue.length);
-
-          labelTracker.addLabelReference(labelRefValue, document.uri, new vscode.Range(start, end));
-        }
-      }
-
-      // Handle action references (only for AIScript)
+      // Handle action and label references (only for AIScript)
       if (scriptType === aiScript) {
-        const validActionAttributes = actionElementAttributeMap[node.name];
+        if (validLabelAttributes && validLabelAttributes.includes(attrName) && typeof attrValue === 'string') {
+          const labelRefValue = attrValue as string;
+          const attrStartIndex = text.indexOf(labelRefValue, currentElementStartIndex || 0);
+
+          if (attrStartIndex >= 0) {
+            const start = document.positionAt(attrStartIndex);
+            const end = document.positionAt(attrStartIndex + labelRefValue.length);
+
+            labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, new vscode.Range(start, end));
+          }
+        }
+
         if (validActionAttributes && validActionAttributes.includes(attrName) && typeof attrValue === 'string') {
           const actionRefValue = attrValue as string;
           const attrStartIndex = text.indexOf(actionRefValue, currentElementStartIndex || 0);
@@ -908,7 +917,7 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
             const start = document.positionAt(attrStartIndex);
             const end = document.positionAt(attrStartIndex + actionRefValue.length);
 
-            actionTracker.addActionReference(actionRefValue, document.uri, new vscode.Range(start, end));
+            actionTracker.addActionReference(actionRefValue, scriptType, document.uri, new vscode.Range(start, end));
           }
         }
       }
