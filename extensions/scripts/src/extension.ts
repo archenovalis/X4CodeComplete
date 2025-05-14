@@ -56,6 +56,11 @@ const labelElementAttributeMap: { [element: string]: string[] } = {
 // For backward compatibility and simpler checks
 const labelAttributes = ['label', 'resume']; // 'label' in <resume>, 'resume' in <run_interrupt_script> and <abort_called_scripts>
 
+// Map of elements and their attributes that can contain action references
+const actionElementAttributeMap: { [element: string]: string[] } = {
+  include_interrupt_actions: ['ref'],
+};
+
 // Add settings validation function
 function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
   const requiredSettings = ['unpackedFileLocation', 'extensionsFolder'];
@@ -648,6 +653,130 @@ class LabelTracker {
 
 const labelTracker = new LabelTracker();
 
+// ActionTracker class for tracking AIScript actions
+class ActionTracker {
+  // Map to store actions per document: Map<DocumentURI, Map<ActionName, vscode.Location>>
+  documentActions: Map<
+    string,
+    { scriptType: string; actions: Map<string, vscode.Location>; references: Map<string, vscode.Location[]> }
+  > = new Map();
+
+  addAction(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+    // Get or create the action map for the document
+    if (!this.documentActions.has(uri.toString())) {
+      this.documentActions.set(uri.toString(), {
+        scriptType: scriptType,
+        actions: new Map(),
+        references: new Map(),
+      });
+    }
+    const actionData = this.documentActions.get(uri.toString())!;
+
+    // Add the action definition location
+    actionData.actions.set(name, new vscode.Location(uri, range));
+
+    // Initialize references map if not exists
+    if (!actionData.references.has(name)) {
+      actionData.references.set(name, []);
+    }
+  }
+
+  addActionReference(name: string, uri: vscode.Uri, range: vscode.Range): void {
+    // Get or create the action map for the document
+    if (!this.documentActions.has(uri.toString())) {
+      return; // Skip if document not tracked yet
+    }
+    const actionData = this.documentActions.get(uri.toString())!;
+
+    // Add the reference location
+    if (!actionData.references.has(name)) {
+      actionData.references.set(name, []);
+    }
+    actionData.references.get(name)!.push(new vscode.Location(uri, range));
+  }
+
+  getActionDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
+    const documentData = this.documentActions.get(document.uri.toString());
+    if (!documentData) {
+      return undefined;
+    }
+    return documentData.actions.get(name);
+  }
+
+  getActionReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
+    const documentData = this.documentActions.get(document.uri.toString());
+    if (!documentData || !documentData.references.has(name)) {
+      return [];
+    }
+    return documentData.references.get(name) || [];
+  }
+
+  getActionAtPosition(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): { name: string; location: vscode.Location; isDefinition: boolean } | null {
+    const documentData = this.documentActions.get(document.uri.toString());
+    if (!documentData) {
+      return null;
+    }
+
+    // Check if position is at an action definition
+    for (const [actionName, location] of documentData.actions.entries()) {
+      if (location.range.contains(position)) {
+        return {
+          name: actionName,
+          location: location,
+          isDefinition: true,
+        };
+      }
+    }
+
+    // Check if position is at an action reference
+    for (const [actionName, locations] of documentData.references.entries()) {
+      const referenceLocation = locations.find((loc) => loc.range.contains(position));
+      if (referenceLocation) {
+        return {
+          name: actionName,
+          location: referenceLocation,
+          isDefinition: false,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  getAllActionsForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+    const result: vscode.CompletionItem[] = [];
+    const documentData = this.documentActions.get(uri.toString());
+    if (!documentData) {
+      return result;
+    }
+
+    // Process all actions
+    for (const [name, location] of documentData.actions.entries()) {
+      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+      item.detail = `AI Script Action`;
+
+      // Count references
+      const referenceCount = documentData.references.get(name)?.length || 0;
+      item.documentation = new vscode.MarkdownString(
+        `Action \`${name}\` referenced ${referenceCount} time${referenceCount !== 1 ? 's' : ''}`
+      );
+
+      result.push(item);
+    }
+
+    return result;
+  }
+
+  clearActionsForDocument(uri: vscode.Uri): void {
+    this.documentActions.delete(uri.toString());
+  }
+}
+
+const actionTracker = new ActionTracker();
+
 function getDocumentScriptType(document: vscode.TextDocument): string {
   let languageSubId: string = '';
   if (document.languageId !== 'xml') {
@@ -702,15 +831,25 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   // Clear existing variable locations for this document
   variableTracker.clearVariablesForDocument(document.uri);
   labelTracker.clearLabelsForDocument(document.uri);
+  actionTracker.clearActionsForDocument(document.uri);
 
   const text = document.getText();
   const parser = sax.parser(true); // Create a SAX parser with strict mode enabled
   const tagStack: string[] = []; // Stack to track open tags
 
+  // Track if we're inside a <library> element (needed for action tracking)
+  let insideLibrary = false;
+
   let currentElementStartIndex: number | null = null;
 
   parser.onopentag = (node) => {
     tagStack.push(node.name); // Push the current tag onto the stack
+
+    // Track if we're in a library element (for action tracking)
+    if (node.name === 'library') {
+      insideLibrary = true;
+    }
+
     currentElementStartIndex = parser.startTagPosition - 1; // Start position of the element in the text
 
     // Handle label definitions
@@ -726,7 +865,20 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
       }
     }
 
-    // Check for variables in attributes and label references
+    // Handle action definitions (only within <library> element and only for AIScript)
+    if (scriptType === aiScript && insideLibrary && node.name === 'actions' && node.attributes.name) {
+      const actionName = node.attributes.name as string;
+      const actionNameStartIndex = text.indexOf(actionName, currentElementStartIndex);
+
+      if (actionNameStartIndex >= 0) {
+        const start = document.positionAt(actionNameStartIndex);
+        const end = document.positionAt(actionNameStartIndex + actionName.length);
+
+        actionTracker.addAction(actionName, scriptType, document.uri, new vscode.Range(start, end));
+      }
+    }
+
+    // Check for variables in attributes and label/action references
     for (const [attrName, attrValue] of Object.entries(node.attributes)) {
       let match: RegExpExecArray | null;
       let tableIsFound = false;
@@ -742,6 +894,22 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
           const end = document.positionAt(attrStartIndex + labelRefValue.length);
 
           labelTracker.addLabelReference(labelRefValue, document.uri, new vscode.Range(start, end));
+        }
+      }
+
+      // Handle action references (only for AIScript)
+      if (scriptType === aiScript) {
+        const validActionAttributes = actionElementAttributeMap[node.name];
+        if (validActionAttributes && validActionAttributes.includes(attrName) && typeof attrValue === 'string') {
+          const actionRefValue = attrValue as string;
+          const attrStartIndex = text.indexOf(actionRefValue, currentElementStartIndex || 0);
+
+          if (attrStartIndex >= 0) {
+            const start = document.positionAt(attrStartIndex);
+            const end = document.positionAt(attrStartIndex + actionRefValue.length);
+
+            actionTracker.addActionReference(actionRefValue, document.uri, new vscode.Range(start, end));
+          }
         }
       }
 
@@ -803,7 +971,11 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
     }
   };
 
-  parser.onclosetag = () => {
+  parser.onclosetag = (name) => {
+    if (name === 'library') {
+      insideLibrary = false;
+    }
+
     tagStack.pop(); // Pop the current tag from the stack
     currentElementStartIndex = null;
   };
@@ -1444,6 +1616,29 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (getDocumentScriptType(document) == aiScript) {
+          // Check for actions (only in AI scripts)
+          const actionAtPosition = actionTracker.getActionAtPosition(document, position);
+          if (actionAtPosition !== null) {
+            const hoverText = new vscode.MarkdownString();
+            const references = actionTracker.getActionReferences(actionAtPosition.name, document);
+
+            if (actionAtPosition.isDefinition) {
+              hoverText.appendMarkdown(`**AI Script Action Definition**: \`${actionAtPosition.name}\`\n\n`);
+              hoverText.appendMarkdown(`Referenced ${references.length} time${references.length !== 1 ? 's' : ''}`);
+            } else {
+              hoverText.appendMarkdown(`**AI Script Action Reference**: \`${actionAtPosition.name}\`\n\n`);
+              const definition = actionTracker.getActionDefinition(actionAtPosition.name, document);
+              if (definition) {
+                const definitionPosition = definition.range.start;
+                hoverText.appendMarkdown(`Defined at line ${definitionPosition.line + 1}`);
+              } else {
+                hoverText.appendMarkdown(`*Action definition not found*`);
+              }
+            }
+
+            return new vscode.Hover(hoverText, actionAtPosition.location.range);
+          }
+
           // Check for labels
           const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
           if (labelAtPosition !== null) {
@@ -1524,7 +1719,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Update the definition provider to support labels
+  // Update the definition provider to support actions
   definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
     const scriptType = getDocumentScriptType(document);
     if (scriptType === '') {
@@ -1542,6 +1737,23 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     if (getDocumentScriptType(document) == aiScript) {
+      // Check if we're on an action (only in AI scripts)
+      const actionAtPosition = actionTracker.getActionAtPosition(document, position);
+      if (actionAtPosition !== null) {
+        if (exceedinglyVerbose) {
+          logger.info(`Definition found for action: ${actionAtPosition.name}`);
+        }
+
+        // If we're already at the definition, show references instead
+        if (actionAtPosition.isDefinition) {
+          const refs = actionTracker.getActionReferences(actionAtPosition.name, document);
+          return refs.length > 0 ? refs[0] : undefined; // Return first reference if available
+        } else {
+          // If we're at a reference, show the definition
+          return actionTracker.getActionDefinition(actionAtPosition.name, document);
+        }
+      }
+
       // Check if we're on a label
       const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
       if (labelAtPosition !== null) {
@@ -1574,13 +1786,48 @@ export function activate(context: vscode.ExtensionContext) {
     return undefined;
   };
 
-  // Add reference provider for labels
+  // Register action completion provider for AIScript
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      sel,
+      {
+        provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+          if (getDocumentScriptType(document) !== aiScript) {
+            return [];
+          }
+
+          // Check if we're inside an attribute that might use actions
+          const lineText = document.lineAt(position).text;
+          const textBefore = lineText.substring(0, position.character);
+
+          // Check for being inside an action-using attribute value
+          for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
+            for (const attr of attributes) {
+              // Pattern to match <element attr="| or <element attr='|
+              const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
+              if (elementAttrPattern.test(textBefore)) {
+                return actionTracker.getAllActionsForDocument(document.uri);
+              }
+            }
+          }
+
+          return [];
+        },
+      },
+      '"', // Trigger after quote in attribute
+      "'" // Trigger after single quote in attribute
+    )
+  );
+
+  // Add reference provider for actions in AIScript
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(sel, {
       provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
         if (getDocumentScriptType(document) == '') {
           return undefined;
         }
+
+        // Check if we're on a variable
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
           if (exceedinglyVerbose) {
@@ -1590,6 +1837,23 @@ export function activate(context: vscode.ExtensionContext) {
           return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
         }
         if (getDocumentScriptType(document) == aiScript) {
+          // Check if we're on an action
+          const actionAtPosition = actionTracker.getActionAtPosition(document, position);
+          if (actionAtPosition !== null) {
+            if (exceedinglyVerbose) {
+              logger.info(`References found for action: ${actionAtPosition.name}`);
+            }
+
+            const references = actionTracker.getActionReferences(actionAtPosition.name, document);
+            const definition = actionTracker.getActionDefinition(actionAtPosition.name, document);
+
+            // Combine definition and references for complete list
+            if (definition) {
+              return [definition, ...references];
+            }
+            return references;
+          }
+
           // Check if we're on a label
           const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
           if (labelAtPosition !== null) {
