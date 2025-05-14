@@ -2,6 +2,13 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.4.1](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.4.0...X4CodeComplete@v1.4.1) (2025-05-14)
+
+
+### Bug Fixes
+
+* **scripts:** skipped references before definition in LabelTracker and ActionTracker ([3b872f1](https://github.com/archenovalis/X4CodeComplete/commit/3b872f13f89d2cd19508e7a07542c74983f627fa))
+
 ## [1.4.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.3.3...X4CodeComplete@v1.4.0) (2025-05-14)
 
 
