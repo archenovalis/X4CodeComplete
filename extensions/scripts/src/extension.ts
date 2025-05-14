@@ -39,10 +39,22 @@ const variableTypes = {
   normal: '_variable_',
   tableKey: '_remote variable_ or _table field_',
 };
+const aiScript = 'aiscript';
+const mdScript = 'mdscript';
 const scriptTypes = {
-  aiscript: 'AI Script',
-  mdscript: 'Mission Director Script',
+  [aiScript]: 'AI Script',
+  [mdScript]: 'Mission Director Script',
 };
+
+// Map of elements and their attributes that can contain label references
+const labelElementAttributeMap: { [element: string]: string[] } = {
+  resume: ['label'],
+  run_interrupt_script: ['resume'],
+  abort_called_scripts: ['resume'],
+};
+
+// For backward compatibility and simpler checks
+const labelAttributes = ['label', 'resume']; // 'label' in <resume>, 'resume' in <run_interrupt_script> and <abort_called_scripts>
 
 // Add settings validation function
 function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
@@ -513,6 +525,129 @@ class VariableTracker {
 
 const variableTracker = new VariableTracker();
 
+class LabelTracker {
+  // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
+  documentLabels: Map<
+    string,
+    { scriptType: string; labels: Map<string, vscode.Location>; references: Map<string, vscode.Location[]> }
+  > = new Map();
+
+  addLabel(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+    // Get or create the label map for the document
+    if (!this.documentLabels.has(uri.toString())) {
+      this.documentLabels.set(uri.toString(), {
+        scriptType: scriptType,
+        labels: new Map(),
+        references: new Map(),
+      });
+    }
+    const labelData = this.documentLabels.get(uri.toString())!;
+
+    // Add the label definition location
+    labelData.labels.set(name, new vscode.Location(uri, range));
+
+    // Initialize references map if not exists
+    if (!labelData.references.has(name)) {
+      labelData.references.set(name, []);
+    }
+  }
+
+  addLabelReference(name: string, uri: vscode.Uri, range: vscode.Range): void {
+    // Get or create the label map for the document
+    if (!this.documentLabels.has(uri.toString())) {
+      return; // Skip if document not tracked yet
+    }
+    const labelData = this.documentLabels.get(uri.toString())!;
+
+    // Add the reference location
+    if (!labelData.references.has(name)) {
+      labelData.references.set(name, []);
+    }
+    labelData.references.get(name)!.push(new vscode.Location(uri, range));
+  }
+
+  getLabelDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
+    const documentData = this.documentLabels.get(document.uri.toString());
+    if (!documentData) {
+      return undefined;
+    }
+    return documentData.labels.get(name);
+  }
+
+  getLabelReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
+    const documentData = this.documentLabels.get(document.uri.toString());
+    if (!documentData || !documentData.references.has(name)) {
+      return [];
+    }
+    return documentData.references.get(name) || [];
+  }
+
+  getLabelAtPosition(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): { name: string; location: vscode.Location; isDefinition: boolean } | null {
+    const documentData = this.documentLabels.get(document.uri.toString());
+    if (!documentData) {
+      return null;
+    }
+
+    // Check if position is at a label definition
+    for (const [labelName, location] of documentData.labels.entries()) {
+      if (location.range.contains(position)) {
+        return {
+          name: labelName,
+          location: location,
+          isDefinition: true,
+        };
+      }
+    }
+
+    // Check if position is at a label reference
+    for (const [labelName, locations] of documentData.references.entries()) {
+      const referenceLocation = locations.find((loc) => loc.range.contains(position));
+      if (referenceLocation) {
+        return {
+          name: labelName,
+          location: referenceLocation,
+          isDefinition: false,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  getAllLabelsForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+    const result: vscode.CompletionItem[] = [];
+    const documentData = this.documentLabels.get(uri.toString());
+    if (!documentData) {
+      return result;
+    }
+
+    // Process all labels
+    for (const [name, location] of documentData.labels.entries()) {
+      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Reference);
+      item.detail = `Label in ${scriptTypes[documentData.scriptType] || 'Script'}`;
+
+      // Count references
+      const referenceCount = documentData.references.get(name)?.length || 0;
+      item.documentation = new vscode.MarkdownString(
+        `Label \`${name}\` referenced ${referenceCount} time${referenceCount !== 1 ? 's' : ''}`
+      );
+
+      result.push(item);
+    }
+
+    return result;
+  }
+
+  clearLabelsForDocument(uri: vscode.Uri): void {
+    this.documentLabels.delete(uri.toString());
+  }
+}
+
+const labelTracker = new LabelTracker();
+
 function getDocumentScriptType(document: vscode.TextDocument): string {
   let languageSubId: string = '';
   if (document.languageId !== 'xml') {
@@ -534,7 +669,7 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
 
   parser.onopentag = (node) => {
     // Check if the root element is <aiscript> or <mdscript>
-    if (node.name === 'aiscript' || node.name === 'mdscript') {
+    if ([aiScript, mdScript].includes(node.name)) {
       languageSubId = node.name; // Store the root node name as the languageSubId
       parser.close(); // Stop parsing as soon as the root element is identified
     }
@@ -566,6 +701,7 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
 
   // Clear existing variable locations for this document
   variableTracker.clearVariablesForDocument(document.uri);
+  labelTracker.clearLabelsForDocument(document.uri);
 
   const text = document.getText();
   const parser = sax.parser(true); // Create a SAX parser with strict mode enabled
@@ -577,23 +713,51 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
     tagStack.push(node.name); // Push the current tag onto the stack
     currentElementStartIndex = parser.startTagPosition - 1; // Start position of the element in the text
 
-    // Check for variables in attributes
+    // Handle label definitions
+    if (node.name === 'label' && node.attributes.name) {
+      const labelName = node.attributes.name as string;
+      const labelNameStartIndex = text.indexOf(labelName, currentElementStartIndex);
+
+      if (labelNameStartIndex >= 0) {
+        const start = document.positionAt(labelNameStartIndex);
+        const end = document.positionAt(labelNameStartIndex + labelName.length);
+
+        labelTracker.addLabel(labelName, scriptType, document.uri, new vscode.Range(start, end));
+      }
+    }
+
+    // Check for variables in attributes and label references
     for (const [attrName, attrValue] of Object.entries(node.attributes)) {
       let match: RegExpExecArray | null;
       let tableIsFound = false;
+
+      // Handle label references - check if this element+attribute combination is valid for labels
+      const validLabelAttributes = labelElementAttributeMap[node.name];
+      if (validLabelAttributes && validLabelAttributes.includes(attrName) && typeof attrValue === 'string') {
+        const labelRefValue = attrValue as string;
+        const attrStartIndex = text.indexOf(labelRefValue, currentElementStartIndex || 0);
+
+        if (attrStartIndex >= 0) {
+          const start = document.positionAt(attrStartIndex);
+          const end = document.positionAt(attrStartIndex + labelRefValue.length);
+
+          labelTracker.addLabelReference(labelRefValue, document.uri, new vscode.Range(start, end));
+        }
+      }
+
       if (typeof attrValue === 'string') {
-        const attrStartIndex = text.indexOf(attrValue, currentElementStartIndex || 0);
+        const attrStartIndex = text.indexOf(attrValue as string, currentElementStartIndex || 0);
         if (node.name === 'param' && tagStack[tagStack.length - 2] === 'params' && attrName === 'name') {
           // Ensure <param> is a subnode of <params>
-          const variableName = attrValue;
+          const variableName = attrValue as string;
 
           const start = document.positionAt(attrStartIndex);
           const end = document.positionAt(attrStartIndex + variableName.length);
 
           variableTracker.addVariable('normal', variableName, scriptType, document.uri, new vscode.Range(start, end));
         } else {
-          tableIsFound = tableKeyPattern.test(attrValue);
-          while (typeof attrValue === 'string' && (match = variablePattern.exec(attrValue)) !== null) {
+          tableIsFound = tableKeyPattern.test(attrValue as string);
+          while (typeof attrValue === 'string' && (match = variablePattern.exec(attrValue as string)) !== null) {
             const variableName = match[1];
             const variableStartIndex = attrStartIndex + match.index;
 
@@ -1279,6 +1443,31 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
+        if (getDocumentScriptType(document) == aiScript) {
+          // Check for labels
+          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
+          if (labelAtPosition !== null) {
+            const hoverText = new vscode.MarkdownString();
+            const references = labelTracker.getLabelReferences(labelAtPosition.name, document);
+
+            if (labelAtPosition.isDefinition) {
+              hoverText.appendMarkdown(`**Label Definition**: \`${labelAtPosition.name}\`\n\n`);
+              hoverText.appendMarkdown(`Referenced ${references.length} time${references.length !== 1 ? 's' : ''}`);
+            } else {
+              hoverText.appendMarkdown(`**Label Reference**: \`${labelAtPosition.name}\`\n\n`);
+              const definition = labelTracker.getLabelDefinition(labelAtPosition.name, document);
+              if (definition) {
+                const definitionPosition = definition.range.start;
+                hoverText.appendMarkdown(`Defined at line ${definitionPosition.line + 1}`);
+              } else {
+                hoverText.appendMarkdown(`*Label definition not found*`);
+              }
+            }
+
+            return new vscode.Hover(hoverText, labelAtPosition.location.range);
+          }
+        }
+
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
           if (exceedinglyVerbose) {
@@ -1287,7 +1476,11 @@ export function activate(context: vscode.ExtensionContext) {
           // Generate hover text for the variable
           const hoverText = new vscode.MarkdownString();
           hoverText.appendMarkdown(
-            `${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}: \`${variableAtPosition.name}\`\n\n`
+            `**${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}**: \`${variableAtPosition.name}\`\n\n`
+          );
+
+          hoverText.appendMarkdown(
+            `Used ${variableAtPosition.locations.length} time${variableAtPosition.locations.length !== 1 ? 's' : ''}`
           );
           return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
         }
@@ -1331,23 +1524,62 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Update the definition provider to support labels
   definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
+    const scriptType = getDocumentScriptType(document);
+    if (scriptType === '') {
+      return undefined;
+    }
+
+    // Check if we're on a variable
     const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
     if (variableAtPosition !== null) {
       if (exceedinglyVerbose) {
         logger.info(`Definition found for variable: ${variableAtPosition.name}`);
         logger.info(`Locations:`, variableAtPosition.locations);
       }
-      return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined; // Return the first location or undefined
+      return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined;
     }
+
+    if (getDocumentScriptType(document) == aiScript) {
+      // Check if we're on a label
+      const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
+      if (labelAtPosition !== null) {
+        if (exceedinglyVerbose) {
+          logger.info(`Definition found for label: ${labelAtPosition.name}`);
+        }
+
+        // If we're already at the definition, show references instead
+        if (labelAtPosition.isDefinition) {
+          return labelTracker.getLabelReferences(labelAtPosition.name, document)[0]; // Return first reference
+        } else {
+          // If we're at a reference, show the definition
+          return labelTracker.getLabelDefinition(labelAtPosition.name, document);
+        }
+      }
+    }
+
+    // Default handling for other definitions
+    const line = document.lineAt(position).text;
+    const start = line.lastIndexOf('"', position.character);
+    const end = line.indexOf('"', position.character);
+    let relevant = line.substring(start, end).trim().replace('"', '');
+    do {
+      if (definitionProvider.dict.has(relevant)) {
+        return definitionProvider.dict.get(relevant);
+      }
+      relevant = relevant.substring(relevant.indexOf('.') + 1);
+    } while (relevant.indexOf('.') !== -1);
+
     return undefined;
   };
 
+  // Add reference provider for labels
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(sel, {
       provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
         if (getDocumentScriptType(document) == '') {
-          return undefined; // Skip if the document is not valid
+          return undefined;
         }
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
@@ -1356,6 +1588,24 @@ export function activate(context: vscode.ExtensionContext) {
             logger.info(`Locations:`, variableAtPosition.locations);
           }
           return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
+        }
+        if (getDocumentScriptType(document) == aiScript) {
+          // Check if we're on a label
+          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
+          if (labelAtPosition !== null) {
+            if (exceedinglyVerbose) {
+              logger.info(`References found for label: ${labelAtPosition.name}`);
+            }
+
+            const references = labelTracker.getLabelReferences(labelAtPosition.name, document);
+            const definition = labelTracker.getLabelDefinition(labelAtPosition.name, document);
+
+            // Combine definition and references for complete list
+            if (definition) {
+              return [definition, ...references];
+            }
+            return references;
+          }
         }
         return [];
       },
@@ -1452,6 +1702,39 @@ export function activate(context: vscode.ExtensionContext) {
       '$', // Trigger character (still needed for the initial $ typing)
       '.', // Trigger character for dot completion
       '"'
+    )
+  );
+
+  // Register label completion provider
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      sel,
+      {
+        provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+          if (getDocumentScriptType(document) !== aiScript) {
+            return [];
+          }
+
+          // Check if we're inside an attribute that might use labels
+          const lineText = document.lineAt(position).text;
+          const textBefore = lineText.substring(0, position.character);
+
+          // First check for element+attribute combinations using regex patterns
+          for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
+            for (const attr of attributes) {
+              // Pattern to match <element attr="| or <element attr='|
+              const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
+              if (elementAttrPattern.test(textBefore)) {
+                return labelTracker.getAllLabelsForDocument(document.uri);
+              }
+            }
+          }
+
+          return [];
+        },
+      },
+      '"', // Trigger after quote in attribute
+      "'" // Trigger after single quote in attribute
     )
   );
 
