@@ -2,6 +2,19 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.4.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.3.3...X4CodeComplete@v1.4.0) (2025-05-14)
+
+
+### Features
+
+* **scripts:** implement ActionTracker for AIScript library actions and its references ([e481e57](https://github.com/archenovalis/X4CodeComplete/commit/e481e5793aba67f7ac2fcf1f1648b4664dba3cc4))
+* **scripts:** implement label tracking and completion for aiscript ([77f3712](https://github.com/archenovalis/X4CodeComplete/commit/77f371285987d85df34f308b7f5023602214c9ef))
+
+
+### Bug Fixes
+
+* **scripts:** include '(' in variable start index check as valid precedence symbol ([e788d6d](https://github.com/archenovalis/X4CodeComplete/commit/e788d6d9e69f282133c2c3308290e0e2c81137b3))
+
 ## [1.3.3](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.3.2...X4CodeComplete@v1.3.3) (2025-03-31)
 
 
