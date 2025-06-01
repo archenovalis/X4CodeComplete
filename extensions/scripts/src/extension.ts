@@ -782,6 +782,9 @@ class ActionTracker {
 
 const actionTracker = new ActionTracker();
 
+// Diagnostic collection for tracking errors
+let diagnosticCollection: vscode.DiagnosticCollection;
+
 function getDocumentScriptType(document: vscode.TextDocument): string {
   let languageSubId: string = '';
   if (document.languageId !== 'xml') {
@@ -825,6 +828,60 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
   }
 
   return languageSubId;
+}
+
+function validateReferences(document: vscode.TextDocument): void {
+  const scriptType = getDocumentScriptType(document);
+  if (scriptType !== aiScript) {
+    return; // Only validate AI scripts
+  }
+
+  const diagnostics: vscode.Diagnostic[] = [];
+  const documentData = labelTracker.documentLabels.get(document.uri.toString());
+  const actionData = actionTracker.documentActions.get(document.uri.toString());
+
+  // Validate label references
+  if (documentData) {
+    for (const [labelName, references] of documentData.references.entries()) {
+      const hasDefinition = documentData.labels.has(labelName);
+
+      if (!hasDefinition) {
+        references.forEach((reference) => {
+          const diagnostic = new vscode.Diagnostic(
+            reference.range,
+            `Label '${labelName}' is not defined`,
+            vscode.DiagnosticSeverity.Error
+          );
+          diagnostic.code = 'undefined-label';
+          diagnostic.source = 'X4CodeComplete';
+          diagnostics.push(diagnostic);
+        });
+      }
+    }
+  }
+
+  // Validate action references
+  if (actionData) {
+    for (const [actionName, references] of actionData.references.entries()) {
+      const hasDefinition = actionData.actions.has(actionName);
+
+      if (!hasDefinition) {
+        references.forEach((reference) => {
+          const diagnostic = new vscode.Diagnostic(
+            reference.range,
+            `Action '${actionName}' is not defined`,
+            vscode.DiagnosticSeverity.Error
+          );
+          diagnostic.code = 'undefined-action';
+          diagnostic.source = 'X4CodeComplete';
+          diagnostics.push(diagnostic);
+        });
+      }
+    }
+  }
+
+  // Set diagnostics for the document
+  diagnosticCollection.set(document.uri, diagnostics);
 }
 
 function trackVariablesInDocument(document: vscode.TextDocument): void {
@@ -995,6 +1052,9 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   };
 
   parser.write(text).close();
+
+  // Validate references after tracking is complete
+  validateReferences(document);
 }
 
 const completionProvider = new CompletionDict();
@@ -1537,6 +1597,10 @@ export function activate(context: vscode.ExtensionContext) {
   exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
   scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
 
+  // Create diagnostic collection
+  diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
+  context.subscriptions.push(diagnosticCollection);
+
   // Load language files and wait for completion
   loadLanguageFiles(rootpath, extensionsFolder)
     .then(() => {
@@ -2044,13 +2108,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Clear the cached languageSubId when a document is closed
+  // Clear the cached languageSubId and diagnosticCollection when a document is closed
   vscode.workspace.onDidCloseTextDocument((document) => {
     documentLanguageSubIdMap.delete(document.uri.toString());
+    diagnosticCollection.delete(document.uri);
     if (exceedinglyVerbose) {
       logger.info(`Removed cached languageSubId for document: ${document.uri.toString()}`);
     }
   });
+
   // Track variables in all currently open documents
   vscode.workspace.textDocuments.forEach((document) => {
     if (getDocumentScriptType(document)) {
@@ -2097,9 +2163,187 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // Add code action provider for quick fixes
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(sel, {
+      provideCodeActions(
+        document: vscode.TextDocument,
+        range: vscode.Range | vscode.Selection,
+        context: vscode.CodeActionContext,
+        token: vscode.CancellationToken
+      ): vscode.ProviderResult<(vscode.Command | vscode.CodeAction)[]> {
+        const actions: vscode.CodeAction[] = [];
+
+        for (const diagnostic of context.diagnostics) {
+          if (diagnostic.source === 'X4CodeComplete') {
+            if (diagnostic.code === 'undefined-label') {
+              // Quick fix to create label definition
+              const labelName = diagnostic.message.match(/'(.+)'/)?.[1];
+              if (labelName) {
+                // Action to create new label
+                const createAction = new vscode.CodeAction(
+                  `Create label '${labelName}'`,
+                  vscode.CodeActionKind.QuickFix
+                );
+                createAction.edit = new vscode.WorkspaceEdit();
+
+                // Find a good place to insert the label (e.g., before the first action)
+                const text = document.getText();
+                const firstActionMatch = text.match(/<do_.*?>/);
+                const insertPosition = firstActionMatch
+                  ? document.positionAt(text.indexOf(firstActionMatch[0]))
+                  : new vscode.Position(1, 0);
+
+                createAction.edit.insert(document.uri, insertPosition, `<label name="${labelName}" />\n`);
+                createAction.diagnostics = [diagnostic];
+                actions.push(createAction);
+
+                // Get available labels and find similar ones
+                const documentData = labelTracker.documentLabels.get(document.uri.toString());
+                if (documentData) {
+                  const availableLabels = Array.from(documentData.labels.keys());
+                  const similarLabels = findSimilarItems(labelName, availableLabels);
+
+                  similarLabels.forEach((similarLabel) => {
+                    const replaceAction = new vscode.CodeAction(
+                      `Replace with existing label '${similarLabel}'`,
+                      vscode.CodeActionKind.QuickFix
+                    );
+                    replaceAction.edit = new vscode.WorkspaceEdit();
+                    replaceAction.edit.replace(document.uri, diagnostic.range, similarLabel);
+                    replaceAction.diagnostics = [diagnostic];
+                    replaceAction.isPreferred = similarLabels.indexOf(similarLabel) === 0; // Mark most similar as preferred
+                    actions.push(replaceAction);
+                  });
+                }
+              }
+            } else if (diagnostic.code === 'undefined-action') {
+              // Quick fix to create action definition
+              const actionName = diagnostic.message.match(/'(.+)'/)?.[1];
+              if (actionName) {
+                // Action to create new action
+                const createAction = new vscode.CodeAction(
+                  `Create action '${actionName}'`,
+                  vscode.CodeActionKind.QuickFix
+                );
+                createAction.edit = new vscode.WorkspaceEdit();
+
+                // Find library section or create one
+                const text = document.getText();
+                const libraryMatch = text.match(/<library>/);
+                let insertPosition: vscode.Position;
+                let insertText: string;
+
+                if (libraryMatch) {
+                  // Insert into existing library
+                  const libraryStartIndex = text.indexOf('<library>') + '<library>'.length;
+                  insertPosition = document.positionAt(libraryStartIndex);
+                  insertText = `\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>`;
+                } else {
+                  // Create new library section
+                  const aiscriptMatch = text.match(/<aiscript[^>]*>/);
+                  if (aiscriptMatch) {
+                    const aiscriptEndIndex = text.indexOf('>', text.indexOf(aiscriptMatch[0])) + 1;
+                    insertPosition = document.positionAt(aiscriptEndIndex);
+                    insertText = `\n  <library>\n    <actions name="${actionName}">\n      <!-- TODO: Implement action -->\n    </actions>\n  </library>`;
+                  } else {
+                    insertPosition = new vscode.Position(1, 0);
+                    insertText = `<library>\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>\n</library>\n`;
+                  }
+                }
+
+                createAction.edit.insert(document.uri, insertPosition, insertText);
+                createAction.diagnostics = [diagnostic];
+                actions.push(createAction);
+
+                // Get available actions and find similar ones
+                const actionData = actionTracker.documentActions.get(document.uri.toString());
+                if (actionData) {
+                  const availableActions = Array.from(actionData.actions.keys());
+                  const similarActions = findSimilarItems(actionName, availableActions);
+
+                  similarActions.forEach((similarAction) => {
+                    const replaceAction = new vscode.CodeAction(
+                      `Replace with existing action '${similarAction}'`,
+                      vscode.CodeActionKind.QuickFix
+                    );
+                    replaceAction.edit = new vscode.WorkspaceEdit();
+                    replaceAction.edit.replace(document.uri, diagnostic.range, similarAction);
+                    replaceAction.diagnostics = [diagnostic];
+                    replaceAction.isPreferred = similarActions.indexOf(similarAction) === 0; // Mark most similar as preferred
+                    actions.push(replaceAction);
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        return actions;
+      },
+    } as vscode.CodeActionProvider)
+  );
 }
 
 // this method is called when your extension is deactivated
 export function deactivate() {
   logger.info('Deactivated');
+}
+
+// Helper function to calculate string similarity (Levenshtein distance based)
+function calculateSimilarity(str1: string, str2: string): number {
+  const longer = str1.length > str2.length ? str1 : str2;
+  const shorter = str1.length > str2.length ? str2 : str1;
+
+  if (longer.length === 0) {
+    return 1.0;
+  }
+
+  const editDistance = levenshteinDistance(longer, shorter);
+  return (longer.length - editDistance) / longer.length;
+}
+
+function levenshteinDistance(str1: string, str2: string): number {
+  const matrix = Array(str2.length + 1)
+    .fill(null)
+    .map(() => Array(str1.length + 1).fill(null));
+
+  for (let i = 0; i <= str1.length; i++) {
+    matrix[0][i] = i;
+  }
+
+  for (let j = 0; j <= str2.length; j++) {
+    matrix[j][0] = j;
+  }
+
+  for (let j = 1; j <= str2.length; j++) {
+    for (let i = 1; i <= str1.length; i++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        matrix[j][i] = matrix[j - 1][i - 1];
+      } else {
+        matrix[j][i] = Math.min(
+          matrix[j - 1][i] + 1, // deletion
+          matrix[j][i - 1] + 1, // insertion
+          matrix[j - 1][i - 1] + 1 // substitution
+        );
+      }
+    }
+  }
+
+  return matrix[str2.length][str1.length];
+}
+
+// Helper function to find similar items
+function findSimilarItems(targetName: string, availableItems: string[], maxSuggestions: number = 5): string[] {
+  const similarities = availableItems.map((item) => ({
+    name: item,
+    similarity: calculateSimilarity(targetName.toLowerCase(), item.toLowerCase()),
+  }));
+
+  return similarities
+    .filter((item) => item.similarity > 0.3) // Only include items with > 30% similarity
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, maxSuggestions)
+    .map((item) => item.name);
 }
