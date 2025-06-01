@@ -2181,24 +2181,6 @@ export function activate(context: vscode.ExtensionContext) {
               // Quick fix to create label definition
               const labelName = diagnostic.message.match(/'(.+)'/)?.[1];
               if (labelName) {
-                // Action to create new label
-                const createAction = new vscode.CodeAction(
-                  `Create label '${labelName}'`,
-                  vscode.CodeActionKind.QuickFix
-                );
-                createAction.edit = new vscode.WorkspaceEdit();
-
-                // Find a good place to insert the label (e.g., before the first action)
-                const text = document.getText();
-                const firstActionMatch = text.match(/<do_.*?>/);
-                const insertPosition = firstActionMatch
-                  ? document.positionAt(text.indexOf(firstActionMatch[0]))
-                  : new vscode.Position(1, 0);
-
-                createAction.edit.insert(document.uri, insertPosition, `<label name="${labelName}" />\n`);
-                createAction.diagnostics = [diagnostic];
-                actions.push(createAction);
-
                 // Get available labels and find similar ones
                 const documentData = labelTracker.documentLabels.get(document.uri.toString());
                 if (documentData) {
