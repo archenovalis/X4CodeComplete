@@ -88,11 +88,21 @@ function getLabelCompletions(document: vscode.TextDocument, position: vscode.Pos
 
         // If there's partial text, filter labels that start with it
         if (partialText) {
-          return allLabels.filter(
+          let filtered = allLabels.filter(
             (item) =>
               item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
               item.label.toString() !== partialText
           );
+          if (filtered.length === 0 && partialText.length > 0) {
+            // Fallback: match all items where label contains all partialText chars in order (not necessarily consecutive)
+            const pattern = partialText
+              .split('')
+              .map((c) => escapeRegex(c))
+              .join('.*?');
+            const regex = new RegExp(pattern, 'i');
+            filtered = allLabels.filter((item) => regex.test(item.label.toString()));
+          }
+          return filtered;
         }
 
         // Return all labels if no partial text
@@ -126,11 +136,21 @@ function getActionCompletions(document: vscode.TextDocument, position: vscode.Po
 
         // If there's partial text, filter actions that start with it
         if (partialText) {
-          return allActions.filter(
+          let filtered = allActions.filter(
             (item) =>
               item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
               item.label.toString() !== partialText
           );
+          if (filtered.length === 0 && partialText.length > 0) {
+            // Fallback: match all items where actions contains all partialText chars in order (not necessarily consecutive)
+            const pattern = partialText
+              .split('')
+              .map((c) => escapeRegex(c))
+              .join('.*?');
+            const regex = new RegExp(pattern, 'i');
+            filtered = allActions.filter((item) => regex.test(item.label.toString()));
+          }
+          return filtered;
         }
 
         // Return all actions if no partial text
