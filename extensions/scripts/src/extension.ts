@@ -31,6 +31,141 @@ let scriptPropertiesPath: string;
 let extensionsFolder: string;
 let languageData: Map<string, Map<string, string>> = new Map();
 
+// Extract variable completion logic into a function
+function getVariableCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+  if (getDocumentScriptType(document) === '') {
+    return []; // Skip if the document is not valid
+  }
+
+  // Get the current line up to the cursor position
+  const linePrefix = document.lineAt(position).text.substring(0, position.character);
+
+  // First scenario: $ was just typed
+  if (linePrefix.endsWith('$')) {
+    return variableTracker.getAllVariablesForDocument(document.uri);
+  }
+
+  // Second scenario: We're editing an existing variable
+  // Find the last $ character before the cursor
+  const lastDollarIndex = linePrefix.lastIndexOf('$');
+  if (lastDollarIndex >= 0) {
+    // Check if we're within a variable (no whitespace or special chars between $ and cursor)
+    const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
+
+    // If this text is a valid variable name part
+    if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
+      // Get the partial variable name we're typing (without the $)
+      const partialName = textBetweenDollarAndCursor;
+      // Get all variables and filter them by the current prefix
+      const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
+      // Filter variables that match the partial name
+      return allVariables.filter((item) => item.label.toString().toLowerCase().startsWith(partialName.toLowerCase()));
+    }
+  }
+
+  return []; // No completions if not in a variable context
+}
+
+// Extract label completion logic into a function
+function getLabelCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+  if (getDocumentScriptType(document) !== aiScript) {
+    return [];
+  }
+
+  // Check if we're inside an attribute that might use labels
+  const lineText = document.lineAt(position).text;
+  const textBefore = lineText.substring(0, position.character);
+
+  // First check for element+attribute combinations using regex patterns
+  for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
+    for (const attr of attributes) {
+      // Pattern to match <element attr="partial_text| or <element attr='partial_text|
+      const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
+      const match = elementAttrPattern.exec(textBefore);
+      if (match) {
+        const partialText = match[1];
+        const allLabels = labelTracker.getAllLabelsForDocument(document.uri);
+
+        // If there's partial text, filter labels that start with it
+        if (partialText) {
+          return allLabels.filter(
+            (item) =>
+              item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
+              item.label.toString() !== partialText
+          );
+        }
+
+        // Return all labels if no partial text
+        return allLabels;
+      }
+    }
+  }
+
+  return [];
+}
+
+// Extract action completion logic into a function
+function getActionCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+  if (getDocumentScriptType(document) !== aiScript) {
+    return [];
+  }
+
+  // Check if we're inside an attribute that might use actions
+  const lineText = document.lineAt(position).text;
+  const textBefore = lineText.substring(0, position.character);
+
+  // Check for being inside an action-using attribute value
+  for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
+    for (const attr of attributes) {
+      // Pattern to match <element attr="partial_text| or <element attr='partial_text|
+      const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
+      const match = elementAttrPattern.exec(textBefore);
+      if (match) {
+        const partialText = match[1];
+        const allActions = actionTracker.getAllActionsForDocument(document.uri);
+
+        // If there's partial text, filter actions that start with it
+        if (partialText) {
+          return allActions.filter(
+            (item) =>
+              item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
+              item.label.toString() !== partialText
+          );
+        }
+
+        // Return all actions if no partial text
+        return allActions;
+      }
+    }
+  }
+
+  return [];
+}
+
+// Function to check if we're in a specialized completion context
+function isSpecializedCompletionContext(document: vscode.TextDocument, position: vscode.Position): boolean {
+  // Check if any of the specialized completion functions return results
+  const variableCompletions = getVariableCompletions(document, position);
+  if (variableCompletions.length > 0) {
+    return true;
+  }
+
+  const labelCompletions = getLabelCompletions(document, position);
+  if (labelCompletions.length > 0) {
+    return true;
+  }
+
+  const actionCompletions = getActionCompletions(document, position);
+  if (actionCompletions.length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
+// Flag to indicate if specialized completion is active
+// let isSpecializedCompletion: boolean = false;
+
 // Map to store languageSubId for each document
 const documentLanguageSubIdMap: Map<string, string> = new Map();
 const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
@@ -252,6 +387,12 @@ class CompletionDict implements vscode.CompletionItemProvider {
     if (getDocumentScriptType(document) == '') {
       return undefined; // Skip if the document is not valid
     }
+
+    // Check if we're in a specialized completion context (variables, labels, actions)
+    if (isSpecializedCompletionContext(document, position)) {
+      return undefined; // Let the specialized providers handle it
+    }
+
     const items = new Map<string, vscode.CompletionItem>();
     const prefix = document.lineAt(position).text.substring(0, position.character);
     const interesting = findRelevantPortion(prefix);
@@ -1859,195 +2000,13 @@ export function activate(context: vscode.ExtensionContext) {
     return undefined;
   };
 
-  // Register action completion provider for AIScript
-  context.subscriptions.push(
-    vscode.languages.registerCompletionItemProvider(
-      sel,
-      {
-        provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-          if (getDocumentScriptType(document) !== aiScript) {
-            return [];
-          }
-
-          // Check if we're inside an attribute that might use actions
-          const lineText = document.lineAt(position).text;
-          const textBefore = lineText.substring(0, position.character);
-
-          // Check for being inside an action-using attribute value
-          for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
-            for (const attr of attributes) {
-              // Pattern to match <element attr="partial_text| or <element attr='partial_text|
-              const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-              const match = elementAttrPattern.exec(textBefore);
-              if (match) {
-                const partialText = match[1];
-                const allActions = actionTracker.getAllActionsForDocument(document.uri);
-
-                // If there's partial text, filter actions that start with it
-                if (partialText) {
-                  return allActions.filter(
-                    (item) =>
-                      item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
-                      item.label.toString() !== partialText
-                  );
-                }
-
-                // Return all actions if no partial text
-                return allActions;
-              }
-            }
-          }
-
-          return [];
-        },
-      },
-      '"', // Trigger after quote in attribute
-      "'" // Trigger after single quote in attribute
-    )
-  );
-
-  // Add reference provider for actions in AIScript
-  context.subscriptions.push(
-    vscode.languages.registerReferenceProvider(sel, {
-      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
-        if (getDocumentScriptType(document) == '') {
-          return undefined;
-        }
-
-        // Check if we're on a variable
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
-          if (exceedinglyVerbose) {
-            logger.info(`References found for variable: ${variableAtPosition.name}`);
-            logger.info(`Locations:`, variableAtPosition.locations);
-          }
-          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
-        }
-        if (getDocumentScriptType(document) == aiScript) {
-          // Check if we're on an action
-          const actionAtPosition = actionTracker.getActionAtPosition(document, position);
-          if (actionAtPosition !== null) {
-            if (exceedinglyVerbose) {
-              logger.info(`References found for action: ${actionAtPosition.name}`);
-            }
-
-            const references = actionTracker.getActionReferences(actionAtPosition.name, document);
-            const definition = actionTracker.getActionDefinition(actionAtPosition.name, document);
-
-            // Combine definition and references for complete list
-            if (definition) {
-              return [definition, ...references];
-            }
-            return references;
-          }
-
-          // Check if we're on a label
-          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
-          if (labelAtPosition !== null) {
-            if (exceedinglyVerbose) {
-              logger.info(`References found for label: ${labelAtPosition.name}`);
-            }
-
-            const references = labelTracker.getLabelReferences(labelAtPosition.name, document);
-            const definition = labelTracker.getLabelDefinition(labelAtPosition.name, document);
-
-            // Combine definition and references for complete list
-            if (definition) {
-              return [definition, ...references];
-            }
-            return references;
-          }
-        }
-        return [];
-      },
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.languages.registerRenameProvider(sel, {
-      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
-        if (getDocumentScriptType(document) == '') {
-          return undefined; // Skip if the document is not valid
-        }
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
-          const variableName = variableAtPosition.name;
-          const variableType = variableAtPosition.type;
-          const locations = variableAtPosition.locations;
-
-          if (exceedinglyVerbose) {
-            // Debug log: Print old name, new name, and locations
-            logger.info(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
-            logger.info(`Variable type: ${variableType}`);
-            logger.info(`Locations to update:`, locations);
-          }
-          const workspaceEdit = new vscode.WorkspaceEdit();
-          locations.forEach((location) => {
-            // Debug log: Print each edit
-            const rangeText = location.range ? document.getText(location.range) : '';
-            const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-            if (exceedinglyVerbose) {
-              logger.info(
-                `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
-              );
-            }
-            workspaceEdit.replace(location.uri, location.range, replacementText);
-          });
-
-          // Update the tracker with the new name
-          variableTracker.updateVariableName(variableType, variableName, newName, document);
-
-          return workspaceEdit;
-        }
-
-        // Debug log: No variable name found
-        if (exceedinglyVerbose) {
-          logger.info(`No variable name found at position: ${position}`);
-        }
-        return undefined;
-      },
-    })
-  );
-
   // Register variable completion provider (when $ is typed)
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       sel,
       {
         provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-          if (getDocumentScriptType(document) === '') {
-            return []; // Skip if the document is not valid
-          }
-
-          // Get the current line up to the cursor position
-          const linePrefix = document.lineAt(position).text.substring(0, position.character);
-
-          // First scenario: $ was just typed
-          if (linePrefix.endsWith('$')) {
-            return variableTracker.getAllVariablesForDocument(document.uri);
-          }
-
-          // Second scenario: We're editing an existing variable
-          // Find the last $ character before the cursor
-          const lastDollarIndex = linePrefix.lastIndexOf('$');
-          if (lastDollarIndex >= 0) {
-            // Check if we're within a variable (no whitespace or special chars between $ and cursor)
-            const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
-
-            // If this text is a valid variable name part
-            if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
-              // Get the partial variable name we're typing (without the $)
-              const partialName = textBetweenDollarAndCursor;
-              // Get all variables and filter them by the current prefix
-              const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
-              // Filter variables that match the partial name
-              return allVariables.filter((item) =>
-                item.label.toString().toLowerCase().startsWith(partialName.toLowerCase())
-              );
-            }
-          }
-
-          return []; // No completions if not in a variable context
+          return getVariableCompletions(document, position);
         },
       },
       '$', // Trigger character (still needed for the initial $ typing)
@@ -2062,40 +2021,21 @@ export function activate(context: vscode.ExtensionContext) {
       sel,
       {
         provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-          if (getDocumentScriptType(document) !== aiScript) {
-            return [];
-          }
+          return getLabelCompletions(document, position);
+        },
+      },
+      '"', // Trigger after quote in attribute
+      "'" // Trigger after single quote in attribute
+    )
+  );
 
-          // Check if we're inside an attribute that might use labels
-          const lineText = document.lineAt(position).text;
-          const textBefore = lineText.substring(0, position.character);
-
-          // First check for element+attribute combinations using regex patterns
-          for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
-            for (const attr of attributes) {
-              // Pattern to match <element attr="partial_text| or <element attr='partial_text|
-              const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-              const match = elementAttrPattern.exec(textBefore);
-              if (match) {
-                const partialText = match[1];
-                const allLabels = labelTracker.getAllLabelsForDocument(document.uri);
-
-                // If there's partial text, filter labels that start with it
-                if (partialText) {
-                  return allLabels.filter(
-                    (item) =>
-                      item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
-                      item.label.toString() !== partialText
-                  );
-                }
-
-                // Return all labels if no partial text
-                return allLabels;
-              }
-            }
-          }
-
-          return [];
+  // Register action completion provider for AIScript
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      sel,
+      {
+        provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+          return getActionCompletions(document, position);
         },
       },
       '"', // Trigger after quote in attribute
@@ -2118,42 +2058,15 @@ export function activate(context: vscode.ExtensionContext) {
 
       trackVariablesInDocument(event.document);
       const cursorPos = activeEditor.selection.active;
-      const textBeforeCursor = event.document.getText(new vscode.Range(cursorPos.with(undefined, 0), cursorPos));
 
-      // Detect if the cursor is inside quotes after an attribute (e.g., Name="|")
-      const isLooksLikeVariable = /\$[a-zA-Z_0-9]*$/.test(textBeforeCursor);
-
-      // Check if we're in a context that might need label completion (only for AI scripts)
-      let isLooksLikeLabel = false;
-      let isLooksLikeAction = false;
-      if (getDocumentScriptType(event.document) === aiScript) {
-        for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
-          for (const attr of attributes) {
-            // Pattern to match <element attr="text| - check if we're typing in a label attribute
-            const labelPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["'][^"']*$`);
-            if (labelPattern.test(textBeforeCursor)) {
-              isLooksLikeLabel = true;
-              break;
-            }
-          }
-          if (isLooksLikeLabel) break;
-        }
-
-        // Check if we're in a context that might need action completion
-        for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
-          for (const attr of attributes) {
-            // Pattern to match <element attr="text| - check if we're typing in an action attribute
-            const actionPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["'][^"']*$`);
-            if (actionPattern.test(textBeforeCursor)) {
-              isLooksLikeAction = true;
-              break;
-            }
-          }
-          if (isLooksLikeAction) break;
-        }
+      // Check if we're in a specialized completion context
+      // Move the position one character forward if possible
+      let nextPos = cursorPos;
+      const line = event.document.lineAt(cursorPos.line);
+      if (cursorPos.character < line.text.length) {
+        nextPos = cursorPos.translate(0, 1);
       }
-
-      if (isLooksLikeVariable || isLooksLikeLabel || isLooksLikeAction) {
+      if (isSpecializedCompletionContext(event.document, nextPos)) {
         // Programmatically trigger suggestions
         vscode.commands.executeCommand('editor.action.triggerSuggest');
       }
