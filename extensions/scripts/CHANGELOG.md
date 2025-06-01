@@ -2,6 +2,15 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.5.1](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.0...X4CodeComplete@v1.5.1) (2025-06-01)
+
+
+### Code Refactoring
+
+* **script:** enhance label and action completion with partial text filtering ([4a5b8b7](https://github.com/archenovalis/X4CodeComplete/commit/4a5b8b74751252da1bee97145f62b51e9bf59cf3))
+* **script:** enhance label and action filtering with regex fallback for partial text ([f79972a](https://github.com/archenovalis/X4CodeComplete/commit/f79972aef4de8e996b13cc696dcc5ba48657f180))
+* **script:** implement specialized completion for variables, labels, and actions ([7ebdec7](https://github.com/archenovalis/X4CodeComplete/commit/7ebdec74042469fe1febde3cd1547c0a0542d115))
+
 ## [1.5.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.4.1...X4CodeComplete@v1.5.0) (2025-06-01)
 
 
