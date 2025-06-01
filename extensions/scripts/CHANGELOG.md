@@ -2,6 +2,18 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.5.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.4.1...X4CodeComplete@v1.5.0) (2025-06-01)
+
+
+### Features
+
+* **scripts:** add diagnostics for undefined label and action references ([43b1082](https://github.com/archenovalis/X4CodeComplete/commit/43b10824433d74c107e94d468c7a124275ed3250))
+
+
+### Code Refactoring
+
+* remove action creation for label diagnostics ([f2f1b1f](https://github.com/archenovalis/X4CodeComplete/commit/f2f1b1f8c5d36810fb552ec1c00e620cdd06ee51))
+
 ## [1.4.1](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.4.0...X4CodeComplete@v1.4.1) (2025-05-14)
 
 
