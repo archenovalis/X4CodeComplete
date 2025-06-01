@@ -17,6 +17,8 @@
 
 ### 1.4
 
+(1.4.1) Bug fixes
+
 (1.4.0) AI Script Enhanced Support
 
 - Added label completion and tracking for AI Scripts (`<resume>`, `<run_interrupt_script>`, `<abort_called_scripts>`)
