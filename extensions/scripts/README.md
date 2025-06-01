@@ -4,12 +4,12 @@
 
 ### 1.5
 
-(1.5.1) Performance and reliability improvements
+(1.5.1) Partial completion for labels and actions
 
 - Intelligent context-aware completion that prevents conflicts between completion types
 - Refactored completion system with specialized completion detection
 
-(1.5.0) Unified completion system architecture
+(1.5.0) Error diagnostics for labels and actions
 
 - Real-time error diagnostics for undefined labels and actions
 - Automatic creation of missing action definitions
