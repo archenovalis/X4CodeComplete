@@ -170,6 +170,16 @@ I highly recommend using this in conjunction with [these instructions](https://f
 - **AI Scripts** (`.xml` files with `<aiscript>` root element)
 - **Mission Director Scripts** (`.xml` files with `<mdscript>` root element)
 
+## Video Demonstration
+
+- All features up to version 1.4.1
+
+  [![X4CodeComplete Demo: all features up to version 1.4.1](https://img.youtube.com/vi/0gBYUklBU_o/0.jpg)](https://www.youtube.com/watch?v=0gBYUklBU_o)
+
+- Features added in version 1.5.1
+
+  [![X4CodeComplete Demo: features added in version 1.5.1](https://img.youtube.com/vi/bTkF7GMg5gw/0.jpg)](https://www.youtube.com/watch?v=bTkF7GMg5gw)
+
 ## Usage Examples
 
 ### Variable Completion
