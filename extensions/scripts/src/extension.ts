@@ -1876,10 +1876,24 @@ export function activate(context: vscode.ExtensionContext) {
           // Check for being inside an action-using attribute value
           for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
             for (const attr of attributes) {
-              // Pattern to match <element attr="| or <element attr='|
+              // Pattern to match <element attr="partial_text| or <element attr='partial_text|
               const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-              if (elementAttrPattern.test(textBefore)) {
-                return actionTracker.getAllActionsForDocument(document.uri);
+              const match = elementAttrPattern.exec(textBefore);
+              if (match) {
+                const partialText = match[1];
+                const allActions = actionTracker.getAllActionsForDocument(document.uri);
+
+                // If there's partial text, filter actions that start with it
+                if (partialText) {
+                  return allActions.filter(
+                    (item) =>
+                      item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
+                      item.label.toString() !== partialText
+                  );
+                }
+
+                // Return all actions if no partial text
+                return allActions;
               }
             }
           }
@@ -2059,10 +2073,24 @@ export function activate(context: vscode.ExtensionContext) {
           // First check for element+attribute combinations using regex patterns
           for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
             for (const attr of attributes) {
-              // Pattern to match <element attr="| or <element attr='|
+              // Pattern to match <element attr="partial_text| or <element attr='partial_text|
               const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-              if (elementAttrPattern.test(textBefore)) {
-                return labelTracker.getAllLabelsForDocument(document.uri);
+              const match = elementAttrPattern.exec(textBefore);
+              if (match) {
+                const partialText = match[1];
+                const allLabels = labelTracker.getAllLabelsForDocument(document.uri);
+
+                // If there's partial text, filter labels that start with it
+                if (partialText) {
+                  return allLabels.filter(
+                    (item) =>
+                      item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
+                      item.label.toString() !== partialText
+                  );
+                }
+
+                // Return all labels if no partial text
+                return allLabels;
               }
             }
           }
@@ -2095,7 +2123,37 @@ export function activate(context: vscode.ExtensionContext) {
       // Detect if the cursor is inside quotes after an attribute (e.g., Name="|")
       const isLooksLikeVariable = /\$[a-zA-Z_0-9]*$/.test(textBeforeCursor);
 
-      if (isLooksLikeVariable) {
+      // Check if we're in a context that might need label completion (only for AI scripts)
+      let isLooksLikeLabel = false;
+      let isLooksLikeAction = false;
+      if (getDocumentScriptType(event.document) === aiScript) {
+        for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
+          for (const attr of attributes) {
+            // Pattern to match <element attr="text| - check if we're typing in a label attribute
+            const labelPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["'][^"']*$`);
+            if (labelPattern.test(textBeforeCursor)) {
+              isLooksLikeLabel = true;
+              break;
+            }
+          }
+          if (isLooksLikeLabel) break;
+        }
+
+        // Check if we're in a context that might need action completion
+        for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
+          for (const attr of attributes) {
+            // Pattern to match <element attr="text| - check if we're typing in an action attribute
+            const actionPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["'][^"']*$`);
+            if (actionPattern.test(textBeforeCursor)) {
+              isLooksLikeAction = true;
+              break;
+            }
+          }
+          if (isLooksLikeAction) break;
+        }
+      }
+
+      if (isLooksLikeVariable || isLooksLikeLabel || isLooksLikeAction) {
         // Programmatically trigger suggestions
         vscode.commands.executeCommand('editor.action.triggerSuggest');
       }
