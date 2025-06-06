@@ -2257,6 +2257,109 @@ export function activate(context: vscode.ExtensionContext) {
       },
     } as vscode.CodeActionProvider)
   );
+
+  // Add reference provider for actions in AIScript
+  context.subscriptions.push(
+    vscode.languages.registerReferenceProvider(sel, {
+      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
+        if (getDocumentScriptType(document) == '') {
+          return undefined;
+        }
+
+        // Check if we're on a variable
+        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+        if (variableAtPosition !== null) {
+          if (exceedinglyVerbose) {
+            logger.info(`References found for variable: ${variableAtPosition.name}`);
+            logger.info(`Locations:`, variableAtPosition.locations);
+          }
+          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
+        }
+        if (getDocumentScriptType(document) == aiScript) {
+          // Check if we're on an action
+          const actionAtPosition = actionTracker.getActionAtPosition(document, position);
+          if (actionAtPosition !== null) {
+            if (exceedinglyVerbose) {
+              logger.info(`References found for action: ${actionAtPosition.name}`);
+            }
+
+            const references = actionTracker.getActionReferences(actionAtPosition.name, document);
+            const definition = actionTracker.getActionDefinition(actionAtPosition.name, document);
+
+            // Combine definition and references for complete list
+            if (definition) {
+              return [definition, ...references];
+            }
+            return references;
+          }
+
+          // Check if we're on a label
+          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
+          if (labelAtPosition !== null) {
+            if (exceedinglyVerbose) {
+              logger.info(`References found for label: ${labelAtPosition.name}`);
+            }
+
+            const references = labelTracker.getLabelReferences(labelAtPosition.name, document);
+            const definition = labelTracker.getLabelDefinition(labelAtPosition.name, document);
+
+            // Combine definition and references for complete list
+            if (definition) {
+              return [definition, ...references];
+            }
+            return references;
+          }
+        }
+        return [];
+      },
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.languages.registerRenameProvider(sel, {
+      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
+        if (getDocumentScriptType(document) == '') {
+          return undefined; // Skip if the document is not valid
+        }
+        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+        if (variableAtPosition !== null) {
+          const variableName = variableAtPosition.name;
+          const variableType = variableAtPosition.type;
+          const locations = variableAtPosition.locations;
+
+          if (exceedinglyVerbose) {
+            // Debug log: Print old name, new name, and locations
+            logger.info(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
+            logger.info(`Variable type: ${variableType}`);
+            logger.info(`Locations to update:`, locations);
+          }
+          const workspaceEdit = new vscode.WorkspaceEdit();
+          locations.forEach((location) => {
+            // Debug log: Print each edit
+            const rangeText = location.range ? document.getText(location.range) : '';
+            const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
+            if (exceedinglyVerbose) {
+              logger.info(
+                `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
+              );
+            }
+            workspaceEdit.replace(location.uri, location.range, replacementText);
+          });
+
+          // Update the tracker with the new name
+          variableTracker.updateVariableName(variableType, variableName, newName, document);
+
+          return workspaceEdit;
+        }
+
+        // Debug log: No variable name found
+        if (exceedinglyVerbose) {
+          logger.info(`No variable name found at position: ${position}`);
+        }
+        return undefined;
+      },
+    })
+  );
 }
 
 // this method is called when your extension is deactivated
