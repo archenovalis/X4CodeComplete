@@ -1,8 +1,12 @@
-# X4CodeComplete
+# X4 Code Complete extension for Visual Studio Code
 
 ## Version History
 
 ### 1.5
+
+(1.5.2) Bug fixes
+
+- Recovered accidentally deleted registration of the `reference` and `rename` providers
 
 (1.5.1) Partial completion for labels and actions
 
