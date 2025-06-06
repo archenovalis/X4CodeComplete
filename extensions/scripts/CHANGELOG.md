@@ -2,6 +2,22 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.5.2](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.1...X4CodeComplete@v1.5.2) (2025-06-06)
+
+
+### Bug Fixes
+
+* **reference:** recover reference and rename providers ([0201cdb](https://github.com/archenovalis/X4CodeComplete/commit/0201cdb32e75f6cb243ff332b3ee61088e513faa))
+
+
+### Documentation
+
+* **README:** update version history for 1.5.1 and 1.5.0 to reflect accurate feature descriptions ([209d5ac](https://github.com/archenovalis/X4CodeComplete/commit/209d5ac2931f41ae05c41db84e9d8414c817e8a9))
+* **scripts:** add missing version entry for 1.4.1 bug fixes ([d7d85bf](https://github.com/archenovalis/X4CodeComplete/commit/d7d85bf0b2671eb3c4fd6b391d6bf3ce94407a3f))
+* **scripts:** add video demonstration links for features up to 1.4.1 and 1.5.1 ([31f01dc](https://github.com/archenovalis/X4CodeComplete/commit/31f01dc931d3f8efc54cd2d8ea70cf395275ee08))
+* **scripts:** update README to version 1.5.2 ([bd23d1a](https://github.com/archenovalis/X4CodeComplete/commit/bd23d1ae2091b3e5d6cd3c9eca32bd2709e8988b))
+* **script:** update version history and enhance feature descriptions for clarity ([e5a9cb3](https://github.com/archenovalis/X4CodeComplete/commit/e5a9cb33231310393051c51f4e3ede70d9c6c0f5))
+
 ## [1.5.1](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.0...X4CodeComplete@v1.5.1) (2025-06-01)
 
 
