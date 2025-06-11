@@ -2,6 +2,13 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.5.3](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.2...X4CodeComplete@v1.5.3) (2025-06-11)
+
+
+### Code Refactoring
+
+* **scripts:** add icon and update description and publisher in package.json ([5f8940b](https://github.com/archenovalis/X4CodeComplete/commit/5f8940bb66bfffc9a3e89ad34c6b0810ab6babb5))
+
 ## [1.5.2](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.1...X4CodeComplete@v1.5.2) (2025-06-06)
 
 
