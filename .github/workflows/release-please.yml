@@ -38,9 +38,11 @@ jobs:
         run: |
           if [[ "${{ steps.release.outputs['extensions/scripts--release_created'] }}" == "true" ]]; then
             echo "working_folder=extensions/scripts" >> $GITHUB_ENV
+            echo "current_version=${{ steps.release.outputs['extensions/scripts--major'] }}.${{ steps.release.outputs['extensions/scripts--minor'] }}.${{ steps.release.outputs['extensions/scripts--patch'] }}" >> $GITHUB_ENV
             echo "tag_name=${{ steps.release.outputs['extensions/scripts--tag_name'] }}" >> "$GITHUB_OUTPUT"
           elif [[ "${{ steps.release.outputs['extensions/lua--release_created'] }}" == "true" ]]; then
             echo "working_folder=extensions/lua" >> $GITHUB_ENV
+            echo "current_version=${{ steps.release.outputs['extensions/lua--major'] }}.${{ steps.release.outputs['extensions/lua--minor'] }}.${{ steps.release.outputs['extensions/lua--patch'] }}" >> $GITHUB_ENV
             echo "tag_name=${{ steps.release.outputs['extensions/lua--tag_name'] }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -53,16 +55,16 @@ jobs:
           node-version: '22'
           check-latest: true
 
-      # Step 5: Build Extension .vsix
+      # Step 5: Build and Publish Extension .vsix
       -
-        name: Build Extension .vsix
+        name: Build and Publish Extension .vsix
         if: ${{ steps.release.outputs.releases_created == 'true' }}
         run: |
-          cd $working_folder
-          npm install
+          cd ${working_folder}
+          npm ci
           npm install -g vsce
           vsce package
-
+          vsce publish -p ${{ secrets.VSCE_PAT }} --no-update-package-json --no-git-tag-version ${current_version}
 
       # Step 6: Attach Extension .vsix to Release
       -
