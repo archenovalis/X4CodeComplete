@@ -54,19 +54,23 @@ jobs:
                 echo "Error converting $file_changed to $conversion_type" >&2
               else
                 echo "Converted $file_changed to $conversion_type"
-                file_converted="${file_changed%.md}.$conversion_type"
-                git add "docs/$file_converted"
+                file_path=$(dirname "$file_changed")
+                file_basename=$(basename "$file_changed")
+                file_converted="${file_path}/docs/${file_basename%.md}.$conversion_type"
+                git add "$file_converted"
                 if [[ $? -ne 0 ]]; then
-                  echo "Error adding docs/$file_converted to git" >&2
+                  echo "Error adding $file_converted to git" >&2
                 else
-                  echo "Added docs/$file_converted to git"
+                  echo "Added $file_converted to git"
                 fi
               fi
             done
           done
           for file_deleted in ${DELETED_FILES}; do
-            for conversion_type in egosoft nexus steam; do
-              file_to_delete="docs/${file_deleted%.md}.$conversion_type"
+            for conversion_type in egosoft nexus; do
+              file_path=$(dirname "$file_deleted")
+              file_basename=$(basename "$file_deleted")
+              file_to_delete="${file_path}/docs/${file_basename%.md}.$conversion_type"
               if [[ -f "$file_to_delete" ]]; then
                 echo "Deleting $file_to_delete"
                 git rm "$file_to_delete"
