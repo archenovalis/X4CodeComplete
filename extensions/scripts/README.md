@@ -4,6 +4,10 @@
 
 ### 1.5
 
+(1.5.3) First release on the Visual Studio Marketplace
+
+- Added a logo
+
 (1.5.2) Bug fixes
 
 - Recovered accidentally deleted registration of the `reference` and `rename` providers
@@ -108,8 +112,11 @@
 
 ## README
 
-To install, go to releases & download the .vsix file. Then install it like any other program.
-I highly recommend using this in conjunction with [these instructions](https://forum.egosoft.com/viewtopic.php?f=181&t=416621) by ledhead900, but it's not technically a requirement.
+- You can simple take this extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4CodeComplete.x4codecomplete)
+
+- Or download the .vsix file from the [GitHub releases page](https://github.com/archenovalis/X4CodeComplete/releases) and then install it like any other program. (Or from "Extensions" in Visual Studio Code)
+
+It's highly recommended to use this in conjunction with [these instructions](https://forum.egosoft.com/viewtopic.php?f=181&t=416621) by ledhead900, but it's not technically a requirement.
 
 ## Features
 
