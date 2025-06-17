@@ -3,7 +3,14 @@
   "ignorePaths": [],
   "dictionaryDefinitions": [],
   "dictionaries": [],
-  "words": ["aiscript", "mdscript", "onopentag"],
+  "words": [
+    "aiscript",
+    "chemodun",
+    "egosoft",
+    "mdscript",
+    "onclosetag",
+    "onopentag"
+  ],
   "ignoreWords": [],
   "import": []
 }
