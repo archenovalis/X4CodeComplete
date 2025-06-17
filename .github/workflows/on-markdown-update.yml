@@ -1,0 +1,97 @@
+name: React on README.md Updates
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  react-on-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get all markdown files
+        id: changed-markdown-files
+        uses: chemodun/changed-files@0.1.0
+        with:
+          # Avoid using single or double quotes for multiline patterns
+          files: .*README\.md
+
+      - name: Install python3
+        if: steps.changed-markdown-files.outputs.any_changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y python3
+
+      - name: Clone markdown-to-bbcode repository
+        if: steps.changed-markdown-files.outputs.any_changed == 'true'
+        run: |
+          git clone https://github.com/chemodun/markdown-to-bbcode-simple.git
+
+      - name: Process *.md changes
+        if: steps.changed-markdown-files.outputs.any_changed == 'true'
+        env:
+          CHANGED_FILES: ${{ steps.changed-markdown-files.outputs.all_changed_files }}
+          DELETED_FILES: ${{ steps.changed-markdown-files.outputs.deleted_files }}
+        run: |
+          git config user.name "Chem O'Dun"
+          git config user.email "chemodun@gmail.com"
+          for file_changed in ${CHANGED_FILES}; do
+            for conversion_type in egosoft nexus; do
+              echo "Converting $file_changed to $conversion_type"
+              python3 markdown-to-bbcode-simple/markdown_to_bbcode.py -t $conversion_type -o "docs" -r ${{ github.repository }} "$file_changed"
+              if [[ $? -ne 0 ]]; then
+                echo "Error converting $file_changed to $conversion_type" >&2
+              else
+                echo "Converted $file_changed to $conversion_type"
+                file_converted="${file_changed%.md}.$conversion_type"
+                git add "docs/$file_converted"
+                if [[ $? -ne 0 ]]; then
+                  echo "Error adding docs/$file_converted to git" >&2
+                else
+                  echo "Added docs/$file_converted to git"
+                fi
+              fi
+            done
+          done
+          for file_deleted in ${DELETED_FILES}; do
+            for conversion_type in egosoft nexus steam; do
+              file_to_delete="docs/${file_deleted%.md}.$conversion_type"
+              if [[ -f "$file_to_delete" ]]; then
+                echo "Deleting $file_to_delete"
+                git rm "$file_to_delete"
+                if [[ $? -ne 0 ]]; then
+                  echo "Error deleting $file_to_delete" >&2
+                else
+                  echo "Deleted $file_to_delete"
+                fi
+              fi
+            done
+          done
+          rm -rf markdown-to-bbcode-simple
+
+      - name: Commit and push changes
+        if: steps.changed-markdown-files.outputs.any_changed == 'true'
+        run: |
+          if [[ -n $(git status -uno --porcelain) ]]; then
+            git commit -m "docs(bbcode): Update bbcode files"
+            git push
+            if [[ $? -ne 0 ]]; then
+              echo "Error pushing changes" >&2
+            else
+              echo "Changes pushed successfully"
+            fi
+          else
+            echo "No changes to commit"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
