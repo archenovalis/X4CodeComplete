@@ -3,7 +3,7 @@ name: React on README.md Updates
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - '*.md'
   workflow_dispatch:
@@ -93,5 +93,3 @@ jobs:
           else
             echo "No changes to commit"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
