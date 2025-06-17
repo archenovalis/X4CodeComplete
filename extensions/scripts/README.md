@@ -6,7 +6,7 @@
 
 (1.5.3) First release on the Visual Studio Marketplace
 
-- Added a logo
+- Added a logo and updated README for the Marketplace
 
 (1.5.2) Bug fixes
 
