@@ -556,6 +556,9 @@ class VariableTracker {
   documentVariables: Map<string, { scriptType: string; variables: Map<string, Map<string, vscode.Location[]>> }> =
     new Map();
 
+  // Map to store variable definitions per document: Map<DocumentURI, Map<VariableName, vscode.Location>>
+  documentVariableDefinitions: Map<string, Map<string, vscode.Location>> = new Map();
+
   addVariable(type: string, name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
 
@@ -576,6 +579,32 @@ class VariableTracker {
       variableMap.set(normalizedName, []);
     }
     variableMap.get(normalizedName)?.push(new vscode.Location(uri, range));
+  }
+
+  // Add method to track variable definitions
+  addVariableDefinition(name: string, uri: vscode.Uri, range: vscode.Range, priority: number): void {
+    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
+
+    if (!this.documentVariableDefinitions.has(uri.toString())) {
+      this.documentVariableDefinitions.set(uri.toString(), new Map());
+    }
+    const definitionsMap = this.documentVariableDefinitions.get(uri.toString())!;
+
+    // Only set definition if we don't have one, or if this has higher priority (lower number = higher priority)
+    const existingDefinition = definitionsMap.get(normalizedName);
+    if (!existingDefinition) {
+      definitionsMap.set(normalizedName, new vscode.Location(uri, range));
+    }
+  }
+
+  // Get variable definition location
+  getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
+    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
+    const definitionsMap = this.documentVariableDefinitions.get(document.uri.toString());
+    if (!definitionsMap) {
+      return undefined;
+    }
+    return definitionsMap.get(normalizedName);
   }
 
   getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
@@ -654,6 +683,7 @@ class VariableTracker {
   clearVariablesForDocument(uri: vscode.Uri): void {
     // Remove all variables associated with the document
     this.documentVariables.delete(uri.toString());
+    this.documentVariableDefinitions.delete(uri.toString());
   }
 
   // New method to get all variables for a document
@@ -1063,6 +1093,10 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   // Track if we're inside a <library> element (needed for action tracking)
   let insideLibrary = false;
 
+  // Track context for variable definition priority (for AI scripts only)
+  let currentContext: { type: string; priority: number } | null = null;
+  const contextStack: Array<{ type: string; priority: number }> = [];
+
   let currentElementStartIndex: number | null = null;
 
   parser.onopentag = (node) => {
@@ -1071,6 +1105,20 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
     // Track if we're in a library element (for action tracking)
     if (node.name === 'library') {
       insideLibrary = true;
+    }
+
+    // Track context for AI script variable definitions
+    if (scriptType === aiScript) {
+      if (node.name === 'init') {
+        currentContext = { type: 'init', priority: 1 };
+        contextStack.push(currentContext);
+      } else if (node.name === 'patch') {
+        currentContext = { type: 'patch', priority: 2 };
+        contextStack.push(currentContext);
+      } else if (node.name === 'attention') {
+        currentContext = { type: 'attention', priority: 3 };
+        contextStack.push(currentContext);
+      }
     }
 
     currentElementStartIndex = parser.startTagPosition - 1; // Start position of the element in the text
@@ -1151,6 +1199,21 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
 
           variableTracker.addVariable('normal', variableName, scriptType, document.uri, new vscode.Range(start, end));
         } else {
+          // Check for variable definitions in AI scripts (set_value in specific contexts)
+          if (scriptType === aiScript && node.name === 'set_value' && attrName === 'name' && currentContext) {
+            const variableName = attrValue as string;
+            if (variableName.startsWith('$')) {
+              const start = document.positionAt(attrStartIndex);
+              const end = document.positionAt(attrStartIndex + variableName.length);
+              variableTracker.addVariableDefinition(
+                variableName,
+                document.uri,
+                new vscode.Range(start, end),
+                currentContext.priority
+              );
+            }
+          }
+
           tableIsFound = tableKeyPattern.test(attrValue as string);
           while (typeof attrValue === 'string' && (match = variablePattern.exec(attrValue as string)) !== null) {
             const variableName = match[1];
@@ -1201,6 +1264,14 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   parser.onclosetag = (name) => {
     if (name === 'library') {
       insideLibrary = false;
+    }
+
+    // Handle context stack for AI script variable definitions
+    if (scriptType === aiScript) {
+      if (name === 'init' || name === 'patch' || name === 'attention') {
+        contextStack.pop();
+        currentContext = contextStack.length > 0 ? contextStack[contextStack.length - 1] : null;
+      }
     }
 
     tagStack.pop(); // Pop the current tag from the stack
@@ -1967,6 +2038,16 @@ export function activate(context: vscode.ExtensionContext) {
         logger.info(`Definition found for variable: ${variableAtPosition.name}`);
         logger.info(`Locations:`, variableAtPosition.locations);
       }
+
+      // For AI scripts, try to find the definition first
+      if (scriptType === aiScript) {
+        const definition = variableTracker.getVariableDefinition(variableAtPosition.name, document);
+        if (definition) {
+          return definition;
+        }
+      }
+
+      // Fallback to first occurrence
       return variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : undefined;
     }
 
