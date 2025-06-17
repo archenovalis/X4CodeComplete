@@ -188,11 +188,11 @@ function isSpecializedCompletionContext(document: vscode.TextDocument, position:
 
 // Map to store languageSubId for each document
 const documentLanguageSubIdMap: Map<string, string> = new Map();
-const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]+)/g;
 const tableKeyPattern = /table\[/;
 const variableTypes = {
-  normal: '_variable_',
-  tableKey: '_remote variable_ or _table field_',
+  normal: 'usual variable',
+  tableKey: 'remote or table variable',
 };
 const aiScript = 'aiscript';
 const mdScript = 'mdscript';
@@ -552,21 +552,23 @@ class LocationDict implements vscode.DefinitionProvider {
 }
 
 class VariableTracker {
-  // Map to store variables per document: Map<DocumentURI, {scriptType, variablesType, variables}>
+  // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
   documentVariables: Map<
     string,
-    {
-      scriptType: string;
-      variablesType: string;
-      variables: Map<
+    Map<
+      string,
+      Map<
         string,
-        {
-          definition?: vscode.Location;
-          definitionPriority?: number;
-          locations: vscode.Location[];
-        }
-      >;
-    }
+        Map<
+          string,
+          {
+            definition?: vscode.Location;
+            definitionPriority?: number;
+            locations: vscode.Location[];
+          }
+        >
+      >
+    >
   > = new Map();
 
   addVariable(
@@ -580,21 +582,32 @@ class VariableTracker {
   ): void {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
 
-    // Get or create the document data
-    if (!this.documentVariables.has(uri.toString())) {
-      this.documentVariables.set(uri.toString(), {
-        scriptType: scriptType,
-        variablesType: type,
-        variables: new Map(),
-      });
+    // Get or create the scriptType level
+    if (!this.documentVariables.has(scriptType)) {
+      this.documentVariables.set(scriptType, new Map());
     }
-    const documentData = this.documentVariables.get(uri.toString())!;
+    const scriptTypeMap = this.documentVariables.get(scriptType)!;
 
-    // Get or create the variable entry
-    if (!documentData.variables.has(normalizedName)) {
-      documentData.variables.set(normalizedName, { locations: [] });
+    // Get or create the document URI level
+    if (!scriptTypeMap.has(uri.toString())) {
+      scriptTypeMap.set(uri.toString(), new Map());
     }
-    const variableData = documentData.variables.get(normalizedName)!;
+    const uriMap = scriptTypeMap.get(uri.toString())!;
+
+    // Get or create the variable type level
+    if (!uriMap.has(type)) {
+      uriMap.set(type, new Map());
+    }
+    const typeMap = uriMap.get(type)!;
+
+    // Get or create the variable name level
+    if (!typeMap.has(normalizedName)) {
+      typeMap.set(normalizedName, { locations: [] });
+    }
+    const variableData = typeMap.get(normalizedName)!;
+
+    // Add to locations
+    variableData.locations.push(new vscode.Location(uri, range));
 
     // Handle definition if this is marked as one
     if (isDefinition && definitionPriority !== undefined) {
@@ -607,35 +620,47 @@ class VariableTracker {
         variableData.definition = new vscode.Location(uri, range);
         variableData.definitionPriority = definitionPriority;
       }
-    } else {
-      // Add to locations
-      variableData.locations.push(new vscode.Location(uri, range));
     }
   }
 
-  // Get variable definition location
   getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
-    const documentData = this.documentVariables.get(document.uri.toString());
-    if (!documentData) {
-      return undefined;
+    const scriptType = getDocumentScriptType(document);
+
+    // Navigate through the map levels
+    const scriptTypeMap = this.documentVariables.get(scriptType);
+    if (!scriptTypeMap) return undefined;
+
+    const uriMap = scriptTypeMap.get(document.uri.toString());
+    if (!uriMap) return undefined;
+
+    // Check all variable types for this variable name
+    for (const typeMap of uriMap.values()) {
+      const variableData = typeMap.get(normalizedName);
+      if (variableData?.definition) {
+        return variableData.definition;
+      }
     }
-    const variableData = documentData.variables.get(normalizedName);
-    return variableData?.definition;
+
+    return undefined;
   }
 
   getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
+    const scriptType = getDocumentScriptType(document);
 
-    const documentData = this.documentVariables.get(document.uri.toString());
-    if (!documentData) {
-      return [];
-    }
+    // Navigate through the map levels
+    const scriptTypeMap = this.documentVariables.get(scriptType);
+    if (!scriptTypeMap) return [];
 
-    const variableData = documentData.variables.get(normalizedName);
-    if (!variableData) {
-      return [];
-    }
+    const uriMap = scriptTypeMap.get(document.uri.toString());
+    if (!uriMap) return [];
+
+    const typeMap = uriMap.get(type);
+    if (!typeMap) return [];
+
+    const variableData = typeMap.get(normalizedName);
+    if (!variableData) return [];
 
     return variableData.locations;
   }
@@ -651,80 +676,108 @@ class VariableTracker {
     locations: vscode.Location[];
     scriptType: string;
   } | null {
-    const documentData = this.documentVariables.get(document.uri.toString());
-    if (!documentData) {
-      return null;
+    const scriptType = getDocumentScriptType(document);
+
+    // Navigate through the map levels
+    const scriptTypeMap = this.documentVariables.get(scriptType);
+    if (!scriptTypeMap) return null;
+
+    const uriMap = scriptTypeMap.get(document.uri.toString());
+    if (!uriMap) return null;
+
+    // Check all variable types
+    for (const [variableType, typeMap] of uriMap) {
+      // Check all variable names
+      for (const [variableName, variableData] of typeMap) {
+        if (variableData.definition && variableData.definition.range.contains(position)) {
+          return {
+            name: variableName,
+            type: variableType,
+            location: variableData.definition,
+            definition: variableData.definition,
+            locations: variableData.locations,
+            scriptType: scriptType,
+          };
+        }
+        const variableLocation = variableData.locations.find((loc) => loc.range.contains(position));
+        if (variableLocation) {
+          return {
+            name: variableName,
+            type: variableType,
+            location: variableLocation,
+            definition: variableData.definition,
+            locations: variableData.locations,
+            scriptType: scriptType,
+          };
+        }
+      }
     }
 
-    for (const [variableName, variableData] of documentData.variables) {
-      if (variableData.definition && variableData.definition.range.contains(position)) {
-        return {
-          name: variableName,
-          type: documentData.variablesType,
-          definition: variableData.definition,
-          location: variableData.definition,
-          locations: variableData.locations,
-          scriptType: documentData.scriptType,
-        };
-      }
-      const variableLocation = variableData.locations.find((loc) => loc.range.contains(position));
-      if (variableLocation) {
-        return {
-          name: variableName,
-          type: documentData.variablesType,
-          definition: variableData.definition,
-          location: variableLocation,
-          locations: variableData.locations,
-          scriptType: documentData.scriptType,
-        };
-      }
-    }
     return null;
   }
 
   updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
     const normalizedOldName = oldName.startsWith('$') ? oldName.substring(1) : oldName;
     const normalizedNewName = newName.startsWith('$') ? newName.substring(1) : newName;
+    const scriptType = getDocumentScriptType(document);
 
-    const documentData = this.documentVariables.get(document.uri.toString());
-    if (!documentData) {
-      return;
-    }
+    // Navigate through the map levels
+    const scriptTypeMap = this.documentVariables.get(scriptType);
+    if (!scriptTypeMap) return;
 
-    const variableData = documentData.variables.get(normalizedOldName);
-    if (!variableData) {
-      return;
-    }
+    const uriMap = scriptTypeMap.get(document.uri.toString());
+    if (!uriMap) return;
+
+    const typeMap = uriMap.get(type);
+    if (!typeMap) return;
+
+    const variableData = typeMap.get(normalizedOldName);
+    if (!variableData) return;
 
     // Move the variable data to the new name
-    documentData.variables.set(normalizedNewName, variableData);
-    documentData.variables.delete(normalizedOldName);
+    typeMap.set(normalizedNewName, variableData);
+    typeMap.delete(normalizedOldName);
   }
 
   clearVariablesForDocument(uri: vscode.Uri): void {
-    this.documentVariables.delete(uri.toString());
+    // Clear variables for all script types
+    for (const scriptTypeMap of this.documentVariables.values()) {
+      scriptTypeMap.delete(uri.toString());
+    }
   }
 
   getAllVariablesForDocument(uri: vscode.Uri, exclude: string = ''): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
-    const documentData = this.documentVariables.get(uri.toString());
-    if (!documentData) {
-      return result;
-    }
+    const scriptType = getDocumentScriptType(
+      vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString())!
+    );
 
-    for (const [name, variableData] of documentData.variables) {
-      if (name === exclude) {
-        continue;
+    if (!scriptType) return result;
+
+    // Navigate through the map levels
+    const scriptTypeMap = this.documentVariables.get(scriptType);
+    if (!scriptTypeMap) return result;
+
+    const uriMap = scriptTypeMap.get(uri.toString());
+    if (!uriMap) return result;
+
+    // Process all variable types
+    for (const [variableType, typeMap] of uriMap) {
+      // Process all variables
+      for (const [variableName, variableData] of typeMap) {
+        if (variableName === exclude) {
+          continue;
+        }
+
+        const totalLocations = variableData.locations.length;
+
+        const item = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
+        item.detail = `${scriptTypes[scriptType] || 'Script'} ${variableTypes[variableType] || 'Variable'}`;
+        item.documentation = new vscode.MarkdownString(`Used ${totalLocations} time${totalLocations !== 1 ? 's' : ''}`);
+
+        item.insertText = variableName;
+        result.push(item);
       }
-
-      const totalLocations = variableData.locations.length;
-
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
-      item.detail = `${scriptTypes[documentData.scriptType] || 'Script'} ${variableTypes[documentData.variablesType] || 'Variable'}`;
-      item.documentation = new vscode.MarkdownString(`Used ${totalLocations} time${totalLocations !== 1 ? 's' : ''}`);
-
-      item.insertText = name;
-      result.push(item);
     }
 
     return result;
@@ -1124,14 +1177,17 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
 
     // Track context for AI script variable definitions
     if (scriptType === aiScript) {
-      if (node.name === 'init') {
-        currentContext = { type: 'init', priority: 1 };
+      if (node.name === 'library') {
+        currentContext = { type: 'init', priority: 10 };
+        contextStack.push(currentContext);
+      } else if (node.name === 'init') {
+        currentContext = { type: 'init', priority: 20 };
         contextStack.push(currentContext);
       } else if (node.name === 'patch') {
-        currentContext = { type: 'patch', priority: 2 };
+        currentContext = { type: 'patch', priority: 30 };
         contextStack.push(currentContext);
       } else if (node.name === 'attention') {
-        currentContext = { type: 'attention', priority: 3 };
+        currentContext = { type: 'attention', priority: 40 };
         contextStack.push(currentContext);
       }
     }
@@ -1219,25 +1275,33 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
             true,
             0
           );
-        } else {
-          // Check for variable definitions in AI scripts (set_value in specific contexts)
-          if (scriptType === aiScript && node.name === 'set_value' && attrName === 'name' && currentContext) {
-            const variableName = attrValue as string;
-            if (variableName.startsWith('$')) {
-              const start = document.positionAt(attrStartIndex);
-              const end = document.positionAt(attrStartIndex + variableName.length);
-              variableTracker.addVariable(
-                'normal',
-                variableName,
-                scriptType,
-                document.uri,
-                new vscode.Range(start, end),
-                true, // isDefinition
-                currentContext.priority
-              );
-            }
+        } else if (
+          scriptType === aiScript &&
+          currentContext &&
+          ((node.name === 'set_value' && attrName === 'name') ||
+            (node.name === 'create_group' && attrName === 'groupname') ||
+            (node.name === 'create_list' && attrName === 'name'))
+        ) {
+          const attributeValue = attrValue as string;
+          const variablesMatched = [...(attributeValue.matchAll(variablePattern) || [])];
+          for (let i = 0; i < variablesMatched.length; i++) {
+            const matchedVariable = variablesMatched[i];
+            const variableFull = matchedVariable[0];
+            const variableName = matchedVariable[1];
+            const variablePosition = attributeValue.indexOf(variableFull);
+            const start = document.positionAt(attrStartIndex + variablePosition);
+            const end = document.positionAt(attrStartIndex + variablePosition + variableFull.length);
+            variableTracker.addVariable(
+              variablePosition === 0 ? 'normal' : 'tableKey',
+              variableName,
+              scriptType,
+              document.uri,
+              new vscode.Range(start, end),
+              i == variablesMatched.length - 1, // isDefinition
+              currentContext.priority
+            );
           }
-
+        } else {
           tableIsFound = tableKeyPattern.test(attrValue as string);
           while (typeof attrValue === 'string' && (match = variablePattern.exec(attrValue as string)) !== null) {
             const variableName = match[1];
