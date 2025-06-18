@@ -8,6 +8,7 @@
 [list]
 [*] Implemented basic variable definitions detection in AIScripts
 [*] Restored properties completion with some improvements
+[*] Correct variable position calculation in variable tracking logic
 [/list]
 (1.5.3) First release on the Visual Studio Marketplace
 [list]
