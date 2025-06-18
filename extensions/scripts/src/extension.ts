@@ -469,7 +469,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       return this.makeCompletionList(items);
     }
-    // Now check for the special hard to complete onles
+    // Now check for the special hard to complete ones
     if (prevToken.startsWith('{')) {
       if (exceedinglyVerbose) {
         logger.info('Matching bracketed type');
@@ -1781,7 +1781,7 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
   let hoverText = '';
 
   // Find keywords that match the hoverWord either in their name or property names
-  const matchingKeynames = keywords.filter(
+  const matchingKeyNames = keywords.filter(
     (k: Keyword) =>
       k.$.name.includes(hoverWord) || k.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord))
   );
@@ -1794,7 +1794,7 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
   );
 
   if (debug) {
-    logger.info('matchingKeynames:', matchingKeynames);
+    logger.info('matchingKeyNames:', matchingKeyNames);
     logger.info('matchingDatatypes:', matchingDatatypes);
   }
 
@@ -1811,7 +1811,7 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
   const groupedMatches: { [key: string]: GroupedMatch } = {};
 
   // Process matching keywords
-  matchingKeynames.forEach((k: Keyword) => {
+  matchingKeyNames.forEach((k: Keyword) => {
     const header = k.$.name;
 
     // Initialize the header if not already present
