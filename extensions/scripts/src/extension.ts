@@ -371,47 +371,6 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
     items.set(complete, item);
   }
-  buildProperty(
-    prefix: string,
-    typeName: string,
-    propertyName: string,
-    propertyType: string,
-    items: Map<string, vscode.CompletionItem>,
-    depth: number
-  ) {
-    // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(propertyName) > -1) {
-      return;
-    }
-    // TODO handle better
-    // if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(typeName) > -1) {
-    //   return;
-    // }
-    if (exceedinglyVerbose) {
-      logger.info('\tBuilding Property', typeName + '.' + propertyName, 'depth: ', depth, 'prefix: ', prefix);
-    }
-    let completion: string;
-    if (prefix !== '') {
-      completion = prefix + '.' + cleanStr(propertyName);
-    } else {
-      completion = propertyName;
-    }
-    // TODO bracket handling
-    // let specialPropMatches =propertyName.match(/(?:[^{]*){[$].*}/g);
-    // if (specialPropMatches !== null){
-    // 	specialPropMatches.forEach(element => {
-    // 		let start = element.indexOf("$")+1;
-    // 		let end = element.indexOf("}", start);
-    // 		let specialPropertyType = element.substring(start, end);
-    // 		let newStr =  completion.replace(element, "{"+specialPropertyType+".}")
-    // 		this.addItem(items, newStr);
-    // 		return;
-    // 	});
-    // } else {
-    this.addItem(items, completion, /* typeName + '.' +  */ propertyName);
-    // this.buildType(completion, propertyType, items, depth /*  + 1 */);
-    // }
-  }
 
   buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
     // TODO handle better
@@ -444,7 +403,6 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     for (const prop of entry.properties.entries()) {
-      // this.buildProperty('', typeName, prop[0], prop[1], items, depth /*  + 1 */);
       this.addItem(items, prop[0], '**' + [typeName, prop[0]].join('.') + '**: ' + entry.details.get(prop[0]));
     }
     if (entry.supertype !== undefined) {
@@ -483,16 +441,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
     if (exceedinglyVerbose) {
       logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
     }
-    // If we have a previous token & it's in the typeDictionary, only use that's entries
+    // If we have a previous token & it's in the typeDictionary or a property with type, only use that's entries
     if (prevToken !== '') {
-      let entry = this.typeDict.get(prevToken);
-      if (entry === undefined && this.allProp.has(prevToken)) {
-        prevToken = this.allProp.get(prevToken) || '';
-        if (prevToken !== '') {
-          entry = this.typeDict.get(prevToken);
-        }
-      }
-      if (entry === undefined) {
+      prevToken = this.typeDict.has(prevToken)
+        ? prevToken
+        : this.allProp.has(prevToken)
+          ? this.allProp.get(prevToken) || ''
+          : '';
+      if (prevToken === undefined || prevToken === '') {
         if (exceedinglyVerbose) {
           logger.info('Missing previous token!');
         }
@@ -500,15 +456,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
         return this.defaultCompletions;
       } else {
         if (exceedinglyVerbose) {
-          logger.info('Matching on type!');
+          logger.info(`Matching on type: ${prevToken}!`);
         }
         this.buildType('', prevToken, items, 0);
-        // entry.properties.forEach((v, k) => {
-        //   if (exceedinglyVerbose) {
-        //     logger.info('Top level property: ' + k + ' ' + v);
-        //   }
-        //   this.buildProperty('', prevToken, k, v, items, 0);
-        // });
         return this.makeCompletionList(items);
       }
     }
@@ -1081,7 +1031,7 @@ class ActionTracker {
 
     // Process all actions
     for (const [name, location] of documentData.actions.entries()) {
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
       item.detail = `AI Script Action`;
 
       // Count references
