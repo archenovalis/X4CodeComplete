@@ -2,6 +2,39 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.5.4](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.3...X4CodeComplete@v1.5.4) (2025-06-18)
+
+
+### Bug Fixes
+
+* **scripts:** correct typos in comments and variable names for clarity ([0f9de3d](https://github.com/archenovalis/X4CodeComplete/commit/0f9de3db698babde2fb56d3275cee5d8396435d1))
+* **scripts:** correct variable position calculation in variable tracking logic ([2821a8f](https://github.com/archenovalis/X4CodeComplete/commit/2821a8f3ec7f4f52a34b3b53ecd5fba4c025926b))
+* **scripts:** enhance token parsing and property handling in completion logic for literals ([92ae5d5](https://github.com/archenovalis/X4CodeComplete/commit/92ae5d59549f1b646dbb5e4e40f2d2a468df1e0b))
+* **scripts:** restore and enhance properties completion logic ([efd653f](https://github.com/archenovalis/X4CodeComplete/commit/efd653f8527ecc99e38bc35368c62089df71e718))
+
+
+### Code Refactoring
+
+* **scripts:** preliminary add variable definition detection for variables - non parameters of aiscript ([9b863c2](https://github.com/archenovalis/X4CodeComplete/commit/9b863c2390e8244a77bf091b7337f2eed725fd76))
+* **scripts:** simplify property building logic and improve token matching ([c4f9220](https://github.com/archenovalis/X4CodeComplete/commit/c4f9220239ce55bc4b7d53cd10cec8195cd1f8ea))
+* **variables:** enhance variable tracking with definitions and priorities ([18ec57c](https://github.com/archenovalis/X4CodeComplete/commit/18ec57c493b497f807eff4a5724a072500d7e6af))
+* **variables:** improve variable tracking structure and enhance completion logic ([4dfe91e](https://github.com/archenovalis/X4CodeComplete/commit/4dfe91e15f7a9e283b73c8bc884c2d16bac3f51d))
+
+
+### Documentation
+
+* **bbcode:** Update bbcode files ([c2132ed](https://github.com/archenovalis/X4CodeComplete/commit/c2132ed8f98d0addda01f19d5a170b9613732c54))
+* **bbcode:** Update bbcode files ([5eae635](https://github.com/archenovalis/X4CodeComplete/commit/5eae635b8c34f486a3621cb8bdebda065f5d4daf))
+* **bbcode:** Update bbcode files ([4daee79](https://github.com/archenovalis/X4CodeComplete/commit/4daee79f6fd5e2cf8a3ddbe4eea583534501f5ed))
+* **scripts:** refine README.md for clarity on Marketplace usage ([af6787f](https://github.com/archenovalis/X4CodeComplete/commit/af6787fe37678edce367d20d0aa191180bc8e676))
+* **scripts:** update demo links for version 1.5.4 and enhance version history ([b7b678a](https://github.com/archenovalis/X4CodeComplete/commit/b7b678a7425ef428fdca44b3ae290ab423c037a6))
+* **scripts:** update README.md ([3406998](https://github.com/archenovalis/X4CodeComplete/commit/3406998fc35fca49f9805dcc93e9eff6a6c4cdde))
+* **scripts:** update README.md for version 1.5.3 release and installation instructions ([4fbb848](https://github.com/archenovalis/X4CodeComplete/commit/4fbb8485bc3a8318cec99f0e316a90fe3b864468))
+* **scripts:** update README.md to clarify Marketplace usage ([4054949](https://github.com/archenovalis/X4CodeComplete/commit/4054949c96037a521f3b85a52433f9773a604c2e))
+* **scripts:** update README.md to include logo addition and Marketplace details ([c40c1dc](https://github.com/archenovalis/X4CodeComplete/commit/c40c1dc5717af74d6d4d13aa2a700db991a59dc1))
+* **scripts:** update version history to include variable position calculation fix ([da2cd07](https://github.com/archenovalis/X4CodeComplete/commit/da2cd07ec37e74af6e1345640adf520adb223083))
+* **scripts:** update version history to reflect restoration of properties completion and variable definitions detection ([9b1a1f9](https://github.com/archenovalis/X4CodeComplete/commit/9b1a1f98abaa4b793875363c50ed84b4d8f30a49))
+
 ## [1.5.3](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.2...X4CodeComplete@v1.5.3) (2025-06-11)
 
 

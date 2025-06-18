@@ -2,7 +2,7 @@
   "name": "x4codecomplete",
   "displayName": "X4CodeComplete",
   "description": "There is an unofficial X4: Foundations extension for Visual Studio Code that provides autocompletion and syntax highlighting for XML files used in the game modding.",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "icon": "icons/X4CodeComplete128.png",
   "repository": {
     "type": "git",
