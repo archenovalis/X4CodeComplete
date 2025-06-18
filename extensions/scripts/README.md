@@ -4,6 +4,11 @@
 
 ### 1.5
 
+(1.5.4) Restore properties completion and implement basic variable definitions detection
+
+- Implemented basic variable definitions detection in AIScripts
+- Restored properties completion with some improvements
+
 (1.5.3) First release on the Visual Studio Marketplace
 
 - Added a logo and updated README to reflect the Marketplace usage
