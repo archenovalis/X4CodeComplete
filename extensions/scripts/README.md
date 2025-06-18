@@ -191,11 +191,15 @@ It's highly recommended to use this in conjunction with [these instructions](htt
 
 - All features up to version 1.4.1
 
-  [![X4CodeComplete Demo: all features up to version 1.4.1](https://img.youtube.com/vi/0gBYUklBU_o/0.jpg)](https://www.youtube.com/watch?v=0gBYUklBU_o)
+  [X4CodeComplete Demo: all features up to version 1.4.1](https://www.youtube.com/watch?v=0gBYUklBU_o)
 
 - Features added in version 1.5.1
 
-  [![X4CodeComplete Demo: features added in version 1.5.1](https://img.youtube.com/vi/bTkF7GMg5gw/0.jpg)](https://www.youtube.com/watch?v=bTkF7GMg5gw)
+  [X4CodeComplete Demo: features added in version 1.5.1](https://www.youtube.com/watch?v=bTkF7GMg5gw)
+
+- Features added and fixed in version 1.5.4
+
+  [Features added and fixed in version 1.5.4](https://www.youtube.com/watch?v=1SZED2J-xlg)
 
 ## Usage Examples
 
