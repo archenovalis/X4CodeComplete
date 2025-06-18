@@ -5,11 +5,16 @@
   "dictionaries": [],
   "words": [
     "aiscript",
+    "Cgetty",
     "chemodun",
     "egosoft",
+    "ledhead",
     "mdscript",
     "onclosetag",
-    "onopentag"
+    "onopentag",
+    "opentag",
+    "readtext",
+    "scriptproperties"
   ],
   "ignoreWords": [],
   "import": []
