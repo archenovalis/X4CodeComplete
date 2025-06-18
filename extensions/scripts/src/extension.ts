@@ -1272,11 +1272,12 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
       }
 
       if (typeof attrValue === 'string') {
-        const attrStartIndex = text.indexOf(attrValue as string, currentElementStartIndex || 0);
+        const attrStartIndex = text.indexOf(`${attrName}=`, currentElementStartIndex || 0);
+        const attrValueStartIndex = text.indexOf(attrValue, attrStartIndex || 0);
         if (node.name === 'param' && tagStack[tagStack.length - 2] === 'params' && attrName === 'name') {
           const variableName = attrValue as string;
-          const start = document.positionAt(attrStartIndex);
-          const end = document.positionAt(attrStartIndex + variableName.length);
+          const start = document.positionAt(attrValueStartIndex);
+          const end = document.positionAt(attrValueStartIndex + variableName.length);
 
           variableTracker.addVariable(
             'normal',
@@ -1301,8 +1302,8 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
             const variableFull = matchedVariable[0];
             const variableName = matchedVariable[1];
             const variablePosition = attributeValue.indexOf(variableFull);
-            const start = document.positionAt(attrStartIndex + variablePosition);
-            const end = document.positionAt(attrStartIndex + variablePosition + variableFull.length);
+            const start = document.positionAt(attrValueStartIndex + variablePosition);
+            const end = document.positionAt(attrValueStartIndex + variablePosition + variableFull.length);
             variableTracker.addVariable(
               variablePosition === 0 ? 'normal' : 'tableKey',
               variableName,
@@ -1314,10 +1315,10 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
             );
           }
         } else {
-          tableIsFound = tableKeyPattern.test(attrValue as string);
-          while (typeof attrValue === 'string' && (match = variablePattern.exec(attrValue as string)) !== null) {
+          tableIsFound = tableKeyPattern.test(attrValue);
+          while ((match = variablePattern.exec(attrValue)) !== null) {
             const variableName = match[1];
-            const variableStartIndex = attrStartIndex + match.index;
+            const variableStartIndex = attrValueStartIndex + match.index;
 
             if (
               variableStartIndex == 0 ||
@@ -1330,7 +1331,7 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
               let equalIsPreceding = false;
               if (tableIsFound) {
                 const equalsPattern = /=[^%,]*$/;
-                const precedingText = text.substring(attrStartIndex, variableStartIndex);
+                const precedingText = text.substring(attrValueStartIndex, variableStartIndex);
                 equalIsPreceding = equalsPattern.test(precedingText);
               }
               if (
