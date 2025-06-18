@@ -275,13 +275,17 @@ function findRelevantPortion(text: string) {
   if (newToken.endsWith('"')) {
     newToken = newToken.substring(0, newToken.length - 1);
   }
-  const prevPos = Math.max(text.lastIndexOf('.', pos - 1), text.lastIndexOf('"', pos - 1));
+  const prevPos = Math.max(
+    text.lastIndexOf('.', pos - 1),
+    text.lastIndexOf('"', pos - 1),
+    text.lastIndexOf(' ', pos - 1)
+  );
   // TODO something better
   if (text.length - pos > 3 && prevPos === -1) {
     return ['', newToken];
   }
   const prevToken = text.substring(prevPos + 1, pos);
-  return [prevToken, newToken];
+  return [prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken, newToken];
 }
 
 class TypeEntry {
@@ -319,13 +323,22 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
   addTypeLiteral(key: string, val: string): void {
     const k = cleanStr(key);
-    const v = cleanStr(val);
+    let v = cleanStr(val);
+    if (v.indexOf(k) === 0) {
+      v = v.slice(k.length + 1);
+    }
     let entry = this.typeDict.get(k);
     if (entry === undefined) {
       entry = new TypeEntry();
       this.typeDict.set(k, entry);
     }
     entry.addLiteral(v);
+    if (this.allProp.has(v)) {
+      // If the commonDict already has this property, we can skip adding it again
+      return;
+    } else {
+      this.allProp.set(v, 'undefined');
+    }
   }
 
   addProperty(key: string, prop: string, type?: string, details?: string): void {
@@ -374,7 +387,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
   buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
     // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(typeName) > -1) {
+    if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(typeName) > -1) {
       return;
     }
     if (exceedinglyVerbose) {
@@ -404,6 +417,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
     for (const prop of entry.properties.entries()) {
       this.addItem(items, prop[0], '**' + [typeName, prop[0]].join('.') + '**: ' + entry.details.get(prop[0]));
+    }
+    for (const literal of entry.literals.values()) {
+      this.addItem(items, literal);
     }
     if (entry.supertype !== undefined) {
       if (exceedinglyVerbose) {
@@ -436,8 +452,8 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       return this.makeCompletionList(items);
     }
-    let prevToken = interesting[0];
-    const newToken = interesting[1];
+    let prevToken = interesting[0].trim();
+    const newToken = interesting[1].trim();
     if (exceedinglyVerbose) {
       logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
     }
