@@ -31,6 +31,41 @@ let scriptPropertiesPath: string;
 let extensionsFolder: string;
 let languageData: Map<string, Map<string, string>> = new Map();
 
+// // Extract property completion logic into a function
+// function getPropertyCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
+//   if (getDocumentScriptType(document) === '') {
+//     return []; // Skip if the document is not valid
+//   }
+
+//   // Get the current line up to the cursor position
+//   const linePrefix = document.lineAt(position).text.substring(0, position.character);
+
+//   // First scenario: . was just typed
+//   if (linePrefix.endsWith('.')) {
+//     return Loc;
+//   }
+
+//   // Second scenario: We're editing an existing variable
+//   // Find the last $ character before the cursor
+//   const lastDollarIndex = linePrefix.lastIndexOf('$');
+//   if (lastDollarIndex >= 0) {
+//     // Check if we're within a variable (no whitespace or special chars between $ and cursor)
+//     const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
+
+//     // If this text is a valid variable name part
+//     if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
+//       // Get the partial variable name we're typing (without the $)
+//       const partialName = textBetweenDollarAndCursor;
+//       // Get all variables and filter them by the current prefix
+//       const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
+//       // Filter variables that match the partial name
+//       return allVariables.filter((item) => item.label.toString().toLowerCase().startsWith(partialName.toLowerCase()));
+//     }
+//   }
+
+//   return []; // No completions if not in a variable context
+// }
+
 // Extract variable completion logic into a function
 function getVariableCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
   if (getDocumentScriptType(document) === '') {
@@ -163,24 +198,27 @@ function getActionCompletions(document: vscode.TextDocument, position: vscode.Po
 }
 
 // Function to check if we're in a specialized completion context
-function isSpecializedCompletionContext(document: vscode.TextDocument, position: vscode.Position): boolean {
+function specializedCompletionContext(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): vscode.CompletionItem[] {
   // Check if any of the specialized completion functions return results
   const variableCompletions = getVariableCompletions(document, position);
   if (variableCompletions.length > 0) {
-    return true;
+    return variableCompletions;
   }
 
   const labelCompletions = getLabelCompletions(document, position);
   if (labelCompletions.length > 0) {
-    return true;
+    return labelCompletions;
   }
 
   const actionCompletions = getActionCompletions(document, position);
   if (actionCompletions.length > 0) {
-    return true;
+    return actionCompletions;
   }
 
-  return false;
+  return [];
 }
 
 // Flag to indicate if specialized completion is active
@@ -250,16 +288,23 @@ class TypeEntry {
   properties: Map<string, string> = new Map<string, string>();
   supertype?: string;
   literals: Set<string> = new Set<string>();
+  details: Map<string, string> = new Map<string, string>();
   addProperty(value: string, type: string = '') {
     this.properties.set(value, type);
   }
   addLiteral(value: string) {
     this.literals.add(value);
   }
+  addDetail(key: string, value: string) {
+    this.details.set(key, value);
+  }
 }
 
 class CompletionDict implements vscode.CompletionItemProvider {
   typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
+  allProp: Map<string, string> = new Map<string, string>();
+  allPropItems: vscode.CompletionItem[] = [];
+  defaultCompletions: vscode.CompletionList;
   addType(key: string, supertype?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
@@ -283,7 +328,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     entry.addLiteral(v);
   }
 
-  addProperty(key: string, prop: string, type?: string): void {
+  addProperty(key: string, prop: string, type?: string, details?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
     if (entry === undefined) {
@@ -291,6 +336,18 @@ class CompletionDict implements vscode.CompletionItemProvider {
       this.typeDict.set(k, entry);
     }
     entry.addProperty(prop, type);
+    if (details !== undefined) {
+      entry.addDetail(prop, details);
+    }
+    const shortProp = prop.split('.')[0];
+    if (this.allProp.has(shortProp)) {
+      // If the commonDict already has this property, we can skip adding it again
+      return;
+    } else if (type !== undefined) {
+      this.allProp.set(shortProp, type);
+      const item = new vscode.CompletionItem(shortProp);
+      this.allPropItems.push(item);
+    }
   }
 
   addItem(items: Map<string, vscode.CompletionItem>, complete: string, info?: string): void {
@@ -306,16 +363,13 @@ class CompletionDict implements vscode.CompletionItemProvider {
       return;
     }
 
-    const result = new vscode.CompletionItem(complete);
-    if (info !== undefined) {
-      result.detail = info;
-    } else {
-      result.detail = complete;
-    }
+    const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Property);
+    item.documentation = info ? new vscode.MarkdownString(info) : undefined;
+
     if (exceedinglyVerbose) {
-      logger.info('\t\tAdded completion: ' + complete + ' info: ' + result.detail);
+      logger.info('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
     }
-    items.set(complete, result);
+    items.set(complete, item);
   }
   buildProperty(
     prefix: string,
@@ -330,9 +384,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
       return;
     }
     // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(typeName) > -1) {
-      return;
-    }
+    // if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(typeName) > -1) {
+    //   return;
+    // }
     if (exceedinglyVerbose) {
       logger.info('\tBuilding Property', typeName + '.' + propertyName, 'depth: ', depth, 'prefix: ', prefix);
     }
@@ -354,8 +408,8 @@ class CompletionDict implements vscode.CompletionItemProvider {
     // 		return;
     // 	});
     // } else {
-    this.addItem(items, completion, typeName + '.' + propertyName);
-    this.buildType(completion, propertyType, items, depth + 1);
+    this.addItem(items, completion, /* typeName + '.' +  */ propertyName);
+    // this.buildType(completion, propertyType, items, depth /*  + 1 */);
     // }
   }
 
@@ -378,9 +432,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
       return;
     }
 
-    if (depth > -1 && prefix !== '') {
-      this.addItem(items, typeName);
-    }
+    // if (depth > -1 && prefix !== '') {
+    //   this.addItem(items, typeName);
+    // }
 
     if (items.size > 1000) {
       if (exceedinglyVerbose) {
@@ -390,13 +444,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     for (const prop of entry.properties.entries()) {
-      this.buildProperty(prefix, typeName, prop[0], prop[1], items, depth + 1);
+      // this.buildProperty('', typeName, prop[0], prop[1], items, depth /*  + 1 */);
+      this.addItem(items, prop[0], '**' + [typeName, prop[0]].join('.') + '**: ' + entry.details.get(prop[0]));
     }
     if (entry.supertype !== undefined) {
       if (exceedinglyVerbose) {
         logger.info('Recursing on supertype: ', entry.supertype);
       }
-      this.buildType(typeName, entry.supertype, items, depth + 1);
+      this.buildType(typeName, entry.supertype, items, depth /*  + 1 */);
     }
   }
   makeCompletionList(items: Map<string, vscode.CompletionItem>): vscode.CompletionList {
@@ -409,8 +464,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     // Check if we're in a specialized completion context (variables, labels, actions)
-    if (isSpecializedCompletionContext(document, position)) {
-      return undefined; // Let the specialized providers handle it
+    let specializedCompletion = specializedCompletionContext(document, position);
+    if (specializedCompletion.length > 0) {
+      return specializedCompletion;
     }
 
     const items = new Map<string, vscode.CompletionItem>();
@@ -422,31 +478,37 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       return this.makeCompletionList(items);
     }
-    const prevToken = interesting[0];
+    let prevToken = interesting[0];
     const newToken = interesting[1];
     if (exceedinglyVerbose) {
       logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
     }
     // If we have a previous token & it's in the typeDictionary, only use that's entries
     if (prevToken !== '') {
-      const entry = this.typeDict.get(prevToken);
+      let entry = this.typeDict.get(prevToken);
+      if (entry === undefined && this.allProp.has(prevToken)) {
+        prevToken = this.allProp.get(prevToken) || '';
+        if (prevToken !== '') {
+          entry = this.typeDict.get(prevToken);
+        }
+      }
       if (entry === undefined) {
         if (exceedinglyVerbose) {
           logger.info('Missing previous token!');
         }
-        // TODO backtrack & search
-        return;
+
+        return this.defaultCompletions;
       } else {
         if (exceedinglyVerbose) {
           logger.info('Matching on type!');
         }
-
-        entry.properties.forEach((v, k) => {
-          if (exceedinglyVerbose) {
-            logger.info('Top level property: ', k, v);
-          }
-          this.buildProperty('', prevToken, k, v, items, 0);
-        });
+        this.buildType('', prevToken, items, 0);
+        // entry.properties.forEach((v, k) => {
+        //   if (exceedinglyVerbose) {
+        //     logger.info('Top level property: ' + k + ' ' + v);
+        //   }
+        //   this.buildProperty('', prevToken, k, v, items, 0);
+        // });
         return this.makeCompletionList(items);
       }
     }
@@ -495,7 +557,7 @@ class LocationDict implements vscode.DefinitionProvider {
 
   addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
     const range = new vscode.Range(start, end);
-    const uri = vscode.Uri.parse('file://' + file);
+    const uri = vscode.Uri.file(file);
     this.dict.set(cleanStr(name), new vscode.Location(uri, range));
   }
   addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
@@ -1394,8 +1456,7 @@ function readScriptProperties(filepath: string) {
     // Process keywords and datatypes here, return the completed results
     keywords = processKeywords(rawData, result['scriptproperties']['keyword']);
     datatypes = processDatatypes(rawData, result['scriptproperties']['datatype']);
-
-    completionProvider.addTypeLiteral('boolean', '==true');
+    completionProvider.defaultCompletions = new vscode.CompletionList(completionProvider.allPropItems, true);
     completionProvider.addTypeLiteral('boolean', '==false');
     logger.info('Parsed scriptproperties.xml');
   });
@@ -1417,7 +1478,7 @@ function processProperty(rawData: string, parent: string, parentType: string, pr
     logger.info('\tProperty read: ', name);
   }
   definitionProvider.addPropertyLocation(rawData, name, parent, parentType);
-  completionProvider.addProperty(parent, name, prop.$.type);
+  completionProvider.addProperty(parent, name, prop.$.type, prop.$.result);
 }
 
 function processKeyword(rawData: string, e: Keyword) {
@@ -2191,8 +2252,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (definitionProvider.dict.has(relevant)) {
         return definitionProvider.dict.get(relevant);
       }
-      relevant = relevant.substring(relevant.indexOf('.') + 1);
-    } while (relevant.indexOf('.') !== -1);
+      if (relevant.indexOf('.') !== -1) {
+        relevant = relevant.substring(relevant.indexOf('.') + 1);
+      } else {
+        break; // No more dots to process
+      }
+    } while (relevant.length > 0);
 
     return undefined;
   };
@@ -2263,7 +2328,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (cursorPos.character < line.text.length) {
         nextPos = cursorPos.translate(0, 1);
       }
-      if (isSpecializedCompletionContext(event.document, nextPos)) {
+      if (specializedCompletionContext(event.document, nextPos).length > 0) {
         // Programmatically trigger suggestions
         vscode.commands.executeCommand('editor.action.triggerSuggest');
       }
