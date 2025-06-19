@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as sax from 'sax';
 import * as winston from 'winston';
 import { OutputChannelTransport, LogOutputChannelTransport } from 'winston-transport-vscode';
+import { xmlTracker } from './xmlStructureTracker';
 
 const { combine, timestamp, prettyPrint, simple } = winston.format;
 
@@ -202,22 +203,26 @@ function specializedCompletionContext(
   document: vscode.TextDocument,
   position: vscode.Position
 ): vscode.CompletionItem[] {
-  // Check if any of the specialized completion functions return results
-  const variableCompletions = getVariableCompletions(document, position);
-  if (variableCompletions.length > 0) {
-    return variableCompletions;
-  }
+  const attributeRange = xmlTracker.isInAttributeValue(document, position);
+  if (attributeRange) {
+    const elementName = attributeRange.elementName;
+    const attributeName = attributeRange.name;
+    // Check if any of the specialized completion functions return results
+    const variableCompletions = getVariableCompletions(document, position);
+    if (variableCompletions.length > 0) {
+      return variableCompletions;
+    }
 
-  const labelCompletions = getLabelCompletions(document, position);
-  if (labelCompletions.length > 0) {
-    return labelCompletions;
-  }
+    const labelCompletions = getLabelCompletions(document, position);
+    if (labelCompletions.length > 0) {
+      return labelCompletions;
+    }
 
-  const actionCompletions = getActionCompletions(document, position);
-  if (actionCompletions.length > 0) {
-    return actionCompletions;
+    const actionCompletions = getActionCompletions(document, position);
+    if (actionCompletions.length > 0) {
+      return actionCompletions;
+    }
   }
-
   return [];
 }
 
@@ -435,6 +440,15 @@ class CompletionDict implements vscode.CompletionItemProvider {
   provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
     if (getDocumentScriptType(document) == '') {
       return undefined; // Skip if the document is not valid
+    }
+
+    // Check if we're in an attribute value for context-aware completions
+    const attributeRange = xmlTracker.isInAttributeValue(document, position);
+    if (attributeRange && exceedinglyVerbose) {
+      logger.info(`Completion requested in attribute: ${attributeRange.elementName}.${attributeRange.name}`);
+    }
+    if (attributeRange === undefined) {
+      return undefined; // Skip if not in an attribute value
     }
 
     // Check if we're in a specialized completion context (variables, labels, actions)
@@ -1176,6 +1190,9 @@ function trackVariablesInDocument(document: vscode.TextDocument): void {
   if (scriptType == '') {
     return; // Skip processing if the document is not valid
   }
+
+  // First, parse the XML structure
+  xmlTracker.parseDocument(document);
 
   // Clear existing variable locations for this document
   variableTracker.clearVariablesForDocument(document.uri);
@@ -2272,16 +2289,49 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Track variables in open documents
-  vscode.workspace.onDidOpenTextDocument((document) => {
+  // Parse initially open documents
+  vscode.workspace.textDocuments.forEach((document) => {
     if (getDocumentScriptType(document)) {
+      xmlTracker.parseDocument(document);
       trackVariablesInDocument(document);
     }
   });
 
-  // Refresh variable locations when a document is edited
+  // Instead of parsing all open documents, just parse the active one
+  if (vscode.window.activeTextEditor) {
+    const document = vscode.window.activeTextEditor.document;
+    if (getDocumentScriptType(document)) {
+      xmlTracker.parseDocument(document);
+      trackVariablesInDocument(document);
+    }
+  }
+
+  // Listen for editor changes to parse documents as they become active
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor && getDocumentScriptType(editor.document)) {
+        xmlTracker.parseDocument(editor.document);
+        trackVariablesInDocument(editor.document);
+      }
+    })
+  );
+
+  // Keep the onDidOpenTextDocument handler for newly opened documents
+  vscode.workspace.onDidOpenTextDocument((document) => {
+    if (getDocumentScriptType(document)) {
+      // Only parse if this is the active document
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
+        xmlTracker.parseDocument(document);
+        trackVariablesInDocument(document);
+      }
+    }
+  });
+
+  // Update XML structure when documents change
   vscode.workspace.onDidChangeTextDocument((event) => {
     if (getDocumentScriptType(event.document)) {
+      xmlTracker.parseDocument(event.document);
       const activeEditor = vscode.window.activeTextEditor;
       if (!activeEditor || event.document !== activeEditor.document) return;
 
@@ -2295,7 +2345,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (cursorPos.character < line.text.length) {
         nextPos = cursorPos.translate(0, 1);
       }
-      if (specializedCompletionContext(event.document, nextPos).length > 0) {
+      if (xmlTracker.isInAttributeValue(event.document, nextPos) !== undefined) {
         // Programmatically trigger suggestions
         vscode.commands.executeCommand('editor.action.triggerSuggest');
       }
@@ -2304,6 +2354,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   vscode.workspace.onDidSaveTextDocument((document) => {
     if (getDocumentScriptType(document)) {
+      xmlTracker.parseDocument(document);
       trackVariablesInDocument(document);
     }
   });
@@ -2312,15 +2363,9 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidCloseTextDocument((document) => {
     documentLanguageSubIdMap.delete(document.uri.toString());
     diagnosticCollection.delete(document.uri);
+    xmlTracker.clear(document);
     if (exceedinglyVerbose) {
-      logger.info(`Removed cached languageSubId for document: ${document.uri.toString()}`);
-    }
-  });
-
-  // Track variables in all currently open documents
-  vscode.workspace.textDocuments.forEach((document) => {
-    if (getDocumentScriptType(document)) {
-      trackVariablesInDocument(document);
+      logger.info(`Removed cached data for document: ${document.uri.toString()}`);
     }
   });
 

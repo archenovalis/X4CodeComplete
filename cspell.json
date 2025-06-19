@@ -12,6 +12,7 @@
     "mdscript",
     "onclosetag",
     "onopentag",
+    "ontext",
     "opentag",
     "readtext",
     "scriptproperties"
