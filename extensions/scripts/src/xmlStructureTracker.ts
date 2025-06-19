@@ -21,8 +21,20 @@ export interface AttributeRange {
 
 export class XmlStructureTracker {
   private documentMap: Map<string, ElementRange[]> = new Map();
+  private lastParseTimestamps: Map<string, number> = new Map();
 
-  parseDocument(document: vscode.TextDocument): void {
+  // New method to ensure a document is parsed only when needed
+  checkDocumentParsed(document: vscode.TextDocument): boolean {
+    const documentUri = document.uri.toString();
+    const lastModified = document.version;
+    const lastParsed = this.lastParseTimestamps.get(documentUri);
+
+    // Parse only if not parsed before or if the document has changed
+    return lastParsed && lastParsed > lastModified ? true : false;
+  }
+
+  // Make this method return the parsed elements
+  parseDocument(document: vscode.TextDocument): ElementRange[] {
     try {
       const text = document.getText();
 
@@ -134,6 +146,8 @@ export class XmlStructureTracker {
         this.documentMap.set(document.uri.toString(), []);
       }
     }
+    this.lastParseTimestamps.set(document.uri.toString(), document.version);
+    return this.documentMap.get(document.uri.toString()) || [];
   }
 
   isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
@@ -169,6 +183,28 @@ export class XmlStructureTracker {
   clear(document: vscode.TextDocument): void {
     this.documentMap.delete(document.uri.toString());
   }
-}
 
+  getElements(document: vscode.TextDocument): ElementRange[] {
+    return this.documentMap.get(document.uri.toString()) || [];
+  }
+
+  getParentElement(document: vscode.TextDocument, element: ElementRange): ElementRange | undefined {
+    if (element.parent === undefined) return undefined;
+
+    const elements = this.getElements(document);
+    if (element.parent < 0 || element.parent >= elements.length) {
+      return undefined; // Parent index out of bounds
+    }
+    return elements[element.parent];
+  }
+
+  isInElementByName(document: vscode.TextDocument, currentElement: ElementRange, name: string): boolean {
+    if (currentElement.name === name) {
+      return true;
+    }
+
+    // Check if the current element is nested within another element of the same name
+    return this.getParentElement(document, currentElement) !== undefined;
+  }
+}
 export const xmlTracker = new XmlStructureTracker();

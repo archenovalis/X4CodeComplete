@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as sax from 'sax';
 import * as winston from 'winston';
 import { OutputChannelTransport, LogOutputChannelTransport } from 'winston-transport-vscode';
-import { xmlTracker } from './xmlStructureTracker';
+import { xmlTracker, ElementRange } from './xmlStructureTracker';
 
 const { combine, timestamp, prettyPrint, simple } = winston.format;
 
@@ -1185,238 +1185,146 @@ function validateReferences(document: vscode.TextDocument): void {
   diagnosticCollection.set(document.uri, diagnostics);
 }
 
-function trackVariablesInDocument(document: vscode.TextDocument): void {
+function unTrackScriptDocument(document: vscode.TextDocument): void {
+  // Clear existing data for this document
+  variableTracker.clearVariablesForDocument(document.uri);
+  labelTracker.clearLabelsForDocument(document.uri);
+  actionTracker.clearActionsForDocument(document.uri);
+  xmlTracker.clear(document);
+}
+
+function trackScriptDocument(document: vscode.TextDocument, update: boolean = false): void {
   const scriptType = getDocumentScriptType(document);
   if (scriptType == '') {
     return; // Skip processing if the document is not valid
   }
 
-  // First, parse the XML structure
-  xmlTracker.parseDocument(document);
+  const isXMLParsed = xmlTracker.checkDocumentParsed(document);
+  if (isXMLParsed && !update) {
+    logger.warn(`Document ${document.uri.toString()} is already parsed.`);
+    return; // Skip if the document is already parsed
+  }
 
-  // Clear existing variable locations for this document
+  const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
+  // Clear existing data for this document
   variableTracker.clearVariablesForDocument(document.uri);
   labelTracker.clearLabelsForDocument(document.uri);
   actionTracker.clearActionsForDocument(document.uri);
 
+  // Use the XML structure to find labels, actions, and variables more efficiently
   const text = document.getText();
-  const parser = sax.parser(true); // Create a SAX parser with strict mode enabled
-  const tagStack: string[] = []; // Stack to track open tags
 
-  // Track if we're inside a <library> element (needed for action tracking)
-  let insideLibrary = false;
-
-  // Track context for variable definition priority (for AI scripts only)
-  let currentContext: { type: string; priority: number } | null = null;
-  const contextStack: Array<{ type: string; priority: number }> = [];
-
-  let currentElementStartIndex: number | null = null;
-
-  parser.onopentag = (node) => {
-    tagStack.push(node.name); // Push the current tag onto the stack
-
-    // Track if we're in a library element (for action tracking)
-    if (node.name === 'library') {
-      insideLibrary = true;
-    }
-
-    // Track context for AI script variable definitions
-    if (scriptType === aiScript) {
-      if (node.name === 'library') {
-        currentContext = { type: 'init', priority: 10 };
-        contextStack.push(currentContext);
-      } else if (node.name === 'init') {
-        currentContext = { type: 'init', priority: 20 };
-        contextStack.push(currentContext);
-      } else if (node.name === 'patch') {
-        currentContext = { type: 'patch', priority: 30 };
-        contextStack.push(currentContext);
-      } else if (node.name === 'attention') {
-        currentContext = { type: 'attention', priority: 40 };
-        contextStack.push(currentContext);
+  // Process all elements recursively
+  const processElement = (element: ElementRange) => {
+    // Process this element
+    if (element.name === 'label' && element.attributes.some((attr) => attr.name === 'name')) {
+      const nameAttr = element.attributes.find((attr) => attr.name === 'name');
+      if (nameAttr) {
+        const labelName = text.substring(
+          document.offsetAt(nameAttr.valueRange.start),
+          document.offsetAt(nameAttr.valueRange.end)
+        );
+        labelTracker.addLabel(labelName, scriptType, document.uri, nameAttr.valueRange);
       }
     }
 
-    currentElementStartIndex = parser.startTagPosition - 1; // Start position of the element in the text
-
-    // Handle label definitions
-    if (node.name === 'label' && node.attributes.name) {
-      const labelName = node.attributes.name as string;
-      const labelNameStartIndex = text.indexOf(labelName, currentElementStartIndex);
-
-      if (labelNameStartIndex >= 0) {
-        const start = document.positionAt(labelNameStartIndex);
-        const end = document.positionAt(labelNameStartIndex + labelName.length);
-
-        labelTracker.addLabel(labelName, scriptType, document.uri, new vscode.Range(start, end));
+    // Handle action definitions (only for AIScript in library elements)
+    if (
+      scriptType === aiScript &&
+      element.name === 'actions' &&
+      xmlTracker.isInElementByName(document, element, 'library')
+    ) {
+      const nameAttr = element.attributes.find((attr) => attr.name === 'name');
+      if (nameAttr) {
+        const actionName = text.substring(
+          document.offsetAt(nameAttr.valueRange.start),
+          document.offsetAt(nameAttr.valueRange.end)
+        );
+        actionTracker.addAction(actionName, scriptType, document.uri, nameAttr.valueRange);
       }
     }
 
-    // Handle action definitions (only within <library> element and only for AIScript)
-    if (scriptType === aiScript && insideLibrary && node.name === 'actions' && node.attributes.name) {
-      const actionName = node.attributes.name as string;
-      const actionNameStartIndex = text.indexOf(actionName, currentElementStartIndex);
-
-      if (actionNameStartIndex >= 0) {
-        const start = document.positionAt(actionNameStartIndex);
-        const end = document.positionAt(actionNameStartIndex + actionName.length);
-
-        actionTracker.addAction(actionName, scriptType, document.uri, new vscode.Range(start, end));
+    // Process attributes for references and variables
+    element.attributes.forEach((attr) => {
+      // Check for label references
+      if (scriptType === aiScript && labelElementAttributeMap[element.name]?.includes(attr.name)) {
+        const labelRefValue = text.substring(
+          document.offsetAt(attr.valueRange.start),
+          document.offsetAt(attr.valueRange.end)
+        );
+        labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, attr.valueRange);
       }
-    }
-    let validLabelAttributes;
-    let validActionAttributes;
-    if (scriptType === aiScript) {
-      // Handle label references - check if this element+attribute combination is valid for labels
-      validLabelAttributes = labelElementAttributeMap[node.name];
-      // Handle action references (only for AIScript)
-      validActionAttributes = actionElementAttributeMap[node.name];
-      // Check for variables in attributes and label/action references
-    }
-    for (const [attrName, attrValue] of Object.entries(node.attributes)) {
+
+      // Check for action references
+      if (scriptType === aiScript && actionElementAttributeMap[element.name]?.includes(attr.name)) {
+        const actionRefValue = text.substring(
+          document.offsetAt(attr.valueRange.start),
+          document.offsetAt(attr.valueRange.end)
+        );
+        actionTracker.addActionReference(actionRefValue, scriptType, document.uri, attr.valueRange);
+      }
+
+      // Check for variables inside attribute values
+      const attrValue = text.substring(
+        document.offsetAt(attr.valueRange.start),
+        document.offsetAt(attr.valueRange.end)
+      );
+
+      const tableIsFound = tableKeyPattern.test(attrValue);
       let match: RegExpExecArray | null;
-      let tableIsFound = false;
-
-      // Handle action and label references (only for AIScript)
-      if (scriptType === aiScript) {
-        if (validLabelAttributes && validLabelAttributes.includes(attrName) && typeof attrValue === 'string') {
-          const labelRefValue = attrValue as string;
-          const attrStartIndex = text.indexOf(labelRefValue, currentElementStartIndex || 0);
-
-          if (attrStartIndex >= 0) {
-            const start = document.positionAt(attrStartIndex);
-            const end = document.positionAt(attrStartIndex + labelRefValue.length);
-
-            labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, new vscode.Range(start, end));
-          }
-        }
-
-        if (validActionAttributes && validActionAttributes.includes(attrName) && typeof attrValue === 'string') {
-          const actionRefValue = attrValue as string;
-          const attrStartIndex = text.indexOf(actionRefValue, currentElementStartIndex || 0);
-
-          if (attrStartIndex >= 0) {
-            const start = document.positionAt(attrStartIndex);
-            const end = document.positionAt(attrStartIndex + actionRefValue.length);
-
-            actionTracker.addActionReference(actionRefValue, scriptType, document.uri, new vscode.Range(start, end));
-          }
+      const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+      let priority = -1;
+      if (
+        scriptType === aiScript &&
+        ((element.name === 'set_value' && attr.name === 'name') ||
+          (element.name === 'create_group' && attr.name === 'groupname') ||
+          (element.name === 'create_list' && attr.name === 'name'))
+      ) {
+        if (xmlTracker.isInElementByName(document, element, 'library')) {
+          priority = 10;
+        } else if (xmlTracker.isInElementByName(document, element, 'init')) {
+          priority = 20;
+        } else if (xmlTracker.isInElementByName(document, element, 'patch')) {
+          priority = 30;
+        } else if (xmlTracker.isInElementByName(document, element, 'attention')) {
+          priority = 40;
         }
       }
+      while ((match = variablePattern.exec(attrValue)) !== null) {
+        const variableName = match[1];
+        const variableStartOffset = document.offsetAt(attr.valueRange.start) + match.index;
+        const variableEndOffset = variableStartOffset + match[0].length;
 
-      if (typeof attrValue === 'string') {
-        const attrStartIndex = text.indexOf(`${attrName}=`, currentElementStartIndex || 0);
-        const attrValueStartIndex = text.indexOf(attrValue, attrStartIndex || 0);
-        if (node.name === 'param' && tagStack[tagStack.length - 2] === 'params' && attrName === 'name') {
-          const variableName = attrValue as string;
-          const start = document.positionAt(attrValueStartIndex);
-          const end = document.positionAt(attrValueStartIndex + variableName.length);
+        const start = document.positionAt(variableStartOffset);
+        const end = document.positionAt(variableEndOffset);
 
+        // Simple version of the existing variable type detection
+        const variableType = tableIsFound ? 'tableKey' : 'normal';
+        if (end.isEqual(attr.valueRange.end) && priority >= 0) {
           variableTracker.addVariable(
-            'normal',
+            variableType,
             variableName,
             scriptType,
             document.uri,
             new vscode.Range(start, end),
-            true,
-            0
+            true, // isDefinition
+            priority
           );
-        } else if (
-          scriptType === aiScript &&
-          currentContext &&
-          ((node.name === 'set_value' && attrName === 'name') ||
-            (node.name === 'create_group' && attrName === 'groupname') ||
-            (node.name === 'create_list' && attrName === 'name'))
-        ) {
-          const attributeValue = attrValue as string;
-          const variablesMatched = [...(attributeValue.matchAll(variablePattern) || [])];
-          for (let i = 0; i < variablesMatched.length; i++) {
-            const matchedVariable = variablesMatched[i];
-            const variableFull = matchedVariable[0];
-            const variableName = matchedVariable[1];
-            const variablePosition = attributeValue.indexOf(variableFull);
-            const start = document.positionAt(attrValueStartIndex + variablePosition);
-            const end = document.positionAt(attrValueStartIndex + variablePosition + variableFull.length);
-            variableTracker.addVariable(
-              variablePosition === 0 ? 'normal' : 'tableKey',
-              variableName,
-              scriptType,
-              document.uri,
-              new vscode.Range(start, end),
-              i == variablesMatched.length - 1, // isDefinition
-              currentContext.priority
-            );
-          }
         } else {
-          tableIsFound = tableKeyPattern.test(attrValue);
-          while ((match = variablePattern.exec(attrValue)) !== null) {
-            const variableName = match[1];
-            const variableStartIndex = attrValueStartIndex + match.index;
-
-            if (
-              variableStartIndex == 0 ||
-              (tableIsFound == false &&
-                [',', '"', '[', '{', '@', ' ', '.', '('].includes(text.charAt(variableStartIndex - 1))) ||
-              (tableIsFound == true && [',', ' ', '['].includes(text.charAt(variableStartIndex - 1)))
-            ) {
-              const start = document.positionAt(variableStartIndex);
-              const end = document.positionAt(variableStartIndex + match[0].length);
-              let equalIsPreceding = false;
-              if (tableIsFound) {
-                const equalsPattern = /=[^%,]*$/;
-                const precedingText = text.substring(attrValueStartIndex, variableStartIndex);
-                equalIsPreceding = equalsPattern.test(precedingText);
-              }
-              if (
-                variableStartIndex == 0 ||
-                (text.charAt(variableStartIndex - 1) !== '.' && (tableIsFound == false || equalIsPreceding == true))
-              ) {
-                variableTracker.addVariable(
-                  'normal',
-                  variableName,
-                  scriptType,
-                  document.uri,
-                  new vscode.Range(start, end)
-                );
-              } else {
-                variableTracker.addVariable(
-                  'tableKey',
-                  variableName,
-                  scriptType,
-                  document.uri,
-                  new vscode.Range(start, end)
-                );
-              }
-            }
-          }
+          variableTracker.addVariable(
+            variableType,
+            variableName,
+            scriptType,
+            document.uri,
+            new vscode.Range(start, end)
+          );
         }
       }
-    }
+    });
   };
 
-  parser.onclosetag = (name) => {
-    if (name === 'library') {
-      insideLibrary = false;
-    }
-
-    // Handle context stack for AI script variable definitions
-    if (scriptType === aiScript) {
-      if (name === 'init' || name === 'patch' || name === 'attention') {
-        contextStack.pop();
-        currentContext = contextStack.length > 0 ? contextStack[contextStack.length - 1] : null;
-      }
-    }
-
-    tagStack.pop(); // Pop the current tag from the stack
-    currentElementStartIndex = null;
-  };
-
-  parser.onerror = (err) => {
-    logger.error(`Error parsing XML document: ${err.message}`);
-    parser.resume(); // Continue parsing despite the error
-  };
-
-  parser.write(text).close();
+  // Start processing from root elements
+  xmlElements.forEach(processElement);
 
   // Validate references after tracking is complete
   validateReferences(document);
@@ -2289,20 +2197,11 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Parse initially open documents
-  vscode.workspace.textDocuments.forEach((document) => {
-    if (getDocumentScriptType(document)) {
-      xmlTracker.parseDocument(document);
-      trackVariablesInDocument(document);
-    }
-  });
-
   // Instead of parsing all open documents, just parse the active one
   if (vscode.window.activeTextEditor) {
     const document = vscode.window.activeTextEditor.document;
     if (getDocumentScriptType(document)) {
-      xmlTracker.parseDocument(document);
-      trackVariablesInDocument(document);
+      trackScriptDocument(document);
     }
   }
 
@@ -2310,8 +2209,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor && getDocumentScriptType(editor.document)) {
-        xmlTracker.parseDocument(editor.document);
-        trackVariablesInDocument(editor.document);
+        trackScriptDocument(editor.document);
       }
     })
   );
@@ -2322,20 +2220,17 @@ export function activate(context: vscode.ExtensionContext) {
       // Only parse if this is the active document
       const activeEditor = vscode.window.activeTextEditor;
       if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
-        xmlTracker.parseDocument(document);
-        trackVariablesInDocument(document);
+        trackScriptDocument(document);
       }
     }
   });
 
   // Update XML structure when documents change
   vscode.workspace.onDidChangeTextDocument((event) => {
+    const activeEditor = vscode.window.activeTextEditor;
+    if (!activeEditor || event.document !== activeEditor.document) return;
     if (getDocumentScriptType(event.document)) {
-      xmlTracker.parseDocument(event.document);
-      const activeEditor = vscode.window.activeTextEditor;
-      if (!activeEditor || event.document !== activeEditor.document) return;
-
-      trackVariablesInDocument(event.document);
+      trackScriptDocument(event.document, true); // Update the document structure
       const cursorPos = activeEditor.selection.active;
 
       // Check if we're in a specialized completion context
@@ -2354,8 +2249,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   vscode.workspace.onDidSaveTextDocument((document) => {
     if (getDocumentScriptType(document)) {
-      xmlTracker.parseDocument(document);
-      trackVariablesInDocument(document);
+      trackScriptDocument(document, true); // Update the document structure on save
     }
   });
 
@@ -2363,7 +2257,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidCloseTextDocument((document) => {
     documentLanguageSubIdMap.delete(document.uri.toString());
     diagnosticCollection.delete(document.uri);
-    xmlTracker.clear(document);
+    unTrackScriptDocument(document);
     if (exceedinglyVerbose) {
       logger.info(`Removed cached data for document: ${document.uri.toString()}`);
     }
