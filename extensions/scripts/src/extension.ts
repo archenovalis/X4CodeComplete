@@ -6,22 +6,9 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
 import * as path from 'path';
 import * as sax from 'sax';
-import * as winston from 'winston';
-import { OutputChannelTransport, LogOutputChannelTransport } from 'winston-transport-vscode';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
-
-const { combine, timestamp, prettyPrint, simple } = winston.format;
-
-const outputChannel = vscode.window.createOutputChannel('X4CodeComplete', {
-  log: true,
-});
-
-const logger = winston.createLogger({
-  level: 'trace',
-  levels: LogOutputChannelTransport.config.levels,
-  format: LogOutputChannelTransport.format(),
-  transports: [new LogOutputChannelTransport({ outputChannel })],
-});
+import { logger } from './logger';
+import { xsdManager, XsdSchemaManager } from './xsdSchemaManager';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -272,25 +259,21 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
 }
 
 function findRelevantPortion(text: string) {
-  const pos = Math.max(text.lastIndexOf('.'), text.lastIndexOf('"', text.length - 2));
+  const bracketPos = text.lastIndexOf('{');
+  text = text.substring(bracketPos + 1).trim();
+  const quotePos = text.lastIndexOf(`'`);
+  text = text.substring(quotePos + 1).trim();
+  const pos = text.lastIndexOf('.');
   if (pos === -1) {
     return null;
   }
-  let newToken = text.substring(pos + 1);
-  if (newToken.endsWith('"')) {
-    newToken = newToken.substring(0, newToken.length - 1);
-  }
-  const prevPos = Math.max(
-    text.lastIndexOf('.', pos - 1),
-    text.lastIndexOf('"', pos - 1),
-    text.lastIndexOf(' ', pos - 1)
-  );
-  // TODO something better
-  if (text.length - pos > 3 && prevPos === -1) {
-    return ['', newToken];
-  }
-  const prevToken = text.substring(prevPos + 1, pos);
-  return [prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken, newToken];
+  let newToken = text.substring(pos + 1).trim();
+  const prevPos = Math.max(text.lastIndexOf('.', pos - 1), text.lastIndexOf(' ', pos - 1));
+  const prevToken = text.substring(prevPos + 1, pos).trim();
+  return [
+    prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken,
+    newToken.indexOf('@') === 0 ? newToken.slice(1) : newToken,
+  ];
 }
 
 class TypeEntry {
@@ -313,7 +296,11 @@ class CompletionDict implements vscode.CompletionItemProvider {
   typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   allProp: Map<string, string> = new Map<string, string>();
   allPropItems: vscode.CompletionItem[] = [];
+  keywordItems: vscode.CompletionItem[] = [];
   defaultCompletions: vscode.CompletionList;
+  descriptions: Map<string, string> = new Map<string, string>();
+  xsdManager: XsdSchemaManager;
+
   addType(key: string, supertype?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
@@ -365,6 +352,15 @@ class CompletionDict implements vscode.CompletionItemProvider {
       this.allProp.set(shortProp, type);
       const item = new vscode.CompletionItem(shortProp);
       this.allPropItems.push(item);
+    }
+  }
+
+  addDescription(name: string, description: string): void {
+    if (description === undefined || description === '') {
+      return; // Skip empty descriptions
+    }
+    if (!this.descriptions.has(cleanStr(name))) {
+      this.descriptions.set(cleanStr(name), description);
     }
   }
 
@@ -437,6 +433,17 @@ class CompletionDict implements vscode.CompletionItemProvider {
     return new vscode.CompletionList(Array.from(items.values()), true);
   }
 
+  makeKeywords(): void {
+    this.keywordItems = Array.from(this.typeDict.keys()).map((key) => {
+      const item = new vscode.CompletionItem(key, vscode.CompletionItemKind.Keyword);
+      if (this.descriptions.has(key)) {
+        item.documentation = new vscode.MarkdownString(this.descriptions.get(key));
+      }
+      this.keywordItems.push(item);
+      return item;
+    });
+  }
+
   provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
     if (getDocumentScriptType(document) == '') {
       return undefined; // Skip if the document is not valid
@@ -458,16 +465,30 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     const items = new Map<string, vscode.CompletionItem>();
-    const prefix = document.lineAt(position).text.substring(0, position.character);
-    const interesting = findRelevantPortion(prefix);
+    const currentLine = position.line;
+    const attributeValueStartLine = attributeRange.valueRange.start.line;
+    let textToProcess = document.lineAt(position).text;
+    if (currentLine === attributeRange.valueRange.start.line && currentLine === attributeRange.valueRange.end.line) {
+      // If we're on the same line as the attribute value, use the current line text
+      textToProcess = textToProcess.substring(
+        attributeRange.valueRange.start.character,
+        /* attributeRange.valueRange.end.character */ position.character
+      );
+    } else if (currentLine === attributeRange.valueRange.start.line) {
+      // If we're on the start line of the attribute value, use the text from the start character to the end of the line
+      textToProcess = textToProcess.substring(attributeRange.valueRange.start.character, position.character);
+    } else if (currentLine === attributeRange.valueRange.end.line) {
+      textToProcess = textToProcess.substring(0, /* attributeRange.valueRange.end.character */ position.character);
+    }
+    const interesting = findRelevantPortion(textToProcess);
     if (interesting === null) {
       if (exceedinglyVerbose) {
         logger.info('no relevant portion detected');
       }
-      return this.makeCompletionList(items);
+      return this.keywordItems;
     }
-    let prevToken = interesting[0].trim();
-    const newToken = interesting[1].trim();
+    let prevToken = interesting[0];
+    const newToken = interesting[1];
     if (exceedinglyVerbose) {
       logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
     }
@@ -482,8 +503,12 @@ class CompletionDict implements vscode.CompletionItemProvider {
         if (exceedinglyVerbose) {
           logger.info('Missing previous token!');
         }
-
-        return this.defaultCompletions;
+        return newToken.length > 0
+          ? new vscode.CompletionList(
+              this.defaultCompletions.items.filter((item) => item.label.startsWith(newToken)),
+              true
+            )
+          : this.defaultCompletions;
       } else {
         if (exceedinglyVerbose) {
           logger.info(`Matching on type: ${prevToken}!`);
@@ -493,30 +518,30 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
     }
     // Ignore tokens where all we have is a short string and no previous data to go off of
-    if (prevToken === '' && newToken.length < 2) {
+    if (prevToken === '' && newToken === '') {
       if (exceedinglyVerbose) {
         logger.info('Ignoring short token without context!');
       }
-      return this.makeCompletionList(items);
+      return undefined;
     }
     // Now check for the special hard to complete ones
-    if (prevToken.startsWith('{')) {
-      if (exceedinglyVerbose) {
-        logger.info('Matching bracketed type');
-      }
-      const token = prevToken.substring(1);
+    // if (prevToken.startsWith('{')) {
+    //   if (exceedinglyVerbose) {
+    //     logger.info('Matching bracketed type');
+    //   }
+    //   const token = prevToken.substring(1);
 
-      const entry = this.typeDict.get(token);
-      if (entry === undefined) {
-        if (exceedinglyVerbose) {
-          logger.info('Failed to match bracketed type');
-        }
-      } else {
-        entry.literals.forEach((value) => {
-          this.addItem(items, value + '}');
-        });
-      }
-    }
+    //   const entry = this.typeDict.get(token);
+    //   if (entry === undefined) {
+    //     if (exceedinglyVerbose) {
+    //       logger.info('Failed to match bracketed type');
+    //     }
+    //   } else {
+    //     entry.literals.forEach((value) => {
+    //       this.addItem(items, value + '}');
+    //     });
+    //   }
+    // }
 
     if (exceedinglyVerbose) {
       logger.info('Trying fallback');
@@ -540,6 +565,7 @@ class LocationDict implements vscode.DefinitionProvider {
     const uri = vscode.Uri.file(file);
     this.dict.set(cleanStr(name), new vscode.Location(uri, range));
   }
+
   addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
     // make sure we don't care about platform & still count right https://stackoverflow.com/a/8488787
     const line = rawData.substring(0, rawIdx).split(/\r\n|\r|\n/).length - 1;
@@ -1205,6 +1231,9 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
     return; // Skip if the document is already parsed
   }
 
+  const lValueTypes: string[] = xsdManager
+    .getTypesWithRestriction(scriptType, 'lvalueexpression')
+    .concat('lvalueexpression');
   const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
   // Clear existing data for this document
   variableTracker.clearVariablesForDocument(document.uri);
@@ -1244,6 +1273,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       }
     }
 
+    const lValueAttributes = xsdManager.elementAttributesByTypes(scriptType, element.name, lValueTypes);
     // Process attributes for references and variables
     element.attributes.forEach((attr) => {
       // Check for label references
@@ -1276,9 +1306,10 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       let priority = -1;
       if (
         scriptType === aiScript &&
-        ((element.name === 'set_value' && attr.name === 'name') ||
-          (element.name === 'create_group' && attr.name === 'groupname') ||
-          (element.name === 'create_list' && attr.name === 'name'))
+        lValueAttributes.includes(attr.name)
+        // ((element.name === 'set_value' && attr.name === 'name') ||
+        //   (element.name === 'create_group' && attr.name === 'groupname') ||
+        //   (element.name === 'create_list' && attr.name === 'name'))
       ) {
         if (xmlTracker.isInElementByName(document, element, 'library')) {
           priority = 10;
@@ -1332,6 +1363,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
 const completionProvider = new CompletionDict();
 const definitionProvider = new LocationDict();
+completionProvider.xsdManager = xsdManager;
 
 function readScriptProperties(filepath: string) {
   logger.info('Attempting to read scriptproperties.xml');
@@ -1352,7 +1384,7 @@ function readScriptProperties(filepath: string) {
     completionProvider.addTypeLiteral('boolean', '==false');
     logger.info('Parsed scriptproperties.xml');
   });
-
+  completionProvider.makeKeywords();
   return { keywords, datatypes };
 }
 
@@ -1376,6 +1408,7 @@ function processProperty(rawData: string, parent: string, parentType: string, pr
 function processKeyword(rawData: string, e: Keyword) {
   const name = e.$.name;
   definitionProvider.addNonPropertyLocation(rawData, name, 'keyword');
+  completionProvider.addDescription(name, e.$.description);
   if (exceedinglyVerbose) {
     logger.info('Keyword read: ' + name);
   }
@@ -1872,6 +1905,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Create diagnostic collection
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
+  const xsdPaths: string[] = [/* '/libraries/common.xsd' */ '/libraries/aiscripts.xsd', '/libraries/md.xsd'];
 
   // Load language files and wait for completion
   loadLanguageFiles(rootpath, extensionsFolder)
@@ -2196,14 +2230,25 @@ export function activate(context: vscode.ExtensionContext) {
       "'" // Trigger after single quote in attribute
     )
   );
-
-  // Instead of parsing all open documents, just parse the active one
-  if (vscode.window.activeTextEditor) {
-    const document = vscode.window.activeTextEditor.document;
-    if (getDocumentScriptType(document)) {
-      trackScriptDocument(document);
-    }
-  }
+  // Load configured XSD files
+  Promise.all(
+    xsdPaths.map((xsdPath) => {
+      // Handle relative paths using rootpath
+      return xsdManager.loadSchema(path.join(rootpath, xsdPath));
+    })
+  )
+    .then(() => {
+      logger.info('XSD schemas loaded successfully.'); // Instead of parsing all open documents, just parse the active one
+      if (vscode.window.activeTextEditor) {
+        const document = vscode.window.activeTextEditor.document;
+        if (getDocumentScriptType(document)) {
+          trackScriptDocument(document);
+        }
+      }
+    })
+    .catch((error) => {
+      logger.error('Error loading XSD schemas:', error);
+    });
 
   // Listen for editor changes to parse documents as they become active
   context.subscriptions.push(
@@ -2242,7 +2287,20 @@ export function activate(context: vscode.ExtensionContext) {
       }
       if (xmlTracker.isInAttributeValue(event.document, nextPos) !== undefined) {
         // Programmatically trigger suggestions
-        vscode.commands.executeCommand('editor.action.triggerSuggest');
+        if (event.contentChanges.length > 0 && event.contentChanges[0].text.length > 0) {
+          // If there are content changes, trigger suggestions
+          const changeText = event.contentChanges[0].text;
+          if (
+            !changeText.includes('\n') &&
+            !changeText.includes('\r') &&
+            !changeText.includes('\t') &&
+            !changeText.includes(',') &&
+            !changeText.includes('  ')
+          ) {
+            // logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
+            vscode.commands.executeCommand('editor.action.triggerSuggest');
+          }
+        }
       }
     }
   });
