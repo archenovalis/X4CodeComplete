@@ -1157,13 +1157,12 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
   return languageSubId;
 }
 
-function validateReferences(document: vscode.TextDocument): void {
+function validateReferences(document: vscode.TextDocument, diagnostics: vscode.Diagnostic[] = []): void {
   const scriptType = getDocumentScriptType(document);
   if (scriptType !== aiScript) {
     return; // Only validate AI scripts
   }
 
-  const diagnostics: vscode.Diagnostic[] = [];
   const documentData = labelTracker.documentLabels.get(document.uri.toString());
   const actionData = actionTracker.documentActions.get(document.uri.toString());
 
@@ -1224,6 +1223,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   if (scriptType == '') {
     return; // Skip processing if the document is not valid
   }
+  const diagnostics: vscode.Diagnostic[] = [];
 
   const isXMLParsed = xmlTracker.checkDocumentParsed(document);
   if (isXMLParsed && !update) {
@@ -1270,8 +1270,12 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       }
     }
 
+    const missedAttributes: Set<string> = new Set(elementAttributes.keys());
     // Process attributes for references and variables
     element.attributes.forEach((attr) => {
+      if (missedAttributes.has(attr.name)) {
+        missedAttributes.delete(attr.name);
+      }
       // Check for label references
       if (scriptType === aiScript && labelElementAttributeMap[element.name]?.includes(attr.name)) {
         const labelRefValue = text.substring(
@@ -1347,13 +1351,32 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
         }
       }
     });
+    if (missedAttributes.size > 0) {
+      missedAttributes.forEach((missedAttr) => {
+        if (elementAttributes.has(missedAttr)) {
+          const use = elementAttributes.get(missedAttr)?.['use'] || 'unknown';
+          if (use === 'required') {
+            const attrType = elementAttributes.get(missedAttr)?.['type'] || 'unknown';
+            const attrRestriction = elementAttributes.get(missedAttr)?.['restriction'] || 'none';
+            const diagnostic = new vscode.Diagnostic(
+              element.range,
+              `Missing required attribute '${missedAttr}' of type '${attrType}' with restriction '${attrRestriction}'`,
+              vscode.DiagnosticSeverity.Error
+            );
+            diagnostic.code = 'missing-required-attribute';
+            diagnostic.source = 'X4CodeComplete';
+            diagnostics.push(diagnostic);
+          }
+        }
+      });
+    }
   };
 
   // Start processing from root elements
   xmlElements.forEach(processElement);
 
   // Validate references after tracking is complete
-  validateReferences(document);
+  validateReferences(document, diagnostics);
 }
 
 const completionProvider = new CompletionDict();
