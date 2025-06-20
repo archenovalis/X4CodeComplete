@@ -8,11 +8,11 @@ import { logger } from './logger';
  */
 class Schema {
   private rootSchema: any;
-  private elementCache = new Map<string, any | null>();
+  private elementCache = new Map<string, any[] | null>();
   private typeCache = new Map<string, any | null>();
   private attributeGroupCache = new Map<string, any | null>();
-  private allAttributesCache = new Map<string, any[]>();
-  private allAttributesMapCache = new Map<string, Map<string, object>>();
+  private allAttributesCache = new Map<string, any[][]>();
+  private allAttributesMapCache = new Map<string, Map<string, object>[]>();
   private attributeValuesCache = new Map<string, { value: string; documentation?: string }[]>();
   private missingAttributesCache = new Map<string, any[]>();
   private childElementsCache = new Map<string, any[]>();
@@ -23,38 +23,38 @@ class Schema {
   }
 
   /**
-   * Finds an element definition by name within this schema.
+   * Finds all definitions for an element by name within this schema.
    * @param elementName The name of the element to find.
-   * @returns The element definition or undefined.
+   * @returns An array of element definitions.
    */
-  public findElementDefinition(elementName: string): any {
+  public findElementDefinition(elementName: string): any[] {
     if (this.elementCache.has(elementName)) {
       const cached = this.elementCache.get(elementName);
-      return cached === null ? undefined : cached;
+      return cached === null ? [] : cached;
     }
     if (!this.rootSchema) {
       this.elementCache.set(elementName, null);
-      return undefined;
+      return [];
     }
+    const definitions: any[] = [];
     const visited = new Set();
-    const result = this.findNestedElementDefinition(this.rootSchema, elementName, visited);
-    this.elementCache.set(elementName, result || null);
-    return result;
+    this.findNestedElementDefinitions(this.rootSchema, elementName, visited, definitions);
+    this.elementCache.set(elementName, definitions.length > 0 ? definitions : null);
+    return definitions;
   }
 
   /**
-   * Recursively searches for an element definition within a schema node.
+   * Recursively searches for all element definitions within a schema node.
    */
-  private findNestedElementDefinition(node: any, elementName: string, visited: Set<any>): any {
+  private findNestedElementDefinitions(node: any, elementName: string, visited: Set<any>, definitions: any[]): void {
     if (!node || typeof node !== 'object' || visited.has(node)) {
-      return undefined;
+      return;
     }
     visited.add(node);
 
     if (Array.isArray(node)) {
       for (const item of node) {
-        const found = this.findNestedElementDefinition(item, elementName, visited);
-        if (found) return found;
+        this.findNestedElementDefinitions(item, elementName, visited, definitions);
       }
     } else {
       for (const key in node) {
@@ -62,19 +62,16 @@ class Schema {
           const elements = Array.isArray(node[key]) ? node[key] : [node[key]];
           for (const el of elements) {
             if (el?.$?.name === elementName) {
-              return el;
+              definitions.push(el);
             }
           }
         }
 
         if (key !== '$') {
-          const found = this.findNestedElementDefinition(node[key], elementName, visited);
-          if (found) return found;
+          this.findNestedElementDefinitions(node[key], elementName, visited, definitions);
         }
       }
     }
-
-    return undefined;
   }
 
   /**
@@ -194,75 +191,85 @@ class Schema {
   /**
    * Gets all possible attributes for a given element.
    */
-  public getAllPossibleAttributes(elementName: string): any[] {
+  public getAllPossibleAttributes(elementName: string): any[][] {
     if (this.allAttributesCache.has(elementName)) {
       return this.allAttributesCache.get(elementName)!;
     }
-    const elementDef = this.findElementDefinition(elementName);
-    if (!elementDef) {
+    const elementDefs = this.findElementDefinition(elementName);
+    if (elementDefs.length === 0) {
       this.allAttributesCache.set(elementName, []);
       return [];
     }
 
-    const collectedAttributes = new Map<string, any>();
-    this.collectAttributes(elementDef, collectedAttributes);
+    const allPossibleAttributes: any[][] = [];
 
-    if (elementDef?.$?.type) {
-      const typeDef = this.findTypeDefinition(elementDef.$.type);
-      if (typeDef) {
-        this.collectAttributes(typeDef, collectedAttributes);
-      }
-    }
+    for (const elementDef of elementDefs) {
+      const collectedAttributes = new Map<string, any>();
+      this.collectAttributes(elementDef, collectedAttributes);
 
-    if (elementDef['xs:complexType']) {
-      this.collectAttributes(elementDef['xs:complexType'], collectedAttributes);
-    }
-
-    const result = Array.from(collectedAttributes.values());
-    for (const attr of result) {
-      if (attr?.$?.type) {
-        const typeDef = this.findTypeDefinition(attr.$.type);
-        if (typeDef?.['xs:restriction']?.$?.base) {
-          attr.$.restriction = typeDef['xs:restriction'].$.base;
+      if (elementDef?.$?.type) {
+        const typeDef = this.findTypeDefinition(elementDef.$.type);
+        if (typeDef) {
+          this.collectAttributes(typeDef, collectedAttributes);
         }
       }
+
+      if (elementDef['xs:complexType']) {
+        this.collectAttributes(elementDef['xs:complexType'], collectedAttributes);
+      }
+
+      const result = Array.from(collectedAttributes.values());
+      for (const attr of result) {
+        if (attr?.$?.type) {
+          const typeDef = this.findTypeDefinition(attr.$.type);
+          if (typeDef?.['xs:restriction']?.$?.base) {
+            attr.$.restriction = typeDef['xs:restriction'].$.base;
+          }
+        }
+      }
+      allPossibleAttributes.push(result);
     }
-    this.allAttributesCache.set(elementName, result);
-    return result;
+    this.allAttributesCache.set(elementName, allPossibleAttributes);
+    return allPossibleAttributes;
   }
 
   /**
-   * Gets all possible attributes for a given element.
+   * Gets all possible attributes for a given element, returning an array of maps for each definition variant.
    */
-  public getAllPossibleAttributesMap(elementName: string): Map<string, object> {
+  public getAllPossibleAttributesMap(elementName: string): Map<string, object>[] {
     if (this.allAttributesMapCache.has(elementName)) {
       return this.allAttributesMapCache.get(elementName)!;
     }
-    const attributes = this.getAllPossibleAttributes(elementName);
-    const result = new Map<string, object>();
-    for (const attr of attributes) {
-      if (!attr || !attr.$ || !attr.$.name) continue;
-      const newAttr = {};
-      for (const key of Object.keys(attr)) {
-        if (key !== '$' && key !== 'xs:annotation') {
-          newAttr[key] = attr[key];
-        } else if (key === '$') {
-          for (const subKey of Object.keys(attr.$)) {
-            if (subKey !== 'name') {
-              newAttr[subKey] = attr.$[subKey];
+    const attributeVariations = this.getAllPossibleAttributes(elementName);
+    const resultVariations: Map<string, object>[] = [];
+
+    for (const attributes of attributeVariations) {
+      const result = new Map<string, object>();
+      for (const attr of attributes) {
+        if (!attr || !attr.$ || !attr.$.name) continue;
+        const newAttr = {};
+        for (const key of Object.keys(attr)) {
+          if (key !== '$' && key !== 'xs:annotation') {
+            newAttr[key] = attr[key];
+          } else if (key === '$') {
+            for (const subKey of Object.keys(attr.$)) {
+              if (subKey !== 'name') {
+                newAttr[subKey] = attr.$[subKey];
+              }
+            }
+          } else if (key === 'xs:annotation') {
+            if (attr['xs:annotation']?.['xs:documentation']) {
+              const docNode = attr['xs:annotation']['xs:documentation'];
+              newAttr['documentation'] = typeof docNode === 'string' ? docNode : docNode?._ || '';
             }
           }
-        } else if (key === 'xs:annotation') {
-          if (attr['xs:annotation']?.['xs:documentation']) {
-            const docNode = attr['xs:annotation']['xs:documentation'];
-            newAttr['documentation'] = typeof docNode === 'string' ? docNode : docNode?._ || '';
-          }
         }
+        result.set(attr.$.name, newAttr);
       }
-      result.set(attr.$.name, newAttr);
+      resultVariations.push(result);
     }
-    this.allAttributesMapCache.set(elementName, result);
-    return result;
+    this.allAttributesMapCache.set(elementName, resultVariations);
+    return resultVariations;
   }
 
   /**
@@ -276,7 +283,12 @@ class Schema {
     if (this.attributeValuesCache.has(cacheKey)) {
       return this.attributeValuesCache.get(cacheKey)!;
     }
-    const attribute = this.getAllPossibleAttributes(elementName).find((attr) => attr?.$?.name === attributeName);
+    const attributeVariations = this.getAllPossibleAttributes(elementName);
+    if (attributeVariations.length === 0) {
+      this.attributeValuesCache.set(cacheKey, []);
+      return [];
+    }
+    const attribute = attributeVariations[0].find((attr) => attr?.$?.name === attributeName);
     if (!attribute?.$?.type) {
       this.attributeValuesCache.set(cacheKey, []);
       return [];
@@ -331,8 +343,11 @@ class Schema {
     if (this.missingAttributesCache.has(cacheKey)) {
       return this.missingAttributesCache.get(cacheKey)!;
     }
-    const allAttributes = this.getAllPossibleAttributes(elementName);
+    const allAttributeVariations = this.getAllPossibleAttributes(elementName);
     const existingSet = new Set(existingAttributeNames);
+    // For simplicity, we check against the first variation.
+    // A more sophisticated approach might be needed depending on desired behavior.
+    const allAttributes = allAttributeVariations.length > 0 ? allAttributeVariations[0] : [];
     const result = allAttributes.filter((attr) => attr?.$?.use === 'required' && !existingSet.has(attr?.$?.name));
     this.missingAttributesCache.set(cacheKey, result);
     return result;
@@ -392,20 +407,22 @@ class Schema {
     if (this.childElementsCache.has(elementName)) {
       return this.childElementsCache.get(elementName)!;
     }
-    const elementDef = this.findElementDefinition(elementName);
-    if (!elementDef) {
+    const elementDefs = this.findElementDefinition(elementName);
+    if (elementDefs.length === 0) {
       this.childElementsCache.set(elementName, []);
       return [];
     }
 
     const collectedElements = new Map<string, any>();
-    if (elementDef['xs:complexType']) {
-      this.collectChildElements(elementDef['xs:complexType'], collectedElements);
-    }
-    if (elementDef?.$?.type) {
-      const typeDef = this.findTypeDefinition(elementDef.$.type);
-      if (typeDef) {
-        this.collectChildElements(typeDef, collectedElements);
+    for (const elementDef of elementDefs) {
+      if (elementDef['xs:complexType']) {
+        this.collectChildElements(elementDef['xs:complexType'], collectedElements);
+      }
+      if (elementDef?.$?.type) {
+        const typeDef = this.findTypeDefinition(elementDef.$.type);
+        if (typeDef) {
+          this.collectChildElements(typeDef, collectedElements);
+        }
       }
     }
     const result = Array.from(collectedElements.values());
@@ -421,7 +438,12 @@ class Schema {
     if (this.attributesByTypesCache.has(cacheKey)) {
       return this.attributesByTypesCache.get(cacheKey)!;
     }
-    const allAttributes = this.getAllPossibleAttributes(elementName);
+    const allAttributesVariations = this.getAllPossibleAttributes(elementName);
+    if (allAttributesVariations.length === 0) {
+      this.attributesByTypesCache.set(cacheKey, []);
+      return [];
+    }
+    const allAttributes = allAttributesVariations[0];
     const typeSet = new Set(types);
     const result: string[] = [];
     for (const attr of allAttributes) {
@@ -557,12 +579,12 @@ export class XsdReference {
     return this.schemas.get(scriptType);
   }
 
-  public findElementDefinition(scriptType: string, elementName: string): any {
-    return this.getSchema(scriptType)?.findElementDefinition(elementName);
+  public findElementDefinition(scriptType: string, elementName: string): any[] {
+    return this.getSchema(scriptType)?.findElementDefinition(elementName) ?? [];
   }
 
-  public getAllPossibleAttributes(scriptType: string, elementName: string): Map<string, object> {
-    return this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? new Map<string, object>();
+  public getAllPossibleAttributes(scriptType: string, elementName: string): Map<string, object>[] {
+    return this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? [];
   }
 
   public getAttributePossibleValues(
