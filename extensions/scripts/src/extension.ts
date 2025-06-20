@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as sax from 'sax';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
 import { logger } from './logger';
-import { xsdManager, XsdSchemaManager } from './xsdSchemaManager';
+import { XsdReference } from './xsdReference';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -18,6 +18,7 @@ let rootpath: string;
 let scriptPropertiesPath: string;
 let extensionsFolder: string;
 let languageData: Map<string, Map<string, string>> = new Map();
+let xsdReference: XsdReference;
 
 // // Extract property completion logic into a function
 // function getPropertyCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
@@ -299,7 +300,6 @@ class CompletionDict implements vscode.CompletionItemProvider {
   keywordItems: vscode.CompletionItem[] = [];
   defaultCompletions: vscode.CompletionList;
   descriptions: Map<string, string> = new Map<string, string>();
-  xsdManager: XsdSchemaManager;
 
   addType(key: string, supertype?: string): void {
     const k = cleanStr(key);
@@ -1231,9 +1231,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
     return; // Skip if the document is already parsed
   }
 
-  const lValueTypes: string[] = xsdManager
-    .getTypesWithRestriction(scriptType, 'lvalueexpression')
-    .concat('lvalueexpression');
   const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
   // Clear existing data for this document
   variableTracker.clearVariablesForDocument(document.uri);
@@ -1245,7 +1242,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
-    // Process this element
+    const elementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name);
     if (element.name === 'label' && element.attributes.some((attr) => attr.name === 'name')) {
       const nameAttr = element.attributes.find((attr) => attr.name === 'name');
       if (nameAttr) {
@@ -1273,7 +1270,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       }
     }
 
-    const lValueAttributes = xsdManager.elementAttributesByTypes(scriptType, element.name, lValueTypes);
     // Process attributes for references and variables
     element.attributes.forEach((attr) => {
       // Check for label references
@@ -1305,11 +1301,10 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
       let priority = -1;
       if (
-        scriptType === aiScript &&
-        lValueAttributes.includes(attr.name)
-        // ((element.name === 'set_value' && attr.name === 'name') ||
-        //   (element.name === 'create_group' && attr.name === 'groupname') ||
-        //   (element.name === 'create_list' && attr.name === 'name'))
+        (scriptType === aiScript &&
+          elementAttributes.has(attr.name) &&
+          elementAttributes.get(attr.name)?.['type'] === 'lvalueexpression') ||
+        elementAttributes.get(attr.name)?.['restriction'] === 'lvalueexpression'
       ) {
         if (xmlTracker.isInElementByName(document, element, 'library')) {
           priority = 10;
@@ -1363,7 +1358,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
 const completionProvider = new CompletionDict();
 const definitionProvider = new LocationDict();
-completionProvider.xsdManager = xsdManager;
 
 function readScriptProperties(filepath: string) {
   logger.info('Attempting to read scriptproperties.xml');
@@ -1906,7 +1900,11 @@ export function activate(context: vscode.ExtensionContext) {
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
   const xsdPaths: string[] = [/* '/libraries/common.xsd' */ '/libraries/aiscripts.xsd', '/libraries/md.xsd'];
-
+  const schemaPaths = new Map<string, string>([
+    ['aiscript', path.join(rootpath, 'libraries/aiscripts.xsd')],
+    ['mdscript', path.join(rootpath, 'libraries/md.xsd')],
+  ]);
+  xsdReference = new XsdReference(schemaPaths);
   // Load language files and wait for completion
   loadLanguageFiles(rootpath, extensionsFolder)
     .then(() => {
@@ -2231,12 +2229,8 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
   // Load configured XSD files
-  Promise.all(
-    xsdPaths.map((xsdPath) => {
-      // Handle relative paths using rootpath
-      return xsdManager.loadSchema(path.join(rootpath, xsdPath));
-    })
-  )
+  xsdReference
+    .initialize()
     .then(() => {
       logger.info('XSD schemas loaded successfully.'); // Instead of parsing all open documents, just parse the active one
       if (vscode.window.activeTextEditor) {
