@@ -38,7 +38,7 @@ class Schema {
     }
     const definitions: any[] = [];
     const visited = new Set();
-    this.findNestedElementDefinitions(this.rootSchema, elementName, visited, definitions);
+    this.findNestedElementDefinitions(this.rootSchema, elementName, visited, definitions, undefined);
     this.elementCache.set(elementName, definitions.length > 0 ? definitions : null);
     return definitions;
   }
@@ -46,7 +46,13 @@ class Schema {
   /**
    * Recursively searches for all element definitions within a schema node.
    */
-  private findNestedElementDefinitions(node: any, elementName: string, visited: Set<any>, definitions: any[]): void {
+  private findNestedElementDefinitions(
+    node: any,
+    elementName: string,
+    visited: Set<any>,
+    definitions: any[],
+    parentNode?: any
+  ): void {
     if (!node || typeof node !== 'object' || visited.has(node)) {
       return;
     }
@@ -54,7 +60,7 @@ class Schema {
 
     if (Array.isArray(node)) {
       for (const item of node) {
-        this.findNestedElementDefinitions(item, elementName, visited, definitions);
+        this.findNestedElementDefinitions(item, elementName, visited, definitions, parentNode);
       }
     } else {
       for (const key in node) {
@@ -62,13 +68,25 @@ class Schema {
           const elements = Array.isArray(node[key]) ? node[key] : [node[key]];
           for (const el of elements) {
             if (el?.$?.name === elementName) {
-              definitions.push(el);
+              const newDef = { ...el };
+              if (parentNode?.$?.name) {
+                newDef.parentName = parentNode.$.name;
+              }
+              definitions.push(newDef);
+            }
+            // Recurse into the element definition, passing it as the new parent.
+            this.findNestedElementDefinitions(el, elementName, visited, definitions, el);
+
+            // Handle type attribute to find nested elements within types
+            if (el?.$?.type) {
+              const typeDef = this.findTypeDefinition(el.$.type);
+              if (typeDef) {
+                this.findNestedElementDefinitions(typeDef, elementName, visited, definitions, el);
+              }
             }
           }
-        }
-
-        if (key !== '$') {
-          this.findNestedElementDefinitions(node[key], elementName, visited, definitions);
+        } else if (key !== '$' && typeof node[key] === 'object') {
+          this.findNestedElementDefinitions(node[key], elementName, visited, definitions, parentNode);
         }
       }
     }
