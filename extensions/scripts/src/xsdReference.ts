@@ -498,15 +498,26 @@ export class XsdReference {
 
   private async loadIncludedSchema(includePath: string, parentSchema: any, loadedPaths: Set<string>): Promise<void> {
     try {
-      const xsdContent = await fs.promises.readFile(includePath, 'utf8');
-      const parser = new xml2js.Parser({
-        explicitCharkey: true,
-        explicitArray: false,
-        mergeAttrs: false,
-        normalizeTags: false,
-        attrNameProcessors: [(name) => name.split(':').pop() || name],
-      });
-      const includedSchema = await parser.parseStringPromise(xsdContent);
+      const xsdBaseName = path.basename(includePath);
+      let includedSchema;
+      if (this.schemas.has(xsdBaseName)) {
+        includedSchema = this.schemas.get(xsdBaseName);
+      } else {
+        const xsdContent = await fs.promises.readFile(includePath, 'utf8');
+        const parser = new xml2js.Parser({
+          explicitCharkey: true,
+          explicitArray: false,
+          mergeAttrs: false,
+          normalizeTags: false,
+          attrNameProcessors: [(name) => name.split(':').pop() || name],
+        });
+        includedSchema = await parser.parseStringPromise(xsdContent);
+        this.schemas.set(xsdBaseName, includedSchema);
+      }
+      if (!includedSchema || !includedSchema['xs:schema']) {
+        logger.warn(`Included schema at ${includePath} is empty or invalid.`);
+        return;
+      }
       this.mergeSchemas(parentSchema, includedSchema);
       await this.processIncludes(includedSchema, includePath, loadedPaths);
     } catch (error) {
