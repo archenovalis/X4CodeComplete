@@ -14,6 +14,7 @@ export interface ElementRange {
 export interface AttributeRange {
   name: string;
   elementName: string;
+  parentName: string;
   nameRange: vscode.Range;
   valueRange: vscode.Range;
   quoteChar: string;
@@ -99,6 +100,7 @@ export class XmlStructureTracker {
                         const attribute: AttributeRange = {
                           name: attrName,
                           elementName: newElement.name, // Store the element name for reference
+                          parentName: newElement.parentName || '', // Store the parent name for reference
                           nameRange: new vscode.Range(attrNameStart, attrNameEnd),
                           valueRange: new vscode.Range(valueStart, valueEnd),
                           quoteChar: quoteChar,
