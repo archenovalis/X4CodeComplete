@@ -1243,27 +1243,21 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
     const parentName = element.parentName || '';
-    const allElementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name);
-    const actualElementAttributesList =
-      allElementAttributes.length == 1
-        ? allElementAttributes
-        : allElementAttributes.filter((def) => def.parentName === '' || def.parentName === parentName);
+    const allElementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name, parentName);
     let actualElementAttributes: AttributeOfElement;
-    if (actualElementAttributesList.length === 1) {
-      actualElementAttributes = actualElementAttributesList[0];
-    } else if (actualElementAttributesList.length > 1) {
+    if (allElementAttributes.length === 1) {
+      actualElementAttributes = allElementAttributes[0];
+    } else if (allElementAttributes.length > 1) {
       const filteredByExisting = [];
       for (const attr of element.attributes) {
-        const filtered = actualElementAttributesList.filter((def) =>
-          Array.from(def.attributes.keys()).includes(attr.name)
-        );
+        const filtered = allElementAttributes.filter((def) => Array.from(def.attributes.keys()).includes(attr.name));
         if (filtered.length === 1) {
           actualElementAttributes = filtered[0];
           break;
         }
       }
     }
-    if (!actualElementAttributes && actualElementAttributesList.length === 0) {
+    if (!actualElementAttributes && allElementAttributes.length === 0) {
       const diagnostic = new vscode.Diagnostic(
         element.range,
         `Unknown element '${element.name}' in script type '${scriptType}'`,
@@ -1337,7 +1331,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
         const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
         let priority = -1;
         let isLValueAttribute = false;
-        for (const elementAttributes of actualElementAttributesList) {
+        for (const elementAttributes of allElementAttributes) {
           isLValueAttribute =
             elementAttributes.attributes.has(attr.name) &&
             (elementAttributes.attributes.get(attr.name)?.['type'] === 'lvalueexpression' ||

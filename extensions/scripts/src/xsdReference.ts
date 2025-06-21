@@ -642,8 +642,13 @@ export class XsdReference {
     return this.getSchema(scriptType)?.findElementDefinition(elementName) ?? [];
   }
 
-  public getAllPossibleAttributes(scriptType: string, elementName: string): AttributeOfElement[] {
-    return this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? [];
+  public getAllPossibleAttributes(
+    scriptType: string,
+    elementName: string,
+    parentName: string = ''
+  ): AttributeOfElement[] {
+    const result = this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? [];
+    return result.length == 1 ? result : result.filter((def) => def.parentName === '' || def.parentName === parentName);
   }
 
   public getAttributePossibleValues(
