@@ -1242,8 +1242,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
-    const parentName =
-      element.parent >= 0 && element.parent < xmlElements.length ? xmlElements[element.parent].name : '';
+    const parentName = element.parentName || '';
     const allElementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name);
     const actualElementAttributesList =
       allElementAttributes.length == 1

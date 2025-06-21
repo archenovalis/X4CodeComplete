@@ -17,6 +17,34 @@ export class AttributeOfElement {
 }
 
 /**
+ * Represents a single value for an attribute, including optional documentation.
+ * This is used to store enumerated values for attributes in a structured way.
+ */
+export class AttributeValue {
+  value: string;
+  documentation?: string;
+
+  constructor(value: string, documentation?: string) {
+    this.value = value;
+    this.documentation = documentation;
+  }
+}
+
+/**
+ * Represents a collection of possible values for an attribute, including documentation.
+ * This is used to store enumerated values for attributes in a structured way.
+ */
+export class AttributeValuesItem {
+  parentName: string;
+  values: AttributeValue[];
+
+  constructor(parentName: string = '', values: AttributeValue[] = []) {
+    this.parentName = parentName;
+    this.values = values;
+  }
+}
+
+/**
  * Represents a single, fully-resolved XSD schema with all includes merged.
  */
 class Schema {
@@ -26,7 +54,7 @@ class Schema {
   private attributeGroupCache = new Map<string, any | null>();
   private allAttributesCache = new Map<string, any[][]>();
   private allAttributesMapCache = new Map<string, AttributeOfElement[]>();
-  private attributeValuesCache = new Map<string, { value: string; documentation?: string }[]>();
+  private attributeValuesCache = new Map<string, AttributeValuesItem[]>();
   private missingAttributesCache = new Map<string, any[]>();
   private childElementsCache = new Map<string, any[]>();
   private attributesByTypesCache = new Map<string, string[]>();
@@ -306,10 +334,7 @@ class Schema {
   /**
    * Gets possible enumeration values for a specific attribute of an element.
    */
-  public getAttributePossibleValues(
-    elementName: string,
-    attributeName: string
-  ): { value: string; documentation?: string }[] {
+  public getAttributePossibleValues(elementName: string, attributeName: string): AttributeValuesItem[] {
     const cacheKey = `${elementName}|${attributeName}`;
     if (this.attributeValuesCache.has(cacheKey)) {
       return this.attributeValuesCache.get(cacheKey)!;
@@ -319,51 +344,54 @@ class Schema {
       this.attributeValuesCache.set(cacheKey, []);
       return [];
     }
-    const attribute = attributeVariations[0].find((attr) => attr?.$?.name === attributeName);
-    if (!attribute?.$?.type) {
-      this.attributeValuesCache.set(cacheKey, []);
-      return [];
-    }
 
-    const typeDef = this.findTypeDefinition(attribute.$.type);
-    if (!typeDef) {
-      this.attributeValuesCache.set(cacheKey, []);
-      return [];
-    }
+    const result: AttributeValuesItem[] = [];
 
-    const values: { value: string; documentation?: string }[] = [];
-    const processRestriction = (restriction: any) => {
-      if (!restriction) return;
-      const enumerations = restriction['xs:enumeration']
-        ? Array.isArray(restriction['xs:enumeration'])
-          ? restriction['xs:enumeration']
-          : [restriction['xs:enumeration']]
-        : [];
-      for (const enumValue of enumerations) {
-        let doc = '';
-        if (enumValue['xs:annotation']?.['xs:documentation']) {
-          const docNode = enumValue['xs:annotation']['xs:documentation'];
-          doc = typeof docNode === 'string' ? docNode : docNode?._ || '';
+    for (const attributesRecord of attributeVariations) {
+      const resultItem = new AttributeValuesItem(attributesRecord.parentName);
+      const attribute = attributesRecord.attributes.find((a: any) => a?.$?.name === attributeName);
+      if (attribute) {
+        const typeDef = this.findTypeDefinition(attribute.$.type);
+        if (!typeDef) {
+          this.attributeValuesCache.set(cacheKey, []);
+          return [];
         }
-        if (enumValue?.$?.value) {
-          values.push({ value: enumValue.$.value, documentation: doc.trim() });
+
+        const processRestriction = (restriction: any) => {
+          if (!restriction) return;
+          const enumerations = restriction['xs:enumeration']
+            ? Array.isArray(restriction['xs:enumeration'])
+              ? restriction['xs:enumeration']
+              : [restriction['xs:enumeration']]
+            : [];
+          for (const enumValue of enumerations) {
+            let doc = '';
+            if (enumValue['xs:annotation']?.['xs:documentation']) {
+              const docNode = enumValue['xs:annotation']['xs:documentation'];
+              doc = typeof docNode === 'string' ? docNode : docNode?._ || '';
+            }
+            if (enumValue?.$?.value) {
+              resultItem.values.push(new AttributeValue(enumValue.$.value, doc.trim()));
+            }
+          }
+        };
+
+        if (typeDef['xs:restriction']) {
+          processRestriction(typeDef['xs:restriction']);
+        } else if (typeDef['xs:union']) {
+          const memberTypes = typeDef['xs:union']?.$?.memberTypes?.split(' ') || [];
+          for (const memberTypeName of memberTypes) {
+            const memberTypeDef = this.findTypeDefinition(memberTypeName);
+            if (memberTypeDef?.['xs:restriction']) {
+              processRestriction(memberTypeDef['xs:restriction']);
+            }
+          }
         }
       }
-    };
-
-    if (typeDef['xs:restriction']) {
-      processRestriction(typeDef['xs:restriction']);
-    } else if (typeDef['xs:union']) {
-      const memberTypes = typeDef['xs:union']?.$?.memberTypes?.split(' ') || [];
-      for (const memberTypeName of memberTypes) {
-        const memberTypeDef = this.findTypeDefinition(memberTypeName);
-        if (memberTypeDef?.['xs:restriction']) {
-          processRestriction(memberTypeDef['xs:restriction']);
-        }
-      }
+      result.push(resultItem);
     }
-    this.attributeValuesCache.set(cacheKey, values);
-    return values;
+    this.attributeValuesCache.set(cacheKey, result);
+    return result;
   }
 
   /**
@@ -622,7 +650,7 @@ export class XsdReference {
     scriptType: string,
     elementName: string,
     attributeName: string
-  ): { value: string; documentation?: string }[] {
+  ): AttributeValuesItem[] {
     return this.getSchema(scriptType)?.getAttributePossibleValues(elementName, attributeName) ?? [];
   }
 

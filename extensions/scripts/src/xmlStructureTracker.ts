@@ -5,7 +5,8 @@ export interface ElementRange {
   name: string;
   range: vscode.Range;
   isSelfClosing: boolean;
-  parent?: number;
+  parentId?: number;
+  parentName?: string;
   children: number[];
   attributes: AttributeRange[];
 }
@@ -16,7 +17,7 @@ export interface AttributeRange {
   nameRange: vscode.Range;
   valueRange: vscode.Range;
   quoteChar: string;
-  parent: number;
+  elementId: number;
 }
 
 export class XmlStructureTracker {
@@ -67,7 +68,8 @@ export class XmlStructureTracker {
           // Set parent-child relationships
           if (openElementStack.length > 0) {
             const parentIndex = openElementStack[openElementStack.length - 1];
-            newElement.parent = parentIndex;
+            newElement.parentId = parentIndex;
+            newElement.parentName = elements[parentIndex].name;
             elements[parentIndex].children.push(currentIndex);
           }
 
@@ -100,7 +102,7 @@ export class XmlStructureTracker {
                           nameRange: new vscode.Range(attrNameStart, attrNameEnd),
                           valueRange: new vscode.Range(valueStart, valueEnd),
                           quoteChar: quoteChar,
-                          parent: currentIndex,
+                          elementId: currentIndex,
                         };
 
                         newElement.attributes.push(attribute);
@@ -208,13 +210,13 @@ export class XmlStructureTracker {
   }
 
   getParentElement(document: vscode.TextDocument, element: ElementRange): ElementRange | undefined {
-    if (element.parent === undefined) return undefined;
+    if (element.parentId === undefined) return undefined;
 
     const elements = this.getElements(document);
-    if (element.parent < 0 || element.parent >= elements.length) {
+    if (element.parentId < 0 || element.parentId >= elements.length) {
       return undefined; // Parent index out of bounds
     }
-    return elements[element.parent];
+    return elements[element.parentId];
   }
 
   isInElementByName(document: vscode.TextDocument, currentElement: ElementRange, name: string): boolean {
