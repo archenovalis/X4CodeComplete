@@ -2,6 +2,35 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.6.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.4...X4CodeComplete@v1.6.0) (2025-06-21)
+
+
+### Features
+
+* **xml:** preliminary implement XML structure tracking and context-aware completions ([0eab4ff](https://github.com/archenovalis/X4CodeComplete/commit/0eab4ff9744473f32adf05485c88cb05178e0837))
+
+
+### Bug Fixes
+
+* **scripts:** fixed parent detection on scripts xml source  parsing ([e45f808](https://github.com/archenovalis/X4CodeComplete/commit/e45f8085284fcaf4929c4b0e9e312237556665bb))
+
+
+### Code Refactoring
+
+* another turn to work with xsd ([e268964](https://github.com/archenovalis/X4CodeComplete/commit/e268964045411a7b89b7765392924e2ad74636e4))
+* **logger:** make logger as separate module ([dccbb15](https://github.com/archenovalis/X4CodeComplete/commit/dccbb150b6bca138db32832ac21920815fa55533))
+* **scripts:** added xsd parsing and usage for the variable definition detection ([04ea834](https://github.com/archenovalis/X4CodeComplete/commit/04ea8347ebcf678ac908c851a9b668bf472c0fdb))
+* **scripts:** enhance getAllPossibleAttributes to include parentName filtering ([b590f46](https://github.com/archenovalis/X4CodeComplete/commit/b590f4619a141903005da8e81304879230867e43))
+* **scripts:** enhance nested element definition search with parent context ([c106328](https://github.com/archenovalis/X4CodeComplete/commit/c10632871717f510d6af6e7ec610e38bf348dbef))
+* **scripts:** finally implemented processing multiple variation of element attributes combinations ([e45f808](https://github.com/archenovalis/X4CodeComplete/commit/e45f8085284fcaf4929c4b0e9e312237556665bb))
+* **scripts:** improve completion working inside the attribute value range ([04ea834](https://github.com/archenovalis/X4CodeComplete/commit/04ea8347ebcf678ac908c851a9b668bf472c0fdb))
+* **scripts:** optimize schema loading by caching included schemas ([96cabd6](https://github.com/archenovalis/X4CodeComplete/commit/96cabd63f7f2cbc530af444306c956d0ee875864))
+* **scripts:** refactor getting possible attribute values to be comply with multiple element attributes sets definition ([2e346bb](https://github.com/archenovalis/X4CodeComplete/commit/2e346bb6ea1125f3a9d7d734a566ec1f9f8f3fb2))
+* **scripts:** update element and attribute handling to support multiple definitions ([b3507f7](https://github.com/archenovalis/X4CodeComplete/commit/b3507f70e0a1522716d6c97fa4e94aa598114885))
+* **scripts:** update element structure to use parentId and parentName for better clarity ([2e346bb](https://github.com/archenovalis/X4CodeComplete/commit/2e346bb6ea1125f3a9d7d734a566ec1f9f8f3fb2))
+* **validation:** initial realization of  diagnostic for xml elements ([20b2c40](https://github.com/archenovalis/X4CodeComplete/commit/20b2c40ed845cd29c4ea023590676ab5523aa032))
+* **xml:** optimize XML structure tracking with improved parsing logic and document change detection ([28f764a](https://github.com/archenovalis/X4CodeComplete/commit/28f764a004e9f07f66b7ed23f3b2d6c4b5e0abe6))
+
 ## [1.5.4](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.3...X4CodeComplete@v1.5.4) (2025-06-18)
 
 
