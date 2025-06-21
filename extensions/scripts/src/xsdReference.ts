@@ -4,6 +4,19 @@ import * as xml2js from 'xml2js';
 import { logger } from './logger';
 
 /**
+ * Represents attributes of an element, including its parent name and a map of attributes.
+ * This is used to store attributes for elements in a structured way.
+ */
+export class AttributeOfElement {
+  parentName: string;
+  attributes: Map<string, object>;
+  constructor(parentName: string = '', attributes: Map<string, object> = new Map()) {
+    this.parentName = parentName;
+    this.attributes = attributes;
+  }
+}
+
+/**
  * Represents a single, fully-resolved XSD schema with all includes merged.
  */
 class Schema {
@@ -12,7 +25,7 @@ class Schema {
   private typeCache = new Map<string, any | null>();
   private attributeGroupCache = new Map<string, any | null>();
   private allAttributesCache = new Map<string, any[][]>();
-  private allAttributesMapCache = new Map<string, Map<string, object>[]>();
+  private allAttributesMapCache = new Map<string, AttributeOfElement[]>();
   private attributeValuesCache = new Map<string, { value: string; documentation?: string }[]>();
   private missingAttributesCache = new Map<string, any[]>();
   private childElementsCache = new Map<string, any[]>();
@@ -209,7 +222,7 @@ class Schema {
   /**
    * Gets all possible attributes for a given element.
    */
-  public getAllPossibleAttributes(elementName: string): any[][] {
+  public getAllPossibleAttributes(elementName: string): any[] {
     if (this.allAttributesCache.has(elementName)) {
       return this.allAttributesCache.get(elementName)!;
     }
@@ -219,7 +232,7 @@ class Schema {
       return [];
     }
 
-    const allPossibleAttributes: any[][] = [];
+    const allPossibleAttributes: any[] = [];
 
     for (const elementDef of elementDefs) {
       const collectedAttributes = new Map<string, any>();
@@ -236,8 +249,8 @@ class Schema {
         this.collectAttributes(elementDef['xs:complexType'], collectedAttributes);
       }
 
-      const result = Array.from(collectedAttributes.values());
-      for (const attr of result) {
+      const result = { parentName: elementDef.parentName, attributes: Array.from(collectedAttributes.values()) };
+      for (const attr of result.attributes) {
         if (attr?.$?.type) {
           const typeDef = this.findTypeDefinition(attr.$.type);
           if (typeDef?.['xs:restriction']?.$?.base) {
@@ -254,16 +267,16 @@ class Schema {
   /**
    * Gets all possible attributes for a given element, returning an array of maps for each definition variant.
    */
-  public getAllPossibleAttributesMap(elementName: string): Map<string, object>[] {
+  public getAllPossibleAttributesMap(elementName: string): AttributeOfElement[] {
     if (this.allAttributesMapCache.has(elementName)) {
       return this.allAttributesMapCache.get(elementName)!;
     }
     const attributeVariations = this.getAllPossibleAttributes(elementName);
-    const resultVariations: Map<string, object>[] = [];
+    const resultVariations: AttributeOfElement[] = [];
 
-    for (const attributes of attributeVariations) {
-      const result = new Map<string, object>();
-      for (const attr of attributes) {
+    for (const attributesRecord of attributeVariations) {
+      const newRecord = new AttributeOfElement(attributesRecord.parentName);
+      for (const attr of attributesRecord.attributes) {
         if (!attr || !attr.$ || !attr.$.name) continue;
         const newAttr = {};
         for (const key of Object.keys(attr)) {
@@ -282,9 +295,9 @@ class Schema {
             }
           }
         }
-        result.set(attr.$.name, newAttr);
+        newRecord.attributes.set(attr.$.name, newAttr);
       }
-      resultVariations.push(result);
+      resultVariations.push(newRecord);
     }
     this.allAttributesMapCache.set(elementName, resultVariations);
     return resultVariations;
@@ -601,7 +614,7 @@ export class XsdReference {
     return this.getSchema(scriptType)?.findElementDefinition(elementName) ?? [];
   }
 
-  public getAllPossibleAttributes(scriptType: string, elementName: string): Map<string, object>[] {
+  public getAllPossibleAttributes(scriptType: string, elementName: string): AttributeOfElement[] {
     return this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? [];
   }
 

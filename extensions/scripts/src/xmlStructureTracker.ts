@@ -41,8 +41,8 @@ export class XmlStructureTracker {
       // Create a non-strict parser to be more tolerant of errors
       const parser = sax.parser(true);
 
-      const elementStack: ElementRange[] = [];
-      let currentElement: ElementRange | undefined;
+      const elements: ElementRange[] = [];
+      const openElementStack: number[] = [];
 
       // Track parse position
       parser.startTagPosition = 0;
@@ -62,11 +62,13 @@ export class XmlStructureTracker {
             attributes: [],
           };
 
+          const currentIndex = elements.length;
+
           // Set parent-child relationships
-          if (elementStack.length > 0) {
-            const parentElement = elementStack[elementStack.length - 1];
-            newElement.parent = elementStack.length - 1;
-            parentElement.children.push(elementStack.length);
+          if (openElementStack.length > 0) {
+            const parentIndex = openElementStack[openElementStack.length - 1];
+            newElement.parent = parentIndex;
+            elements[parentIndex].children.push(currentIndex);
           }
 
           // Process attributes (with error handling)
@@ -98,7 +100,7 @@ export class XmlStructureTracker {
                           nameRange: new vscode.Range(attrNameStart, attrNameEnd),
                           valueRange: new vscode.Range(valueStart, valueEnd),
                           quoteChar: quoteChar,
-                          parent: elementStack.length,
+                          parent: currentIndex,
                         };
 
                         newElement.attributes.push(attribute);
@@ -115,9 +117,26 @@ export class XmlStructureTracker {
             // Continue even if attribute parsing fails
           }
 
-          elementStack.push(newElement);
+          elements.push(newElement);
+
+          if (!node.isSelfClosing) {
+            openElementStack.push(currentIndex);
+          } else {
+            newElement.range = new vscode.Range(newElement.range.start, document.positionAt(parser.position));
+          }
         } catch (tagError) {
           // Skip this tag but continue parsing
+        }
+      };
+
+      parser.onclosetag = (tagName: string) => {
+        if (openElementStack.length > 0) {
+          const lastOpenIndex = openElementStack[openElementStack.length - 1];
+          const lastOpenElement = elements[lastOpenIndex];
+          if (lastOpenElement.name === tagName) {
+            // lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(parser.position));
+            openElementStack.pop();
+          }
         }
       };
 
@@ -136,7 +155,7 @@ export class XmlStructureTracker {
       parser.write(text).close();
 
       // Store the parsed structure
-      this.documentMap.set(document.uri.toString(), elementStack);
+      this.documentMap.set(document.uri.toString(), elements);
     } catch (error) {
       // Last-resort error handling - if anything fails, just continue
       // console.error(`Failed to parse document structure: ${error}`);

@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as sax from 'sax';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
 import { logger } from './logger';
-import { XsdReference } from './xsdReference';
+import { XsdReference, AttributeOfElement } from './xsdReference';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -1157,14 +1157,16 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
   return languageSubId;
 }
 
-function validateReferences(document: vscode.TextDocument, diagnostics: vscode.Diagnostic[] = []): void {
+function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
   const scriptType = getDocumentScriptType(document);
   if (scriptType !== aiScript) {
-    return; // Only validate AI scripts
+    return []; // Only validate AI scripts
   }
 
   const documentData = labelTracker.documentLabels.get(document.uri.toString());
   const actionData = actionTracker.documentActions.get(document.uri.toString());
+
+  const diagnostics: vscode.Diagnostic[] = [];
 
   // Validate label references
   if (documentData) {
@@ -1205,9 +1207,7 @@ function validateReferences(document: vscode.TextDocument, diagnostics: vscode.D
       }
     }
   }
-
-  // Set diagnostics for the document
-  diagnosticCollection.set(document.uri, diagnostics);
+  return diagnostics;
 }
 
 function unTrackScriptDocument(document: vscode.TextDocument): void {
@@ -1242,133 +1242,172 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
-    const elementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name);
-    if (element.name === 'label' && element.attributes.some((attr) => attr.name === 'name')) {
-      const nameAttr = element.attributes.find((attr) => attr.name === 'name');
-      if (nameAttr) {
-        const labelName = text.substring(
-          document.offsetAt(nameAttr.valueRange.start),
-          document.offsetAt(nameAttr.valueRange.end)
+    const parentName =
+      element.parent >= 0 && element.parent < xmlElements.length ? xmlElements[element.parent].name : '';
+    const allElementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name);
+    const actualElementAttributesList =
+      allElementAttributes.length == 1
+        ? allElementAttributes
+        : allElementAttributes.filter((def) => def.parentName === '' || def.parentName === parentName);
+    let actualElementAttributes: AttributeOfElement;
+    if (actualElementAttributesList.length === 1) {
+      actualElementAttributes = actualElementAttributesList[0];
+    } else if (actualElementAttributesList.length > 1) {
+      const filteredByExisting = [];
+      for (const attr of element.attributes) {
+        const filtered = actualElementAttributesList.filter((def) =>
+          Array.from(def.attributes.keys()).includes(attr.name)
         );
-        labelTracker.addLabel(labelName, scriptType, document.uri, nameAttr.valueRange);
+        if (filtered.length === 1) {
+          actualElementAttributes = filtered[0];
+          break;
+        }
       }
     }
-
-    // Handle action definitions (only for AIScript in library elements)
-    if (
-      scriptType === aiScript &&
-      element.name === 'actions' &&
-      xmlTracker.isInElementByName(document, element, 'library')
-    ) {
-      const nameAttr = element.attributes.find((attr) => attr.name === 'name');
-      if (nameAttr) {
-        const actionName = text.substring(
-          document.offsetAt(nameAttr.valueRange.start),
-          document.offsetAt(nameAttr.valueRange.end)
-        );
-        actionTracker.addAction(actionName, scriptType, document.uri, nameAttr.valueRange);
-      }
-    }
-
-    const missedAttributes: Set<string> = new Set(elementAttributes.keys());
-    // Process attributes for references and variables
-    element.attributes.forEach((attr) => {
-      if (missedAttributes.has(attr.name)) {
-        missedAttributes.delete(attr.name);
-      }
-      // Check for label references
-      if (scriptType === aiScript && labelElementAttributeMap[element.name]?.includes(attr.name)) {
-        const labelRefValue = text.substring(
-          document.offsetAt(attr.valueRange.start),
-          document.offsetAt(attr.valueRange.end)
-        );
-        labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, attr.valueRange);
-      }
-
-      // Check for action references
-      if (scriptType === aiScript && actionElementAttributeMap[element.name]?.includes(attr.name)) {
-        const actionRefValue = text.substring(
-          document.offsetAt(attr.valueRange.start),
-          document.offsetAt(attr.valueRange.end)
-        );
-        actionTracker.addActionReference(actionRefValue, scriptType, document.uri, attr.valueRange);
-      }
-
-      // Check for variables inside attribute values
-      const attrValue = text.substring(
-        document.offsetAt(attr.valueRange.start),
-        document.offsetAt(attr.valueRange.end)
+    if (!actualElementAttributes && actualElementAttributesList.length === 0) {
+      const diagnostic = new vscode.Diagnostic(
+        element.range,
+        `Unknown element '${element.name}' in script type '${scriptType}'`,
+        vscode.DiagnosticSeverity.Error
       );
+      diagnostic.code = 'unknown-element';
+      diagnostic.source = 'X4CodeComplete';
+      diagnostics.push(diagnostic);
+    } else {
+      if (element.name === 'label' && element.attributes.some((attr) => attr.name === 'name')) {
+        const nameAttr = element.attributes.find((attr) => attr.name === 'name');
+        if (nameAttr) {
+          const labelName = text.substring(
+            document.offsetAt(nameAttr.valueRange.start),
+            document.offsetAt(nameAttr.valueRange.end)
+          );
+          labelTracker.addLabel(labelName, scriptType, document.uri, nameAttr.valueRange);
+        }
+      }
 
-      const tableIsFound = tableKeyPattern.test(attrValue);
-      let match: RegExpExecArray | null;
-      const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
-      let priority = -1;
+      // Handle action definitions (only for AIScript in library elements)
       if (
-        (scriptType === aiScript &&
-          elementAttributes.has(attr.name) &&
-          elementAttributes.get(attr.name)?.['type'] === 'lvalueexpression') ||
-        elementAttributes.get(attr.name)?.['restriction'] === 'lvalueexpression'
+        scriptType === aiScript &&
+        element.name === 'actions' &&
+        xmlTracker.isInElementByName(document, element, 'library')
       ) {
-        if (xmlTracker.isInElementByName(document, element, 'library')) {
-          priority = 10;
-        } else if (xmlTracker.isInElementByName(document, element, 'init')) {
-          priority = 20;
-        } else if (xmlTracker.isInElementByName(document, element, 'patch')) {
-          priority = 30;
-        } else if (xmlTracker.isInElementByName(document, element, 'attention')) {
-          priority = 40;
+        const nameAttr = element.attributes.find((attr) => attr.name === 'name');
+        if (nameAttr) {
+          const actionName = text.substring(
+            document.offsetAt(nameAttr.valueRange.start),
+            document.offsetAt(nameAttr.valueRange.end)
+          );
+          actionTracker.addAction(actionName, scriptType, document.uri, nameAttr.valueRange);
         }
       }
-      while ((match = variablePattern.exec(attrValue)) !== null) {
-        const variableName = match[1];
-        const variableStartOffset = document.offsetAt(attr.valueRange.start) + match.index;
-        const variableEndOffset = variableStartOffset + match[0].length;
 
-        const start = document.positionAt(variableStartOffset);
-        const end = document.positionAt(variableEndOffset);
-
-        // Simple version of the existing variable type detection
-        const variableType = tableIsFound ? 'tableKey' : 'normal';
-        if (end.isEqual(attr.valueRange.end) && priority >= 0) {
-          variableTracker.addVariable(
-            variableType,
-            variableName,
-            scriptType,
-            document.uri,
-            new vscode.Range(start, end),
-            true, // isDefinition
-            priority
-          );
-        } else {
-          variableTracker.addVariable(
-            variableType,
-            variableName,
-            scriptType,
-            document.uri,
-            new vscode.Range(start, end)
-          );
+      const missedAttributes: Set<string> = actualElementAttributes
+        ? new Set(actualElementAttributes.attributes.keys())
+        : new Set();
+      // Process attributes for references and variables
+      element.attributes.forEach((attr) => {
+        if (missedAttributes.has(attr.name)) {
+          missedAttributes.delete(attr.name);
         }
-      }
-    });
-    if (missedAttributes.size > 0) {
-      missedAttributes.forEach((missedAttr) => {
-        if (elementAttributes.has(missedAttr)) {
-          const use = elementAttributes.get(missedAttr)?.['use'] || 'unknown';
-          if (use === 'required') {
-            const attrType = elementAttributes.get(missedAttr)?.['type'] || 'unknown';
-            const attrRestriction = elementAttributes.get(missedAttr)?.['restriction'] || 'none';
-            const diagnostic = new vscode.Diagnostic(
-              element.range,
-              `Missing required attribute '${missedAttr}' of type '${attrType}' with restriction '${attrRestriction}'`,
-              vscode.DiagnosticSeverity.Error
+        // Check for label references
+        if (scriptType === aiScript && labelElementAttributeMap[element.name]?.includes(attr.name)) {
+          const labelRefValue = text.substring(
+            document.offsetAt(attr.valueRange.start),
+            document.offsetAt(attr.valueRange.end)
+          );
+          labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, attr.valueRange);
+        }
+
+        // Check for action references
+        if (scriptType === aiScript && actionElementAttributeMap[element.name]?.includes(attr.name)) {
+          const actionRefValue = text.substring(
+            document.offsetAt(attr.valueRange.start),
+            document.offsetAt(attr.valueRange.end)
+          );
+          actionTracker.addActionReference(actionRefValue, scriptType, document.uri, attr.valueRange);
+        }
+
+        // Check for variables inside attribute values
+        const attrValue = text.substring(
+          document.offsetAt(attr.valueRange.start),
+          document.offsetAt(attr.valueRange.end)
+        );
+
+        const tableIsFound = tableKeyPattern.test(attrValue);
+        let match: RegExpExecArray | null;
+        const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+        let priority = -1;
+        let isLValueAttribute = false;
+        for (const elementAttributes of actualElementAttributesList) {
+          isLValueAttribute =
+            elementAttributes.attributes.has(attr.name) &&
+            (elementAttributes.attributes.get(attr.name)?.['type'] === 'lvalueexpression' ||
+              elementAttributes.attributes.get(attr.name)?.['restriction'] === 'lvalueexpression');
+          if (isLValueAttribute) {
+            break;
+          }
+        }
+        if (scriptType === aiScript && isLValueAttribute) {
+          if (xmlTracker.isInElementByName(document, element, 'library')) {
+            priority = 10;
+          } else if (xmlTracker.isInElementByName(document, element, 'init')) {
+            priority = 20;
+          } else if (xmlTracker.isInElementByName(document, element, 'patch')) {
+            priority = 30;
+          } else if (xmlTracker.isInElementByName(document, element, 'attention')) {
+            priority = 40;
+          }
+        }
+        while ((match = variablePattern.exec(attrValue)) !== null) {
+          const variableName = match[1];
+          const variableStartOffset = document.offsetAt(attr.valueRange.start) + match.index;
+          const variableEndOffset = variableStartOffset + match[0].length;
+
+          const start = document.positionAt(variableStartOffset);
+          const end = document.positionAt(variableEndOffset);
+
+          // Simple version of the existing variable type detection
+          const variableType = tableIsFound ? 'tableKey' : 'normal';
+          if (end.isEqual(attr.valueRange.end) && priority >= 0) {
+            variableTracker.addVariable(
+              variableType,
+              variableName,
+              scriptType,
+              document.uri,
+              new vscode.Range(start, end),
+              true, // isDefinition
+              priority
             );
-            diagnostic.code = 'missing-required-attribute';
-            diagnostic.source = 'X4CodeComplete';
-            diagnostics.push(diagnostic);
+          } else {
+            variableTracker.addVariable(
+              variableType,
+              variableName,
+              scriptType,
+              document.uri,
+              new vscode.Range(start, end)
+            );
           }
         }
       });
+      if (actualElementAttributes && missedAttributes.size > 0) {
+        missedAttributes.forEach((missedAttr) => {
+          if (actualElementAttributes.attributes.has(missedAttr)) {
+            const use = actualElementAttributes.attributes.get(missedAttr)?.['use'] || 'unknown';
+            if (use === 'required') {
+              const attrType = actualElementAttributes.attributes.get(missedAttr)?.['type'] || 'unknown';
+              const attrRestriction = actualElementAttributes.attributes.get(missedAttr)?.['restriction'] || 'none';
+              const diagnostic = new vscode.Diagnostic(
+                element.range,
+                `Missing required attribute '${missedAttr}' of type '${attrType}' with restriction '${attrRestriction}'`,
+                vscode.DiagnosticSeverity.Error
+              );
+              diagnostic.code = 'missing-required-attribute';
+              diagnostic.source = 'X4CodeComplete';
+              diagnostics.push(diagnostic);
+            }
+          }
+        });
+      }
     }
   };
 
@@ -1376,7 +1415,10 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   xmlElements.forEach(processElement);
 
   // Validate references after tracking is complete
-  validateReferences(document, diagnostics);
+  diagnostics.push(...validateReferences(document));
+
+  // Set diagnostics for the document
+  diagnosticCollection.set(document.uri, diagnostics);
 }
 
 const completionProvider = new CompletionDict();
