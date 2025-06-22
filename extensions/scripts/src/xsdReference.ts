@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as xml2js from 'xml2js';
 import { logger } from './logger';
+import { log } from 'console';
 
 /**
  * Represents attributes of an element, including its parent name and a map of attributes.
@@ -44,13 +45,55 @@ export class AttributeValuesItem {
   }
 }
 
+export class ElementParent {
+  name: string;
+  isGroup: boolean;
+
+  constructor(name: string, isGroup: boolean = false) {
+    this.name = name;
+    this.isGroup = isGroup;
+  }
+}
+
 /**
  * Represents a single, fully-resolved XSD schema with all includes merged.
  */
 class Schema {
+  /**
+   * Regular expression to match XPath items.
+   */
+  private static readonly xPathItemRegex = /(xs:[a-zA-Z0-9]+)(?:\[@name="([^"]+)"\])?/;
+  /**
+   * Set of node types that do not contain elements.
+   */
+  private static readonly nodesWithoutElements: Set<string> = new Set([
+    'xs:annotation',
+    'xs:documentation',
+    'xs:import',
+    'xs:include',
+    'xs:attributeGroup',
+    'xs:attribute',
+    'xs:restriction',
+  ]);
+  /**
+   * Set of node types that do not contain groups.
+   */
+  private static readonly nodesWithoutGroups: Set<string> = new Set([
+    'xs:annotation',
+    'xs:documentation',
+    'xs:import',
+    'xs:include',
+    'xs:attributeGroup',
+    'xs:attribute',
+    'xs:restriction',
+  ]);
   private rootSchema: any;
   private elementCache = new Map<string, any[]>();
-  private typeCache = new Map<string, any | null>();
+  private simpleTypeCache = new Map<string, any | null>();
+  private complexTypeCache = new Map<string, any | null>();
+  private groupCache = new Map<string, any | null>();
+  private elementsInGroupsCache = new Map<string, Set<string>>();
+  private typesToParentsCache = new Map<string, ElementParent[]>();
   private attributeGroupCache = new Map<string, any | null>();
   private allAttributesCache = new Map<string, any[][]>();
   private allAttributesMapCache = new Map<string, AttributeOfElement[]>();
@@ -61,19 +104,246 @@ class Schema {
 
   constructor(schema: any) {
     this.rootSchema = schema;
+    this.preCacheSchema();
+    this.groupCache.forEach((group, name) => {
+      logger.info(`Enriching group: ${name}`);
+      this.enrichGroups(group, name, new Set([name]), name);
+      logger.info(`Enriched group: ${name}`);
+    });
+    this.complexTypeCache.forEach((type, name) => {
+      logger.info(`Collecting elements from complex type: ${name}`);
+      this.collectParentsFromType(type, 'xs:complexType', name);
+    });
+    this.enrichElementsFromTypes();
+    this.enrichElementsByParents();
+    let withParents = 0;
+    let withoutParents = 0;
+    for (const [name, elements] of this.elementCache) {
+      for (let i = 0; i < elements.length; i++) {
+        if (elements[i]['parents'] && elements[i]['parents'].length > 0) {
+          withParents++;
+        } else {
+          logger.info(`Element "${name}" has no parents, xPath: ${elements[i].$.xPath}`);
+          withoutParents++;
+        }
+      }
+    }
+    logger.info('Schema initialized and pre-cached successfully.');
   }
 
-  private static nodesWithoutElements: Set<string> = new Set([
-    'xs:annotation',
-    'xs:documentation',
-    'xs:import',
-    'xs:include',
-    'xs:attributeGroup',
-    'xs:attribute',
-    'xs:restriction',
-  ]);
+  /**
+   * Pre-caches the schema by traversing it and storing elements, types, and groups in their respective caches.
+   * This allows for quick lookups later without needing to traverse the schema again.
+   * @param node The current node being processed, starting with the root schema.
+   * @param xPath The current XPath for the node, used for referencing elements.
+   * @param nodeType The type of the current node (e.g., 'xs:element', 'xs:simpleType').
+   * @param nodeType The type of the current node (e.g., 'xs:element', 'xs:simpleType').
+   */
+  private preCacheSchema(node: any = this.rootSchema, xPath: string = '', nodeType: string = ''): void {
+    if (!node || typeof node !== 'object') return;
 
-  private static skipAsParentNodes: Set<string> = new Set(['xs:choice', 'xs:sequence']);
+    if (Array.isArray(node)) {
+      let i = 0;
+      for (const item of node) {
+        this.preCacheSchema(item, `${xPath}[${item.$ ? '@name="' + item.$.name + '"' : i}]`, nodeType);
+        i++;
+      }
+    } else {
+      if (node.$ && node.$.name) {
+        node.$.xPath = xPath;
+        const name = node.$.name;
+        if (nodeType === 'xs:element') {
+          if (!this.elementCache.has(name)) {
+            this.elementCache.set(name, []);
+          }
+          const elements = this.elementCache.get(name);
+          if (elements) {
+            elements.push(node);
+          }
+        } else if (nodeType === 'xs:simpleType') {
+          this.simpleTypeCache.set(name, node);
+        } else if (nodeType === 'xs:complexType') {
+          this.complexTypeCache.set(name, node);
+        } else if (nodeType === 'xs:attributeGroup') {
+          this.attributeGroupCache.set(name, node);
+        } else if (nodeType === 'xs:group') {
+          this.groupCache.set(name, node);
+        }
+      }
+      for (const key in node) {
+        const newXPath = `${xPath}/${key}`;
+        if (key !== '$' && typeof node[key] === 'object') {
+          this.preCacheSchema(
+            node[key],
+            newXPath + (node[key].$ && node[key].$.name ? '[@name="' + node[key].$.name + '"]' : ''),
+            key
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Enriches elements from complex types by merging their definitions into the elements.
+   * This allows elements to inherit properties from their complex type definitions.
+   */
+  private enrichElementsFromTypes(): void {
+    // Apply types to elements based on their definitions
+    for (const [name, elements] of this.elementCache) {
+      const elementsLength = elements.length;
+      for (let i = 0; i < elementsLength; i++) {
+        let element = elements.shift();
+        const typeDef = this.complexTypeCache.get(element.$.type);
+        if (typeDef) {
+          const newElement = { ...element, ...typeDef };
+          if (newElement.$) {
+            newElement.$ = { ...newElement.$, ...element.$ };
+          }
+          element = newElement; // Update the element reference
+        }
+        elements.push(element);
+      }
+    }
+  }
+
+  /**
+   * Collects parent elements for each type in the schema.
+   * This allows elements to reference their parent types and groups.
+   * @param node The current node being processed.
+   * @param nodeType The type of the current node (e.g., 'xs:element', 'xs:group').
+   * @param typeName The name of the type being processed.
+   */
+  private collectParentsFromType(node: any, nodeType: string, typeName: string): void {
+    if (!node || typeof node !== 'object') return;
+
+    if (nodeType === 'xs:element' && node.$ && node.$.name) {
+      if (!this.typesToParentsCache.has(typeName)) {
+        this.typesToParentsCache.set(typeName, []);
+      }
+      const typeElements = this.typesToParentsCache.get(typeName);
+      if (typeElements) {
+        typeElements.push(new ElementParent(node.$.name));
+      }
+    } else if (nodeType === 'xs:group' && node.$ && node.$.ref) {
+      if (!this.typesToParentsCache.has(typeName)) {
+        this.typesToParentsCache.set(typeName, []);
+      }
+      const typeElements = this.typesToParentsCache.get(typeName);
+      if (typeElements) {
+        typeElements.push(new ElementParent(node.$.ref, true));
+      }
+    }
+
+    for (const key in node) {
+      if (key !== '$' && !Schema.nodesWithoutElements.has(key) && typeof node[key] === 'object') {
+        if (Array.isArray(node[key])) {
+          for (let i = 0; i < node[key].length; i++) {
+            this.collectParentsFromType(node[key][i], key, typeName);
+          }
+        } else {
+          this.collectParentsFromType(node[key], key, typeName);
+        }
+      }
+    }
+  }
+
+  /**
+   * Enriches elements by applying parent references based on their XPath.
+   * This allows elements to reference their parent elements or groups.
+   */
+  private enrichElementsByParents(): void {
+    // Apply parent references to elements
+    for (const [name, elements] of this.elementCache) {
+      for (const element of elements) {
+        const xPathItems = (element.$.xPath || '').split('/');
+        xPathItems.pop();
+        for (let j = xPathItems.length - 1; j >= 0; j--) {
+          const item = xPathItems[j];
+          const match = item.match(Schema.xPathItemRegex);
+          if (match && match[1] && match[2]) {
+            const nodeType = match[1];
+            const nodeName = match[2] || '';
+            if (nodeType === 'xs:element' && nodeName) {
+              if (element['parents'] === undefined) {
+                element['parents'] = [];
+              }
+              element['parents'].push(new ElementParent(nodeName));
+              break; // Stop at the first element type
+            } else if (nodeType === 'xs:group' && nodeName) {
+              if (element['parents'] === undefined) {
+                element['parents'] = [];
+              }
+              element['parents'].push(new ElementParent(nodeName, true));
+              break; // Stop at the first group type
+            } else if (nodeType === 'xs:complexType' && nodeName) {
+              const parentsFromType = this.typesToParentsCache.get(nodeName);
+              if (!parentsFromType || parentsFromType.length === 0) continue; // Skip if no elements found for this type
+              if (element['parents'] === undefined) {
+                element['parents'] = [];
+              }
+              for (const parentElement of parentsFromType) {
+                element['parents'].push(parentElement);
+              }
+              break; // Stop at the first complexType
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Enriches groups by applying references and collecting elements within groups.
+   * This allows groups to reference other groups and collect elements defined within them.
+   * @param group The group object to enrich.
+   * @param nodeType The type of the node (e.g., 'xs:group', 'xs:element').
+   * @param appliedReferences A set of already applied references to avoid circular references.
+   * @param topGroupName The name of the top-level group being processed.
+   * @return The enriched group object.
+   */
+  private enrichGroups(group: any, nodeType: string, appliedReferences: Set<string>, topGroupName: string): any {
+    if (!group || typeof group !== 'object') return undefined;
+
+    if (nodeType === 'xs:group' && group.$ && group.$.ref) {
+      if (!appliedReferences.has(group.$.ref)) {
+        const refGroup = this.groupCache.get(group.$.ref);
+        if (refGroup) {
+          logger.info(
+            `Applying group reference: ${group.$.ref}. Previously applied references: ${Array.from(appliedReferences).join(', ')}`
+          );
+          appliedReferences.add(group.$.ref);
+          group = { ...refGroup };
+        }
+      }
+    } else if (nodeType === 'xs:element') {
+      if (group.$ && group.$.name) {
+        if (!this.elementsInGroupsCache.has(topGroupName)) {
+          this.elementsInGroupsCache.set(topGroupName, new Set());
+        }
+        const elementsSet = this.elementsInGroupsCache.get(topGroupName);
+        if (elementsSet) {
+          elementsSet.add(group.$.name);
+        }
+      }
+    }
+    for (const key in group) {
+      if (key !== '$' && !Schema.nodesWithoutGroups.has(key) && typeof group[key] === 'object') {
+        if (Array.isArray(group[key])) {
+          for (let i = 0; i < group[key].length; i++) {
+            if (key === 'xs:group' && group[key][i] && group[key][i].$.enriched) continue; // Skip already enriched nodes
+            group[key][i] = this.enrichGroups(group[key][i], key, appliedReferences, topGroupName);
+          }
+        } else {
+          if (key === 'xs:group' && group[key].$.enriched) continue; // Skip already enriched nodes
+          group[key] = this.enrichGroups(group[key], key, appliedReferences, topGroupName);
+        }
+      }
+    }
+    if (nodeType === 'xs:group' && group.$ && group.$.name) {
+      group.$.enriched = true; // Mark the group as enriched
+    }
+    return group;
+  }
 
   /**
    * Finds all definitions for an element by name within this schema.
@@ -166,12 +436,12 @@ class Schema {
    * Finds a type definition (simpleType or complexType) by name.
    */
   public findTypeDefinition(typeName: string): any | undefined {
-    if (this.typeCache.has(typeName)) {
-      const result = this.typeCache.get(typeName);
+    if (this.simpleTypeCache.has(typeName)) {
+      const result = this.simpleTypeCache.get(typeName);
       return result === null ? undefined : result;
     }
     if (!this.rootSchema || !this.rootSchema['xs:schema']) {
-      this.typeCache.set(typeName, null);
+      this.simpleTypeCache.set(typeName, null);
       return undefined;
     }
     const schemaRoot = this.rootSchema['xs:schema'];
@@ -184,7 +454,7 @@ class Schema {
     for (const type of simpleTypes) {
       if (type?.$?.name === typeName) {
         type.$.typeName = 'xs:simpleType';
-        this.typeCache.set(typeName, type);
+        this.simpleTypeCache.set(typeName, type);
         return type;
       }
     }
@@ -197,11 +467,11 @@ class Schema {
     for (const type of complexTypes) {
       if (type?.$?.name === typeName) {
         type.$.typeName = 'xs:complexType';
-        this.typeCache.set(typeName, type);
+        this.simpleTypeCache.set(typeName, type);
         return type;
       }
     }
-    this.typeCache.set(typeName, null);
+    this.simpleTypeCache.set(typeName, null);
     return undefined;
   }
 
@@ -585,6 +855,7 @@ export class XsdReference {
 
     const result = await parser.parseStringPromise(xsdContent);
     await this.processIncludes(result, schemaPath, new Set([path.resolve(schemaPath)]));
+
     return result;
   }
 
