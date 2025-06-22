@@ -49,8 +49,8 @@ export class AttributeValuesItem {
  */
 class Schema {
   private rootSchema: any;
-  private elementCache = new Map<string, any[] | null>();
-  private typeCache = new Map<string, any>();
+  private elementCache = new Map<string, any[]>();
+  private typeCache = new Map<string, any | null>();
   private attributeGroupCache = new Map<string, any | null>();
   private allAttributesCache = new Map<string, any[][]>();
   private allAttributesMapCache = new Map<string, AttributeOfElement[]>();
@@ -82,17 +82,16 @@ class Schema {
    */
   public findElementDefinition(elementName: string): any[] {
     if (this.elementCache.has(elementName)) {
-      const cached = this.elementCache.get(elementName);
-      return cached === null ? [] : cached;
+      return this.elementCache.get(elementName);
     }
     if (!this.rootSchema) {
-      this.elementCache.set(elementName, null);
+      this.elementCache.set(elementName, []);
       return [];
     }
     const definitions: any[] = [];
     const visited = new Set();
     this.findNestedElementDefinitions(this.rootSchema, elementName, visited, definitions, undefined);
-    this.elementCache.set(elementName, definitions.length > 0 ? definitions : null);
+    this.elementCache.set(elementName, definitions);
     return definitions;
   }
 
@@ -166,12 +165,13 @@ class Schema {
   /**
    * Finds a type definition (simpleType or complexType) by name.
    */
-  public findTypeDefinition(typeName: string): any {
+  public findTypeDefinition(typeName: string): any | undefined {
     if (this.typeCache.has(typeName)) {
-      return this.typeCache.get(typeName);
+      const result = this.typeCache.get(typeName);
+      return result === null ? undefined : result;
     }
     if (!this.rootSchema || !this.rootSchema['xs:schema']) {
-      this.typeCache.set(typeName, undefined);
+      this.typeCache.set(typeName, null);
       return undefined;
     }
     const schemaRoot = this.rootSchema['xs:schema'];
@@ -201,7 +201,7 @@ class Schema {
         return type;
       }
     }
-    this.typeCache.set(typeName, undefined);
+    this.typeCache.set(typeName, null);
     return undefined;
   }
 
