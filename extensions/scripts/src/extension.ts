@@ -445,8 +445,30 @@ class CompletionDict implements vscode.CompletionItemProvider {
   }
 
   provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
-    if (getDocumentScriptType(document) == '') {
+    const scriptType = getDocumentScriptType(document);
+    if (scriptType == '') {
       return undefined; // Skip if the document is not valid
+    }
+
+    const inElementRange = xmlTracker.isInElementRange(document, position);
+    if (inElementRange) {
+      if (exceedinglyVerbose) {
+        logger.info(`Completion requested in element: ${inElementRange.name}`);
+      }
+      const allElementAttributes = xsdReference.getAllPossibleAttributes(
+        scriptType,
+        inElementRange.name,
+        inElementRange.parentName,
+        inElementRange.attributes.map((attr) => attr.name)
+      );
+      if (allElementAttributes.length > 0) {
+        // If the element has predefined attributes, return them as completions
+        // const items = new Map<string, vscode.CompletionItem>();
+        // for (const attr of allElementAttributes) {
+        //   this.addItem(items, attr.name, attr.documentation);
+        // }
+        // return this.makeCompletionList(items);
+      }
     }
 
     // Check if we're in an attribute value for context-aware completions
@@ -456,6 +478,24 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
     if (attributeRange === undefined) {
       return undefined; // Skip if not in an attribute value
+    }
+
+    const attributeValues = xsdReference
+      .getAttributePossibleValues(
+        scriptType,
+        attributeRange.elementName,
+        attributeRange.name,
+        attributeRange.parentName
+      )
+      .find((values) => values.values.length > 0);
+
+    if (attributeValues) {
+      // If the attribute has predefined values, return them as completions
+      const items = new Map<string, vscode.CompletionItem>();
+      for (const value of attributeValues.values) {
+        this.addItem(items, value.value, value.documentation);
+      }
+      return this.makeCompletionList(items);
     }
 
     // Check if we're in a specialized completion context (variables, labels, actions)
@@ -1243,19 +1283,15 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
     const parentName = element.parentName || '';
-    const allElementAttributes = xsdReference.getAllPossibleAttributes(scriptType, element.name, parentName);
+    const allElementAttributes = xsdReference.getAllPossibleAttributes(
+      scriptType,
+      element.name,
+      parentName,
+      element.attributes.map((attr) => attr.name)
+    );
     let actualElementAttributes: AttributeOfElement;
     if (allElementAttributes.length === 1) {
       actualElementAttributes = allElementAttributes[0];
-    } else if (allElementAttributes.length > 1) {
-      const filteredByExisting = [];
-      for (const attr of element.attributes) {
-        const filtered = allElementAttributes.filter((def) => Array.from(def.attributes.keys()).includes(attr.name));
-        if (filtered.length === 1) {
-          actualElementAttributes = filtered[0];
-          break;
-        }
-      }
     }
     if (!actualElementAttributes && allElementAttributes.length === 0) {
       const diagnostic = new vscode.Diagnostic(
@@ -1985,7 +2021,8 @@ export function activate(context: vscode.ExtensionContext) {
     completionProvider,
     '.',
     '"',
-    '{'
+    '{',
+    ' '
   );
   context.subscriptions.push(disposableCompleteProvider);
 

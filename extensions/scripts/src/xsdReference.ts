@@ -50,7 +50,7 @@ export class AttributeValuesItem {
 class Schema {
   private rootSchema: any;
   private elementCache = new Map<string, any[] | null>();
-  private typeCache = new Map<string, any | null>();
+  private typeCache = new Map<string, any>();
   private attributeGroupCache = new Map<string, any | null>();
   private allAttributesCache = new Map<string, any[][]>();
   private allAttributesMapCache = new Map<string, AttributeOfElement[]>();
@@ -62,6 +62,18 @@ class Schema {
   constructor(schema: any) {
     this.rootSchema = schema;
   }
+
+  private static nodesWithoutElements: Set<string> = new Set([
+    'xs:annotation',
+    'xs:documentation',
+    'xs:import',
+    'xs:include',
+    'xs:attributeGroup',
+    'xs:attribute',
+    'xs:restriction',
+  ]);
+
+  private static skipAsParentNodes: Set<string> = new Set(['xs:choice', 'xs:sequence']);
 
   /**
    * Finds all definitions for an element by name within this schema.
@@ -92,42 +104,60 @@ class Schema {
     elementName: string,
     visited: Set<any>,
     definitions: any[],
-    parentNode?: any
+    parentElement?: any,
+    xPath: string = ''
   ): void {
-    if (!node || typeof node !== 'object' || visited.has(node)) {
+    if (!node || typeof node !== 'object' || visited.has(xPath)) {
       return;
     }
-    visited.add(node);
-
+    visited.add(xPath);
+    // logger.info(`Searching for element "${elementName}" at path: ${xPath}`);
     if (Array.isArray(node)) {
+      let i = 0;
       for (const item of node) {
-        this.findNestedElementDefinitions(item, elementName, visited, definitions, parentNode);
+        this.findNestedElementDefinitions(
+          item,
+          elementName,
+          visited,
+          definitions,
+          parentElement,
+          `${xPath}[${item.$ ? 'name="' + item.$.name + '"' : i}]`
+        );
+        i++;
       }
     } else {
       for (const key in node) {
+        const newXPath = `${xPath}/${key}`;
         if (key === 'xs:element') {
-          const elements = Array.isArray(node[key]) ? node[key] : [node[key]];
+          const elementIsArray = Array.isArray(node[key]);
+          const elements = elementIsArray ? node[key] : [node[key]];
           for (const el of elements) {
-            if (el?.$?.name === elementName) {
-              const newDef = { ...el };
-              if (parentNode?.$?.name) {
-                newDef.parentName = parentNode.$.name;
+            const elementXPath = elementIsArray ? `${newXPath}[name="${el.$.name}"]` : newXPath;
+            const typeDef = el.$ && el.$.type ? this.findTypeDefinition(el.$.type) : undefined;
+            if (el.$ && el.$.name === elementName) {
+              const newDef = typeDef ? { ...typeDef, ...el } : { ...el };
+              if (parentElement?.$?.name) {
+                newDef.parentName = parentElement.$.name;
               }
               definitions.push(newDef);
             }
             // Recurse into the element definition, passing it as the new parent.
-            this.findNestedElementDefinitions(el, elementName, visited, definitions, el);
+            this.findNestedElementDefinitions(el, elementName, visited, definitions, el, elementXPath);
 
             // Handle type attribute to find nested elements within types
-            if (el?.$?.type) {
-              const typeDef = this.findTypeDefinition(el.$.type);
-              if (typeDef) {
-                this.findNestedElementDefinitions(typeDef, elementName, visited, definitions, el);
-              }
+            if (typeDef) {
+              this.findNestedElementDefinitions(
+                typeDef,
+                elementName,
+                visited,
+                definitions,
+                el,
+                `/xs:schema/${typeDef.$.typeName}[name="${typeDef.$.name}"]`
+              );
             }
           }
-        } else if (key !== '$' && typeof node[key] === 'object') {
-          this.findNestedElementDefinitions(node[key], elementName, visited, definitions, parentNode);
+        } else if (key !== '$' && typeof node[key] === 'object' && Schema.nodesWithoutElements.has(key) === false) {
+          this.findNestedElementDefinitions(node[key], elementName, visited, definitions, parentElement, newXPath);
         }
       }
     }
@@ -138,11 +168,10 @@ class Schema {
    */
   public findTypeDefinition(typeName: string): any {
     if (this.typeCache.has(typeName)) {
-      const cached = this.typeCache.get(typeName);
-      return cached === null ? undefined : cached;
+      return this.typeCache.get(typeName);
     }
     if (!this.rootSchema || !this.rootSchema['xs:schema']) {
-      this.typeCache.set(typeName, null);
+      this.typeCache.set(typeName, undefined);
       return undefined;
     }
     const schemaRoot = this.rootSchema['xs:schema'];
@@ -154,6 +183,7 @@ class Schema {
       : [];
     for (const type of simpleTypes) {
       if (type?.$?.name === typeName) {
+        type.$.typeName = 'xs:simpleType';
         this.typeCache.set(typeName, type);
         return type;
       }
@@ -166,11 +196,12 @@ class Schema {
       : [];
     for (const type of complexTypes) {
       if (type?.$?.name === typeName) {
+        type.$.typeName = 'xs:complexType';
         this.typeCache.set(typeName, type);
         return type;
       }
     }
-    this.typeCache.set(typeName, null);
+    this.typeCache.set(typeName, undefined);
     return undefined;
   }
 
@@ -645,18 +676,52 @@ export class XsdReference {
   public getAllPossibleAttributes(
     scriptType: string,
     elementName: string,
-    parentName: string = ''
+    parentName: string = '',
+    attributes: string[] = []
   ): AttributeOfElement[] {
     const result = this.getSchema(scriptType)?.getAllPossibleAttributesMap(elementName) ?? [];
-    return result.length == 1 ? result : result.filter((def) => def.parentName === '' || def.parentName === parentName);
+    if (result.length === 0) {
+      return [];
+    } else if (result.length === 1) {
+      return result;
+    } else {
+      const filtered = result.filter((def) => def.parentName === '' || def.parentName === parentName);
+      if (attributes.length > 0 && filtered.length > 1) {
+        const commonAttributes = filtered
+          .map((def) => ({
+            count: attributes.reduce((acc: number, attr) => {
+              if (def.attributes.has(attr)) {
+                acc++;
+              }
+              return acc;
+            }, 0),
+            parentName: def.parentName,
+            attributes: def.attributes,
+          }))
+          .sort((a, b) => b.count - a.count);
+        const maxCommon = commonAttributes[0].count;
+        if (maxCommon === 0) {
+          return filtered;
+        }
+        return commonAttributes
+          .filter((item) => item.count === maxCommon)
+          .map((item) => new AttributeOfElement(item.parentName, item.attributes));
+      } else {
+        return filtered;
+      }
+    }
   }
 
   public getAttributePossibleValues(
     scriptType: string,
     elementName: string,
-    attributeName: string
+    attributeName: string,
+    parentName: string = ''
   ): AttributeValuesItem[] {
-    return this.getSchema(scriptType)?.getAttributePossibleValues(elementName, attributeName) ?? [];
+    const result = this.getSchema(scriptType)?.getAttributePossibleValues(elementName, attributeName) ?? [];
+    return result.length > 1
+      ? result.filter((item) => item.parentName === '' || item.parentName === parentName)
+      : result;
   }
 
   public getMissingMandatoryAttributes(
