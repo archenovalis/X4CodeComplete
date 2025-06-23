@@ -63,9 +63,20 @@ class Schema {
    * Regular expression to match XPath items.
    */
   private static readonly xPathItemRegex = /(xs:[a-zA-Z0-9]+)(?:\[@name="([^"]+)"\])?/;
+
+  private static readonly xPathGroupRegex = /xs:group+(?:\[@name="([^"]+)"\])\/(.+)$/;
   /**
    * Set of node types that do not contain elements.
    */
+  private static readonly mainNodes: Set<string> = new Set([
+    'xs:element',
+    'xs:complexType',
+    'xs:simpleType',
+    'xs:group',
+    'xs:attributeGroup',
+    // 'xs:attribute',
+    // 'xs:restriction',
+  ]);
   private static readonly nodesWithoutElements: Set<string> = new Set([
     'xs:annotation',
     'xs:documentation',
@@ -92,6 +103,7 @@ class Schema {
   private simpleTypeCache = new Map<string, any | null>();
   private complexTypeCache = new Map<string, any | null>();
   private groupCache = new Map<string, any | null>();
+  private groupRefCache = new Map<string, any[] | null>();
   private elementsInGroupsCache = new Map<string, Set<string>>();
   private typesToParentsCache = new Map<string, ElementParent[]>();
   private groupsToParentsCache = new Map<string, ElementParent[]>();
@@ -106,14 +118,20 @@ class Schema {
   constructor(schema: any) {
     this.rootSchema = schema;
     this.preCacheSchema();
-    logger.info('Schema pre-caching completed.'); /*
+    logger.info('Schema pre-caching completed.');
+    this.markGroupsWithoutRefs();
+    let groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
+    let iterationsCount = 0;
+    while (groupsWithRefsCount > 0 && iterationsCount < this.groupCache.size) {
+      logger.info(`Marking groups without references, iteration: ${iterationsCount + 1}`);
+      this.applyGroupReferences();
+      logger.info('Applying group references completed.');
+      this.markGroupsWithoutRefs();
+      groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
+      iterationsCount++;
+    }
     this.collectParentsForGroups();
-    logger.info('Collecting parents for groups completed.'); */
-    this.groupCache.forEach((group, name) => {
-      logger.info(`Enriching group: ${name}`);
-      this.enrichGroups(group, name, new Set([name]), name);
-      logger.info(`Enriched group: ${name}`);
-    });
+    logger.info('Collecting parents for groups completed.');
     this.enrichTypesViaExtensions();
     logger.info('Enriching types via extensions completed.');
     // this.complexTypeCache.forEach((type, name) => {
@@ -141,6 +159,18 @@ class Schema {
     logger.info('Schema initialized and pre-cached successfully.');
   }
 
+  private static addAttrToXPath(node: any, position: number = 0): string {
+    if (!node || typeof node !== 'object') return '';
+    if (node.$ && node.$.name) {
+      return `[@name="${node.$.name}"]`;
+    } else if (node.$ && node.$.ref) {
+      return `[@ref="${node.$.ref}"]`;
+    } else if (position) {
+      return `[${position}]`;
+    }
+    return '';
+  }
+
   /**
    * Pre-caches the schema by traversing it and storing elements, types, and groups in their respective caches.
    * This allows for quick lookups later without needing to traverse the schema again.
@@ -155,39 +185,149 @@ class Schema {
     if (Array.isArray(node)) {
       let i = 0;
       for (const item of node) {
-        this.preCacheSchema(item, `${xPath}[${item.$ ? '@name="' + item.$.name + '"' : i}]`, nodeType);
+        this.preCacheSchema(item, `${xPath}${Schema.addAttrToXPath(item, i)}`, nodeType);
         i++;
       }
     } else {
-      if (node.$ && node.$.name) {
-        node.$.xPath = xPath;
-        const name = node.$.name;
-        if (nodeType === 'xs:element') {
+      if (node.$ && Schema.mainNodes.has(nodeType)) {
+        const nodeCopy = structuredClone(node);
+        nodeCopy.$.xPath = xPath;
+        const name = nodeCopy.$.name;
+        const ref = nodeCopy.$.ref;
+        if (nodeType === 'xs:element' && name) {
           if (!this.elementCache.has(name)) {
             this.elementCache.set(name, []);
           }
           const elements = this.elementCache.get(name);
           if (elements) {
-            elements.push(node);
+            elements.push(nodeCopy);
           }
-        } else if (nodeType === 'xs:simpleType') {
-          this.simpleTypeCache.set(name, node);
-        } else if (nodeType === 'xs:complexType') {
-          this.complexTypeCache.set(name, node);
+        } else if (nodeType === 'xs:simpleType' && name) {
+          this.simpleTypeCache.set(name, nodeCopy);
+        } else if (nodeType === 'xs:complexType' && name) {
+          this.complexTypeCache.set(name, nodeCopy);
         } else if (nodeType === 'xs:attributeGroup') {
-          this.attributeGroupCache.set(name, node);
+          this.attributeGroupCache.set(name, nodeCopy);
         } else if (nodeType === 'xs:group') {
-          this.groupCache.set(name, node);
+          if (name) {
+            this.groupCache.set(name, nodeCopy);
+          } else if (ref) {
+            if (!this.groupRefCache.has(ref)) {
+              this.groupRefCache.set(ref, []);
+            }
+            this.groupRefCache.get(ref)?.push(nodeCopy);
+          }
         }
       }
       for (const key in node) {
         const newXPath = `${xPath}/${key}`;
         if (key !== '$' && typeof node[key] === 'object') {
-          this.preCacheSchema(
-            node[key],
-            newXPath + (node[key].$ && node[key].$.name ? '[@name="' + node[key].$.name + '"]' : ''),
-            key
-          );
+          this.preCacheSchema(node[key], `${newXPath}${Schema.addAttrToXPath(node[key])}`, key);
+        }
+      }
+    }
+  }
+
+  private markGroupsWithoutRefs(): void {
+    // Mark groups that do not have a reference
+    const groupsRefsXpath = [];
+    for (const group of this.groupRefCache.values()) {
+      groupsRefsXpath.push(...group.map((g) => g.$.xPath));
+    }
+    for (const [name, group] of this.groupCache) {
+      const refRegex = new RegExp(
+        `^\\/xs:schema\\/xs:group\\[@name="${name}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref=`
+      );
+      group.$.noRef = !groupsRefsXpath.find((xpath) => refRegex.test(xpath));
+    }
+  }
+
+  private static joinAttributes(node: object, donor: object): void {
+    for (const key in donor) {
+      if (key !== '$' && key !== 'xs:annotation') {
+        if (node[key] === undefined) {
+          node[key] = donor[key];
+        } else if (Array.isArray(node[key]) && Array.isArray(donor[key])) {
+          node[key] = node[key].concat(donor[key]);
+        } else if (Array.isArray(node[key]) && typeof donor[key] === 'object' && !Array.isArray(donor[key])) {
+          node[key].push(donor[key]);
+        } else if (typeof node[key] === 'object' && !Array.isArray(node[key]) && Array.isArray(donor[key])) {
+          node[key] = [node[key]].concat(donor[key]);
+        } else if (
+          typeof node[key] === 'object' &&
+          !Array.isArray(node[key]) &&
+          typeof donor[key] === 'object' &&
+          !Array.isArray(donor[key])
+        ) {
+          if (['xs:choice', 'xs:sequence'].includes(key)) {
+            Schema.joinAttributes(node[key], donor[key]);
+          } else {
+            node[key] = [node[key], donor[key]];
+          }
+        } else {
+          logger.warn(`Unexpected merge case for key "${key}"`);
+        }
+      }
+    }
+  }
+
+  private applyGroupReferences(): void {
+    // Apply group references to elements
+    const groupWithNoRefs = Array.from(this.groupCache.values()).filter((group) => group.$.noRef);
+    for (const group of groupWithNoRefs) {
+      if (this.groupRefCache.has(group.$.name)) {
+        const refRegex = new RegExp(
+          `^\\/xs:schema\\/xs:group\\[@name="(\\w+)"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref="${group.$.name}"\\]$` // Match group references
+        );
+        const allGroupRefs = this.groupRefCache.get(group.$.name);
+        const groupRefs = allGroupRefs.filter((item) => refRegex.test(item.$.xPath));
+        for (const groupRef of groupRefs) {
+          const match = groupRef.$.xPath.match(refRegex);
+          if (match && match[1]) {
+            const groupName = match[1];
+            const groupToApply = this.groupCache.get(groupName);
+            const positionOfRef = groupRef.$.xPath
+              .replace(`/xs:schema/xs:group[@name="${groupName}"]/`, '')
+              .replace('/xs:group[@ref="' + group.$.name + '"]', ''); // Remove the reference part
+            const pathTo = positionOfRef.split('/').filter((item) => item !== '');
+            let node = groupToApply;
+            for (const pathItem of pathTo) {
+              node = node[pathItem];
+            }
+            if (node && typeof node === 'object') {
+              if (Array.isArray(node['xs:group'])) {
+                if (node['xs:group'].length > 1) {
+                  node['xs:group'].splice(
+                    node['xs:group'].findIndex((g) => g.$.ref === group.$.name),
+                    1
+                  );
+                } else {
+                  node['xs:group'] = node['xs:group'].find((g) => g.$.ref !== group.$.name);
+                  if (node['xs:group'] === undefined) {
+                    delete node['xs:group']; // Remove the key if no groups left
+                  }
+                }
+              }
+              const groupKeys = Object.keys(group).filter((key) => key !== '$' && key !== 'xs:annotation');
+              if (groupKeys.length > 0) {
+                if (groupKeys.length === 1 && groupKeys[0] === pathTo[pathTo.length - 1]) {
+                  node = groupToApply;
+                  pathTo.pop(); // Remove the last item to avoid overwriting the group itself
+                  for (const pathItem of pathTo) {
+                    node = node[pathItem];
+                  }
+                }
+                Schema.joinAttributes(node, group);
+              }
+              allGroupRefs.splice(
+                allGroupRefs.findIndex((g) => g.$.xPath === groupRef.$.xPath),
+                1
+              );
+              logger.info(
+                `Removed group reference on "${group.$.name}" from "${groupName}" via path "${groupRef.$.xPath}"`
+              );
+            }
+          }
         }
       }
     }
@@ -439,59 +579,6 @@ class Schema {
         }
       }
     }
-  }
-
-  /**
-   * Enriches groups by applying references and collecting elements within groups.
-   * This allows groups to reference other groups and collect elements defined within them.
-   * @param group The group object to enrich.
-   * @param nodeType The type of the node (e.g., 'xs:group', 'xs:element').
-   * @param appliedReferences A set of already applied references to avoid circular references.
-   * @param topGroupName The name of the top-level group being processed.
-   * @return The enriched group object.
-   */
-  private enrichGroups(group: any, nodeType: string, appliedReferences: Set<string>, topGroupName: string): any {
-    if (!group || typeof group !== 'object') return undefined;
-
-    if (nodeType === 'xs:group' && group.$ && group.$.ref) {
-      if (!appliedReferences.has(group.$.ref)) {
-        const refGroup = this.groupCache.get(group.$.ref);
-        if (refGroup) {
-          logger.info(
-            `Applying group reference: ${group.$.ref}. Previously applied references: ${Array.from(appliedReferences).join(', ')}`
-          );
-          appliedReferences.add(group.$.ref);
-          group = { ...refGroup };
-        }
-      }
-    } else if (nodeType === 'xs:element') {
-      if (group.$ && group.$.name) {
-        if (!this.elementsInGroupsCache.has(topGroupName)) {
-          this.elementsInGroupsCache.set(topGroupName, new Set());
-        }
-        const elementsSet = this.elementsInGroupsCache.get(topGroupName);
-        if (elementsSet) {
-          elementsSet.add(group.$.name);
-        }
-      }
-    }
-    for (const key in group) {
-      if (key !== '$' && !Schema.nodesWithoutGroups.has(key) && typeof group[key] === 'object') {
-        if (Array.isArray(group[key])) {
-          for (let i = 0; i < group[key].length; i++) {
-            if (key === 'xs:group' && group[key][i] && group[key][i].$.enriched) continue; // Skip already enriched nodes
-            group[key][i] = this.enrichGroups(group[key][i], key, appliedReferences, topGroupName);
-          }
-        } else {
-          if (key === 'xs:group' && group[key].$.enriched) continue; // Skip already enriched nodes
-          group[key] = this.enrichGroups(group[key], key, appliedReferences, topGroupName);
-        }
-      }
-    }
-    if (nodeType === 'xs:group' && group.$ && group.$.name) {
-      group.$.enriched = true; // Mark the group as enriched
-    }
-    return group;
   }
 
   /**
