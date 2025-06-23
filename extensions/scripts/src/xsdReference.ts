@@ -122,24 +122,13 @@ class Schema {
     this.rootSchema = schema;
     this.preCacheSchema();
     logger.info('Schema pre-caching completed.');
-    this.markGroupsWithoutRefs();
-    let groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
-    let maxIterations = groupsWithRefsCount; // Prevent infinite loop
-    let iterationsCount = 0;
-    while (groupsWithRefsCount > 0 && iterationsCount < maxIterations) {
-      logger.info(`Marking groups without references, iteration: ${iterationsCount + 1}`);
-      this.applyGroupReferences();
-      logger.info('Applying group references completed.');
-      this.markGroupsWithoutRefs();
-      groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
-      iterationsCount++;
-    }
+
     this.markComplexTypesWithoutExtensions();
     let complexTypesWithExtensionsCount = Array.from(this.complexTypeCache.values()).filter(
       (type) => type.$.noExtension == false
     ).length;
-    maxIterations = complexTypesWithExtensionsCount; // Prevent infinite loop
-    iterationsCount = 0;
+    let maxIterations = complexTypesWithExtensionsCount; // Prevent infinite loop
+    let iterationsCount = 0;
     while (complexTypesWithExtensionsCount > 0 && iterationsCount < maxIterations) {
       logger.info(`Marking complex types without extensions, iteration: ${iterationsCount + 1}`);
       this.applyExtensionsOnComplexTypes();
@@ -148,6 +137,20 @@ class Schema {
       complexTypesWithExtensionsCount = Array.from(this.complexTypeCache.values()).filter(
         (type) => type.$.noExtension == false
       ).length;
+      iterationsCount++;
+    }
+    this.applyTypesToElements();
+    logger.info('Applying types to elements completed.');
+    this.markGroupsWithoutRefs();
+    let groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
+    maxIterations = groupsWithRefsCount; // Prevent infinite loop
+    iterationsCount = 0;
+    while (groupsWithRefsCount > 0 && iterationsCount < maxIterations) {
+      logger.info(`Marking groups without references, iteration: ${iterationsCount + 1}`);
+      this.applyGroupReferences();
+      logger.info('Applying group references completed.');
+      this.markGroupsWithoutRefs();
+      groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
       iterationsCount++;
     }
     this.collectParentsForGroups();
@@ -222,6 +225,13 @@ class Schema {
           const elements = this.elementCache.get(name);
           if (elements) {
             elements.push(nodeCopy);
+          }
+          const type = nodeCopy.$.type;
+          if (type) {
+            if (!this.complexTypeBaseToElementsCache.has(type)) {
+              this.complexTypeBaseToElementsCache.set(type, []);
+            }
+            this.complexTypeBaseToElementsCache.get(type).push(nodeCopy);
           }
         } else if (nodeType === 'xs:simpleType' && name) {
           this.simpleTypeCache.set(name, nodeCopy);
@@ -406,22 +416,113 @@ class Schema {
             if (allTypeExtensions.length === 0) {
               this.complexTypeExtensionCache.delete(type.$.name);
             }
-            for (const [name, refs] of this.groupRefCache) {
-              const refRegex = new RegExp(
-                `^\\/xs:schema\\/xs:complexType\\[@name="${type.$.name}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref="${name}"\\]$` // Match group references
-              );
-              const filteredRefs = refs.filter((ref) => refRegex.test(ref.$.xPath));
-              for (const ref of filteredRefs) {
-                const newRef = structuredClone(ref);
-                newRef.$.xPath = newRef.$.xPath.replace(
-                  `/xs:schema/xs:complexType[@name="${type.$.name}"]`,
-                  `/xs:schema/xs:complexType[@name="${typeName}"]`
-                );
-                refs.push(newRef);
+            const allGroupRefs = [...this.groupRefCache.values()].flat().map((g) => g.$.xPath);
+            const refRegex = new RegExp(
+              `^\\/xs:schema\\/xs:complexType\\[@name="${type.$.name}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref="(\\w+)"\\]$` // Match group references
+            );
+            const filteredRefs = allGroupRefs.filter((xpath) => refRegex.test(xpath));
+            for (const ref of filteredRefs) {
+              const match = ref.match(refRegex);
+              if (match && match[1]) {
+                const groupName = match[1];
+                if (this.groupRefCache.has(groupName)) {
+                  const refs = this.groupRefCache.get(groupName);
+                  if (refs) {
+                    for (const existingRef of refs.filter((r) => r.$.xPath === ref)) {
+                      const newRef = structuredClone(existingRef);
+                      newRef.$.xPath = newRef.$.xPath.replace(
+                        `/xs:schema/xs:complexType[@name="${type.$.name}"]`,
+                        `/xs:schema/xs:complexType[@name="${typeName}"]`
+                      );
+                      refs.push(newRef);
+                    }
+                  }
+                }
+              }
+            }
+            const allElementsRefs = [...this.elementCache.values()].flat().map((e) => e.$.xPath);
+            const elementRefRegex = new RegExp(
+              `^\\/xs:schema\\/xs:complexType\\[@name="${type.$.name}"\\].*\\/xs:element\\[@name="(\\w+)"\\]$` // Match element references
+            );
+            const filteredElementRefs = allElementsRefs.filter((xpath) => elementRefRegex.test(xpath));
+            for (const ref of filteredElementRefs) {
+              const match = ref.match(elementRefRegex);
+              if (match && match[1]) {
+                const elementName = match[1];
+                if (this.elementCache.has(elementName)) {
+                  const refs = this.elementCache.get(elementName);
+                  if (refs) {
+                    for (const existingRef of refs.filter((r) => r.$.xPath === ref)) {
+                      const newRef = structuredClone(existingRef);
+                      newRef.$.xPath = newRef.$.xPath.replace(
+                        `/xs:schema/xs:complexType[@name="${type.$.name}"]`,
+                        `/xs:schema/xs:complexType[@name="${typeName}"]`
+                      );
+                      refs.push(newRef);
+                    }
+                  }
+                }
               }
             }
           }
         }
+      }
+    }
+  }
+
+  private applyTypesToElements(): void {
+    for (const [typeName, elements] of this.complexTypeBaseToElementsCache) {
+      const processed = [];
+      for (const element of elements) {
+        const elementName = element.$.name;
+        const xPath = element.$.xPath || '';
+        if (xPath && !xPath.startsWith('/xs:schema/xs:complexType')) {
+          if (elementName && this.elementCache.has(elementName)) {
+            const existingElements = this.elementCache.get(elementName);
+            if (existingElements) {
+              let existingElementIndex = -1;
+              do {
+                existingElementIndex = existingElements.findIndex(
+                  (el) => el.$.xPath === element.$.xPath && !el.$.typeApplied
+                );
+                if (existingElementIndex !== -1) {
+                  const existingElement = existingElements[existingElementIndex];
+                  let newElement = this.complexTypeCache.get(typeName);
+                  if (newElement) {
+                    newElement = structuredClone(newElement);
+                    newElement.$ = { ...newElement.$, ...existingElement.$, typeApplied: true };
+                    existingElements[existingElementIndex] = newElement; // Update the existing element
+                    for (const [name, refs] of this.groupRefCache) {
+                      const refRegex = new RegExp(
+                        `^\\/xs:schema\\/xs:complexType\\[@name="${typeName}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref="${name}"\\]$` // Match group references
+                      );
+                      const filteredRefs = refs.filter((ref) => refRegex.test(ref.$.xPath));
+                      for (const ref of filteredRefs) {
+                        const newRef = structuredClone(ref);
+                        newRef.$.xPath = newRef.$.xPath.replace(
+                          `/xs:schema/xs:complexType[@name="${typeName}"]`,
+                          `newElement.$.xPath`
+                        );
+                        refs.push(newRef);
+                      }
+                    }
+                  }
+                }
+              } while (existingElementIndex !== -1); // Continue until all matching elements are processed
+              processed.push(xPath);
+            }
+          }
+        }
+      }
+      for (const xPath of processed) {
+        // Remove processed elements from the cache to avoid reprocessing
+        this.complexTypeBaseToElementsCache.get(typeName).splice(
+          this.complexTypeBaseToElementsCache.get(typeName).findIndex((el) => el.$.xPath === xPath),
+          1
+        );
+      }
+      if (this.complexTypeBaseToElementsCache.get(typeName).length === 0) {
+        this.complexTypeBaseToElementsCache.delete(typeName); // Remove empty entries
       }
     }
   }
@@ -436,15 +537,15 @@ class Schema {
       const elementsLength = elements.length;
       for (let i = 0; i < elementsLength; i++) {
         let element = elements.shift();
-        const typeDef = this.complexTypeCache.get(element.$.type);
-        if (typeDef) {
+        // const typeDef = this.complexTypeCache.get(element.$.type);
+        if (
+          /* (typeDef) {
           const newElement = { ...element, ...typeDef };
           if (newElement.$) {
             newElement.$ = { ...newElement.$, ...element.$ };
           }
           element = newElement; // Update the element reference
-        } else if (
-          element['xs:complexType'] &&
+        } else if */ element['xs:complexType'] &&
           element['xs:complexType']['xs:complexContent'] &&
           element['xs:complexType']['xs:complexContent']['xs:extension']
         ) {
