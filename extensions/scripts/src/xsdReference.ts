@@ -74,6 +74,7 @@ class Schema {
     'xs:simpleType',
     'xs:group',
     'xs:attributeGroup',
+    'xs:extension',
     // 'xs:attribute',
     // 'xs:restriction',
   ]);
@@ -102,6 +103,8 @@ class Schema {
   private elementCache = new Map<string, any[]>();
   private simpleTypeCache = new Map<string, any | null>();
   private complexTypeCache = new Map<string, any | null>();
+  private complexTypeExtensionCache = new Map<string, any[] | null>();
+  private complexTypeBaseToElementsCache = new Map<string, any[] | null>();
   private groupCache = new Map<string, any | null>();
   private groupRefCache = new Map<string, any[] | null>();
   private elementsInGroupsCache = new Map<string, Set<string>>();
@@ -121,8 +124,9 @@ class Schema {
     logger.info('Schema pre-caching completed.');
     this.markGroupsWithoutRefs();
     let groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
+    let maxIterations = groupsWithRefsCount; // Prevent infinite loop
     let iterationsCount = 0;
-    while (groupsWithRefsCount > 0 && iterationsCount < this.groupCache.size) {
+    while (groupsWithRefsCount > 0 && iterationsCount < maxIterations) {
       logger.info(`Marking groups without references, iteration: ${iterationsCount + 1}`);
       this.applyGroupReferences();
       logger.info('Applying group references completed.');
@@ -130,10 +134,24 @@ class Schema {
       groupsWithRefsCount = Array.from(this.groupCache.values()).filter((group) => group.$.noRef == false).length;
       iterationsCount++;
     }
+    this.markComplexTypesWithoutExtensions();
+    let complexTypesWithExtensionsCount = Array.from(this.complexTypeCache.values()).filter(
+      (type) => type.$.noExtension == false
+    ).length;
+    maxIterations = complexTypesWithExtensionsCount; // Prevent infinite loop
+    iterationsCount = 0;
+    while (complexTypesWithExtensionsCount > 0 && iterationsCount < maxIterations) {
+      logger.info(`Marking complex types without extensions, iteration: ${iterationsCount + 1}`);
+      this.applyExtensionsOnComplexTypes();
+      logger.info('Applying extensions on complex types completed.');
+      this.markComplexTypesWithoutExtensions();
+      complexTypesWithExtensionsCount = Array.from(this.complexTypeCache.values()).filter(
+        (type) => type.$.noExtension == false
+      ).length;
+      iterationsCount++;
+    }
     this.collectParentsForGroups();
     logger.info('Collecting parents for groups completed.');
-    this.enrichTypesViaExtensions();
-    logger.info('Enriching types via extensions completed.');
     // this.complexTypeCache.forEach((type, name) => {
     //   logger.info(`Collecting elements from complex type: ${name}`);
     //   this.collectParentsFromType(type, 'xs:complexType', name);
@@ -165,6 +183,8 @@ class Schema {
       return `[@name="${node.$.name}"]`;
     } else if (node.$ && node.$.ref) {
       return `[@ref="${node.$.ref}"]`;
+    } else if (node.$ && node.$.base) {
+      return `[@base="${node.$.base}"]`;
     } else if (position) {
       return `[${position}]`;
     }
@@ -194,6 +214,7 @@ class Schema {
         nodeCopy.$.xPath = xPath;
         const name = nodeCopy.$.name;
         const ref = nodeCopy.$.ref;
+        const base = nodeCopy.$.base;
         if (nodeType === 'xs:element' && name) {
           if (!this.elementCache.has(name)) {
             this.elementCache.set(name, []);
@@ -204,8 +225,15 @@ class Schema {
           }
         } else if (nodeType === 'xs:simpleType' && name) {
           this.simpleTypeCache.set(name, nodeCopy);
-        } else if (nodeType === 'xs:complexType' && name) {
-          this.complexTypeCache.set(name, nodeCopy);
+        } else if (nodeType === 'xs:complexType') {
+          if (name) {
+            this.complexTypeCache.set(name, nodeCopy);
+          }
+        } else if (nodeType === 'xs:extension' && base) {
+          if (!this.complexTypeExtensionCache.has(base)) {
+            this.complexTypeExtensionCache.set(base, []);
+          }
+          this.complexTypeExtensionCache.get(base)?.push(nodeCopy);
         } else if (nodeType === 'xs:attributeGroup') {
           this.attributeGroupCache.set(name, nodeCopy);
         } else if (nodeType === 'xs:group') {
@@ -239,6 +267,20 @@ class Schema {
         `^\\/xs:schema\\/xs:group\\[@name="${name}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref=`
       );
       group.$.noRef = !groupsRefsXpath.find((xpath) => refRegex.test(xpath));
+    }
+  }
+
+  private markComplexTypesWithoutExtensions(): void {
+    // Mark complex types that do not have an extension
+    const typesWithoutExtensions = [];
+    for (const ext of this.complexTypeExtensionCache.values()) {
+      typesWithoutExtensions.push(...ext.map((e) => e.$.xPath));
+    }
+    for (const [name, type] of this.complexTypeCache) {
+      const refRegex = new RegExp(
+        `^\\/xs:schema\\/xs:complexType\\[@name="${name}"\\]\\/xs:complexContent\\/xs:extension\\[@base=`
+      );
+      type.$.noExtension = !typesWithoutExtensions.find((xpath) => refRegex.test(xpath));
     }
   }
 
@@ -333,6 +375,57 @@ class Schema {
     }
   }
 
+  private applyExtensionsOnComplexTypes(): void {
+    const typesWithoutExtensions = Array.from(this.complexTypeCache.values()).filter((type) => type.$.noExtension);
+    for (const type of typesWithoutExtensions) {
+      if (this.complexTypeExtensionCache.has(type.$.name)) {
+        const refRegex = new RegExp(
+          `^\\/xs:schema\\/xs:complexType\\[@name="(\\w+)"\\]\\/xs:complexContent\\/xs:extension\\[@base="${type.$.name}"\\]$` // Match complex type extensions
+        );
+        const allTypeExtensions = this.complexTypeExtensionCache.get(type.$.name);
+        const typeExtensions = allTypeExtensions.filter((item) => refRegex.test(item.$.xPath));
+        for (const typeExtension of typeExtensions) {
+          const match = typeExtension.$.xPath.match(refRegex);
+          if (match && match[1]) {
+            const typeName = match[1];
+            let typeToExtend = this.complexTypeCache.get(typeName);
+            if (typeToExtend) {
+              const extension = typeToExtend['xs:complexContent']['xs:extension'];
+              const newType = structuredClone(type);
+              newType.$.extended = newType.$.name || '';
+              newType.$.name = typeName; // Update the name to the current type
+              newType.$.xPath = type.$.xPath; // Preserve the original XPath
+              this.complexTypeCache.set(typeName, newType);
+              typeToExtend = this.complexTypeCache.get(typeName);
+              Schema.joinAttributes(typeToExtend, extension);
+            }
+            allTypeExtensions.splice(
+              allTypeExtensions.findIndex((item) => item.$.xPath === typeExtension.$.xPath),
+              1
+            );
+            if (allTypeExtensions.length === 0) {
+              this.complexTypeExtensionCache.delete(type.$.name);
+            }
+            for (const [name, refs] of this.groupRefCache) {
+              const refRegex = new RegExp(
+                `^\\/xs:schema\\/xs:complexType\\[@name="${type.$.name}"\\](?:\\/xs:choice|\\/xs:sequence)*\\/xs:group\\[@ref="${name}"\\]$` // Match group references
+              );
+              const filteredRefs = refs.filter((ref) => refRegex.test(ref.$.xPath));
+              for (const ref of filteredRefs) {
+                const newRef = structuredClone(ref);
+                newRef.$.xPath = newRef.$.xPath.replace(
+                  `/xs:schema/xs:complexType[@name="${type.$.name}"]`,
+                  `/xs:schema/xs:complexType[@name="${typeName}"]`
+                );
+                refs.push(newRef);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   /**
    * Enriches elements from complex types by merging their definitions into the elements.
    * This allows elements to inherit properties from their complex type definitions.
@@ -361,66 +454,14 @@ class Schema {
           const baseTypeDef = this.complexTypeCache.get(extensionName);
           if (baseTypeDef) {
             // Merge base type properties into the current element
-            for (const key in baseTypeDef) {
-              if (key !== '$' && key !== 'xs:annotation') {
-                element[key] = baseTypeDef[key];
-              }
-            }
-            for (const key in extension) {
-              if (key !== '$' && key !== 'xs:annotation') {
-                if (element[key] === undefined) {
-                  element[key] = extension[key];
-                } else if (Array.isArray(element[key]) && Array.isArray(extension[key])) {
-                  element[key] = element[key].concat(extension[key]);
-                } else if (typeof element[key] === 'object' && typeof extension[key] === 'object') {
-                  element[key] = [element[key], extension[key]];
-                } else {
-                  logger.warn(`Unexpected merge case for key "${key}" in type "${name}"`);
-                }
-              }
-            }
+            Schema.joinAttributes(element, baseTypeDef);
+            Schema.joinAttributes(element, extension);
             if (!this.typesToParentsCache.has(extensionName)) {
               this.typesToParentsCache.set(extensionName, []);
-            }
-            const typeElements = this.typesToParentsCache.get(extensionName);
-            if (typeElements) {
-              typeElements.push(new ElementParent(name));
             }
           }
         }
         elements.push(element);
-      }
-    }
-  }
-
-  private enrichTypesViaExtensions(): void {
-    // Enrich complex types by applying extensions from their definitions
-    for (const name of this.complexTypeCache.keys()) {
-      let type = this.complexTypeCache.get(name);
-      if (type['xs:complexContent'] && type['xs:complexContent']['xs:extension']) {
-        const extension = type['xs:complexContent']['xs:extension'];
-        const baseTypeDef = this.complexTypeCache.get(extension.$.base);
-        if (baseTypeDef) {
-          // Merge base type properties into the current type
-          const newType = structuredClone(baseTypeDef);
-          newType.$.extended = newType.$.name || '';
-          newType.$.name = name; // Update the name to the current type
-          this.complexTypeCache.set(name, newType);
-          type = this.complexTypeCache.get(name);
-          for (const key in extension) {
-            if (key !== '$') {
-              if (type[key] === undefined) {
-                type[key] = extension[key];
-              } else if (Array.isArray(type[key]) && Array.isArray(extension[key])) {
-                type[key] = type[key].concat(extension[key]);
-              } else if (typeof type[key] === 'object' && typeof extension[key] === 'object') {
-                type[key] = [type[key], extension[key]];
-              } else {
-                logger.warn(`Unexpected merge case for key "${key}" in type "${name}"`);
-              }
-            }
-          }
-        }
       }
     }
   }
