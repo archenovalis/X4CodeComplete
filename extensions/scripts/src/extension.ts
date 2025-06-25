@@ -272,7 +272,7 @@ function findRelevantPortion(text: string) {
   if (pos === -1) {
     return null;
   }
-  let newToken = text.substring(pos + 1).trim();
+  const newToken = text.substring(pos + 1).trim();
   const prevPos = Math.max(text.lastIndexOf('.', pos - 1), text.lastIndexOf(' ', pos - 1));
   const prevToken = text.substring(prevPos + 1, pos).trim();
   return [
@@ -516,7 +516,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
 
       // Check if we're in a specialized completion context (variables, labels, actions)
-      let specializedCompletion = specializedCompletionContext(document, position);
+      const specializedCompletion = specializedCompletionContext(document, position);
       if (specializedCompletion.length > 0) {
         return specializedCompletion;
       }
@@ -562,7 +562,10 @@ class CompletionDict implements vscode.CompletionItemProvider {
           }
           return newToken.length > 0
             ? new vscode.CompletionList(
-                this.defaultCompletions.items.filter((item) => item.label.startsWith(newToken)),
+                this.defaultCompletions.items.filter((item) => {
+                  const label = typeof item.label === 'string' ? item.label : item.label.label;
+                  return label.startsWith(newToken);
+                }),
                 true
               )
             : this.defaultCompletions;
@@ -1420,7 +1423,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           let match: RegExpExecArray | null;
           const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
           let priority = -1;
-          let isLValueAttribute = false;
+          const isLValueAttribute = false;
           // for (const elementAttributes of allElementAttributes) {
           //   isLValueAttribute =
           //     elementAttributes.attributes.has(attr.name) &&
