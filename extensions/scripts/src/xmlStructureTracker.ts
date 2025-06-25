@@ -7,6 +7,7 @@ export interface ElementRange {
   isSelfClosing: boolean;
   parentId?: number;
   parentName?: string;
+  hierarchy: string[]; // Array representing the full hierarchy of parent elements
   children: number[];
   attributes: AttributeRange[];
 }
@@ -15,6 +16,7 @@ export interface AttributeRange {
   name: string;
   elementName: string;
   parentName: string;
+  hierarchy: string[];
   nameRange: vscode.Range;
   valueRange: vscode.Range;
   quoteChar: string;
@@ -62,6 +64,7 @@ export class XmlStructureTracker {
             isSelfClosing: node.isSelfClosing,
             children: [],
             attributes: [],
+            hierarchy: [], // Initialize hierarchy
           };
 
           const currentIndex = elements.length;
@@ -72,6 +75,9 @@ export class XmlStructureTracker {
             newElement.parentId = parentIndex;
             newElement.parentName = elements[parentIndex].name;
             elements[parentIndex].children.push(currentIndex);
+
+            // Update hierarchy
+            newElement.hierarchy = [elements[parentIndex].name, ...elements[parentIndex].hierarchy];
           }
 
           // Process attributes (with error handling)
@@ -101,6 +107,7 @@ export class XmlStructureTracker {
                           name: attrName,
                           elementName: newElement.name, // Store the element name for reference
                           parentName: newElement.parentName || '', // Store the parent name for reference
+                          hierarchy: newElement.hierarchy, // Use the hierarchy from the element
                           nameRange: new vscode.Range(attrNameStart, attrNameEnd),
                           valueRange: new vscode.Range(valueStart, valueEnd),
                           quoteChar: quoteChar,
