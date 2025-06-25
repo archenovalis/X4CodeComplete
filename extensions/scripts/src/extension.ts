@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as sax from 'sax';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
 import { logger } from './logger';
-import { XsdReference /* , AttributeOfElement */ } from 'xsd-lookup';
+import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -461,7 +461,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
         logger.info(`Completion requested in element: ${inElementRange.name}`);
       }
 
-      const schemaAttributes = xsdReference.getElementAttributesWithTypes(
+      const schemaAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
         schema,
         inElementRange.name,
         inElementRange.hierarchy
@@ -489,9 +489,13 @@ class CompletionDict implements vscode.CompletionItemProvider {
       if (attributeRange === undefined) {
         if (schemaAttributes !== undefined) {
           const items = new Map<string, vscode.CompletionItem>();
-          for (const attr of schemaAttributes /* .values */) {
+          for (const attr of schemaAttributes) {
             if (!inElementRange.attributes.some((a) => a.name === attr.name)) {
-              this.addItem(items, attr.name, `Type: ${attr.type}. Required: ${attr.required ? 'Yes' : 'No'}`);
+              this.addItem(
+                items,
+                attr.name,
+                `${attr.annotation || ''}\n\n**Required**: ${attr.required ? '**Yes**' : 'No'}\n\n**Type**: ${attr.type || 'unknown'}`
+              );
             }
           }
           return this.makeCompletionList(items);
@@ -499,14 +503,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
           return undefined; // Skip if not in an attribute value
         }
       }
-      const attributeValues = schemaAttributes
+      const attributeValues: Map<string, string> = schemaAttributes
         ? XsdReference.getAttributePossibleValues(schemaAttributes, attributeRange.name)
-        : [];
+        : new Map<string, string>();
       if (attributeValues) {
         // If the attribute has predefined values, return them as completions
         const items = new Map<string, vscode.CompletionItem>();
-        for (const value of attributeValues /* .values */) {
-          this.addItem(items, value /* .value */ /* , value.documentation */);
+        for (const [value, info] of attributeValues.entries()) {
+          this.addItem(items, value, info);
         }
         return this.makeCompletionList(items);
       }
