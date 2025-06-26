@@ -455,31 +455,17 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
     const schema = scriptTypesToSchema[scriptType];
 
-    const inElementRange = xmlTracker.isInElementRange(document, position);
+    const inElementRange = xmlTracker.isInElementStartTag(document, position);
     if (inElementRange) {
       if (exceedinglyVerbose) {
         logger.info(`Completion requested in element: ${inElementRange.name}`);
       }
 
-      const schemaAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
+      const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
         schema,
         inElementRange.name,
         inElementRange.hierarchy
       );
-      const allElementAttributes = []; /* xsdReference.getAllPossibleAttributes(
-        schema,
-        inElementRange.name,
-        inElementRange.parentName,
-        inElementRange.attributes.map((attr) => attr.name)
-      ); */
-      if (allElementAttributes.length > 0) {
-        // If the element has predefined attributes, return them as completions
-        // const items = new Map<string, vscode.CompletionItem>();
-        // for (const attr of allElementAttributes) {
-        //   this.addItem(items, attr.name, attr.documentation);
-        // }
-        // return this.makeCompletionList(items);
-      }
 
       // Check if we're in an attribute value for context-aware completions
       const attributeRange = xmlTracker.isInAttributeValue(document, position);
@@ -487,9 +473,9 @@ class CompletionDict implements vscode.CompletionItemProvider {
         logger.info(`Completion requested in attribute: ${attributeRange.elementName}.${attributeRange.name}`);
       }
       if (attributeRange === undefined) {
-        if (schemaAttributes !== undefined) {
+        if (elementAttributes !== undefined) {
           const items = new Map<string, vscode.CompletionItem>();
-          for (const attr of schemaAttributes) {
+          for (const attr of elementAttributes) {
             if (!inElementRange.attributes.some((a) => a.name === attr.name)) {
               this.addItem(
                 items,
@@ -503,8 +489,8 @@ class CompletionDict implements vscode.CompletionItemProvider {
           return undefined; // Skip if not in an attribute value
         }
       }
-      const attributeValues: Map<string, string> = schemaAttributes
-        ? XsdReference.getAttributePossibleValues(schemaAttributes, attributeRange.name)
+      const attributeValues: Map<string, string> = elementAttributes
+        ? XsdReference.getAttributePossibleValues(elementAttributes, attributeRange.name)
         : new Map<string, string>();
       if (attributeValues) {
         // If the attribute has predefined values, return them as completions
@@ -1285,7 +1271,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   if (scriptType == '') {
     return; // Skip processing if the document is not valid
   }
-  const schemaName = scriptTypesToSchema[scriptType];
+  const schema = scriptTypesToSchema[scriptType];
   const diagnostics: vscode.Diagnostic[] = [];
 
   const isXMLParsed = xmlTracker.checkDocumentParsed(document);
@@ -1306,7 +1292,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Process all elements recursively
   const processElement = (element: ElementRange) => {
     const parentName = element.parentName || '';
-    const elementDefinition = xsdReference.getElementDefinition(schemaName, element.name, element.hierarchy);
+    const elementDefinition = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
     if (elementDefinition === undefined) {
       const diagnostic = new vscode.Diagnostic(
         element.range,
@@ -1317,7 +1303,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       diagnostic.source = 'X4CodeComplete';
       diagnostics.push(diagnostic);
     } else {
-      const schemaAttributes = xsdReference.getElementAttributesWithTypes(schemaName, element.name, element.hierarchy);
+      const schemaAttributes = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
       const attributes = element.attributes
         .map((attr) => attr.name)
         .filter((name) => !(name.startsWith('xmlns:') || name.startsWith('xsi:') || name === 'xmlns'));
@@ -2076,10 +2062,12 @@ export function activate(context: vscode.ExtensionContext) {
         document: vscode.TextDocument,
         position: vscode.Position
       ): Promise<vscode.Hover | undefined> => {
-        if (getDocumentScriptType(document) == '') {
+        const scriptType = getDocumentScriptType(document);
+        if (scriptType == '') {
           return undefined; // Skip if the document is not valid
         }
 
+        const schema = scriptTypesToSchema[scriptType];
         const tPattern =
           /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
         // matches:
@@ -2127,7 +2115,35 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        if (getDocumentScriptType(document) == aiScript) {
+        const element = xmlTracker.isInElementStartTag(document, position);
+        if (element) {
+          const attribute = xmlTracker.isInAttributeName(document, position);
+          if (attribute) {
+              const hoverText = new vscode.MarkdownString();
+              const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, attribute.elementName, attribute.hierarchy);
+              const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
+              if (attributeInfo) {
+                hoverText.appendMarkdown(`**${attributeInfo.name}**: ${attributeInfo.annotation ? '\`' + attributeInfo.annotation + '\`' : ''}\n\n`);
+                hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`\n\n`);
+                hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`\n\n`);
+              } else {
+                hoverText.appendMarkdown(`**${attributeInfo.name}**: \`Wrong attribute!\`\n\n`);
+              }
+              return new vscode.Hover(hoverText, attribute.nameRange);
+          } else if (xmlTracker.isInElementName(document, position)) {
+            const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+            const hoverText = new vscode.MarkdownString();
+            if (elementInfo) {
+              const annotationText = XsdReference.extractAnnotationText(elementInfo);
+              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '\`' + annotationText + '\`' : ''}\n\n`);
+            } else {
+              hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`\n\n`);
+            }
+            return new vscode.Hover(hoverText, element.nameRange);
+          }
+        }
+
+        if (scriptType == aiScript) {
           // Check for actions (only in AI scripts)
           const actionAtPosition = actionTracker.getActionAtPosition(document, position);
           if (actionAtPosition !== null) {

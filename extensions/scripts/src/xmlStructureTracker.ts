@@ -4,6 +4,8 @@ import * as sax from 'sax';
 export interface ElementRange {
   name: string;
   range: vscode.Range;
+  startTagRange: vscode.Range; // Range of the start tag, used for attribute parsing
+  nameRange: vscode.Range; // Range of just the element name within the start tag
   isSelfClosing: boolean;
   parentId?: number;
   parentName?: string;
@@ -58,9 +60,15 @@ export class XmlStructureTracker {
           const tagStartPos = parser.startTagPosition - 1;
           const startPos = document.positionAt(tagStartPos);
 
+          // Calculate name range - element name starts right after '<'
+          const nameStartPos = document.positionAt(tagStartPos + 1);
+          const nameEndPos = document.positionAt(tagStartPos + 1 + node.name.length);
+
           const newElement: ElementRange = {
             name: node.name,
             range: new vscode.Range(startPos, document.positionAt(parser.position)), // Will update end position when tag is closed
+            startTagRange: new vscode.Range(startPos, document.positionAt(parser.position)),
+            nameRange: new vscode.Range(nameStartPos, nameEndPos),
             isSelfClosing: node.isSelfClosing,
             children: [],
             attributes: [],
@@ -86,8 +94,7 @@ export class XmlStructureTracker {
             for (const [attrName, attrValue] of Object.entries(node.attributes)) {
               try {
                 // Find attribute name position in raw text
-                const attrNameIndex = attributesText.indexOf(attrName);
-
+                const attrNameIndex = attributesText.indexOf(`${attrName}="${attrValue}"`);
                 if (attrNameIndex > 0) {
                   // Find attribute value and its quotes
                   const equalsIndex = attributesText.indexOf('=', attrNameIndex + attrName.length);
@@ -145,7 +152,7 @@ export class XmlStructureTracker {
           const lastOpenIndex = openElementStack[openElementStack.length - 1];
           const lastOpenElement = elements[lastOpenIndex];
           if (lastOpenElement.name === tagName) {
-            // lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(parser.position));
+            lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(parser.position));
             openElementStack.pop();
           }
         }
@@ -180,13 +187,36 @@ export class XmlStructureTracker {
     return this.documentMap.get(document.uri.toString()) || [];
   }
 
+  isInAttributeName(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
+    try {
+      const rootElements = this.documentMap.get(document.uri.toString());
+      if (!rootElements) return undefined;
+
+      // Step 1: Find all elements containing the position
+      const elementContainingPosition: ElementRange | undefined = this.isInElementStartTag(document, position);
+
+      if (!elementContainingPosition) return undefined;
+
+      // Step 2: Check attributes of element
+      for (const attr of elementContainingPosition.attributes) {
+        if (attr.nameRange.contains(position)) {
+          return attr;
+        }
+      }
+    } catch (error) {
+      // If anything fails, return undefined
+    }
+
+    return undefined;
+  }
+
   isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
     try {
       const rootElements = this.documentMap.get(document.uri.toString());
       if (!rootElements) return undefined;
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: ElementRange | undefined = this.isInElementRange(document, position);
+      const elementContainingPosition: ElementRange | undefined = this.isInElementStartTag(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -203,11 +233,25 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  isInElementRange(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+  isInElement(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
     const rootElements = this.documentMap.get(document.uri.toString());
     if (!rootElements) return undefined;
 
     return rootElements.find((element) => element.range.contains(position));
+  }
+
+  isInElementStartTag(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+    const rootElements = this.documentMap.get(document.uri.toString());
+    if (!rootElements) return undefined;
+
+    return rootElements.find((element) => element.startTagRange.contains(position));
+  }
+
+  isInElementName(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+    const rootElements = this.documentMap.get(document.uri.toString());
+    if (!rootElements) return undefined;
+
+    return rootElements.find((element) => element.nameRange.contains(position));
   }
 
   clear(document: vscode.TextDocument): void {
