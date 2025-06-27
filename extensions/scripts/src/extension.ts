@@ -9,6 +9,7 @@ import * as sax from 'sax';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
 import { logger } from './logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
+import { get } from 'http';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -19,6 +20,25 @@ let scriptPropertiesPath: string;
 let extensionsFolder: string;
 let languageData: Map<string, Map<string, string>> = new Map();
 let xsdReference: XsdReference;
+
+type ScriptMetadata = {
+  scheme: string;
+}
+
+type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
+
+const scriptsMetadata: ScriptsMetadata = new WeakMap();
+
+function scriptMetadataInit(document: vscode.TextDocument, reInit: boolean = false): ScriptMetadata | undefined {
+  if (document.languageId === 'xml') {
+    scriptsMetadata.delete(document); // Clear metadata if re-initializing
+    const scheme = getDocumentScriptType(document);
+    if (scheme) {
+      return scriptsMetadata.get(document);
+    }
+  }
+  return undefined;
+}
 
 // // Extract property completion logic into a function
 // function getPropertyCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
@@ -92,7 +112,8 @@ function getVariableCompletions(document: vscode.TextDocument, position: vscode.
 
 // Extract label completion logic into a function
 function getLabelCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  if (getDocumentScriptType(document) !== aiScript) {
+  const scheme = getDocumentScriptType(document);
+  if (scheme !== aiScriptId) {
     return [];
   }
 
@@ -140,7 +161,8 @@ function getLabelCompletions(document: vscode.TextDocument, position: vscode.Pos
 
 // Extract action completion logic into a function
 function getActionCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  if (getDocumentScriptType(document) !== aiScript) {
+  const scheme = getDocumentScriptType(document);
+  if (scheme !== aiScriptId) {
     return [];
   }
 
@@ -218,22 +240,28 @@ function specializedCompletionContext(
 // let isSpecializedCompletion: boolean = false;
 
 // Map to store languageSubId for each document
-const documentLanguageSubIdMap: Map<string, string> = new Map();
 const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]+)/g;
 const tableKeyPattern = /table\[/;
 const variableTypes = {
   normal: 'usual variable',
   tableKey: 'remote or table variable',
 };
-const aiScript = 'aiscript';
-const mdScript = 'mdscript';
-const scriptTypes = {
-  [aiScript]: 'AI Script',
-  [mdScript]: 'Mission Director Script',
+const aiScriptId = 'aiscripts';
+const mdScriptId = 'md';
+const scriptNodes = {
+  'aiscript': {
+    id: aiScriptId,
+    info: 'AI Scripts',
+  },
+  'mdscript': {
+    id: mdScriptId,
+    info: 'Mission Director Scripts',
+  }
 };
+const scriptNodesNames = Object.keys(scriptNodes);
 const scriptTypesToSchema = {
-  [aiScript]: 'aiscripts',
-  [mdScript]: 'md',
+  [aiScriptId]: 'aiscripts',
+  [mdScriptId]: 'md',
 };
 
 // Map of elements and their attributes that can contain label references
@@ -261,6 +289,18 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
   });
 
   return isValid;
+}
+
+function getLastSubstring(text: string, chars: string): string {
+  const charsSorted = chars.split('').sort((a, b) => text.lastIndexOf(b) - text.lastIndexOf(a));
+  if (charsSorted.length > 0 && charsSorted[charsSorted.length - 1] !== undefined) {
+    const lastChar = charsSorted[charsSorted.length - 1];
+    const lastIndex = text.lastIndexOf(lastChar);
+    if (lastIndex !== -1) {
+      return text.substring(lastIndex + 1).trim();
+    }
+  }
+  return '';
 }
 
 function findRelevantPortion(text: string) {
@@ -368,6 +408,29 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
   }
 
+  addElement(items: Map<string, vscode.CompletionItem>, complete: string, info?: string, range?: vscode.Range): void {
+    // TODO handle better
+    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(complete) > -1) {
+      return;
+    }
+
+    if (items.has(complete)) {
+      if (exceedinglyVerbose) {
+        logger.info('\t\tSkipped existing completion: ', complete);
+      }
+      return;
+    }
+
+    const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Operator);
+    item.documentation = info ? new vscode.MarkdownString(info) : undefined;
+    item.range = range;
+
+    if (exceedinglyVerbose) {
+      logger.info('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
+    }
+    items.set(complete, item);
+  }
+
   addItem(items: Map<string, vscode.CompletionItem>, complete: string, info?: string): void {
     // TODO handle better
     if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(complete) > -1) {
@@ -448,23 +511,66 @@ class CompletionDict implements vscode.CompletionItemProvider {
     });
   }
 
-  provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
-    const scriptType = getDocumentScriptType(document);
-    if (scriptType == '') {
+  provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context: vscode.CompletionContext) {
+    const scheme = getDocumentScriptType(document);
+    if (scheme == '') {
       return undefined; // Skip if the document is not valid
     }
-    const schema = scriptTypesToSchema[scriptType];
+    const schema = scriptTypesToSchema[scheme];
+    const items = new Map<string, vscode.CompletionItem>();
+    const currentLine = position.line;
 
-    const inElementRange = xmlTracker.isInElementStartTag(document, position);
-    if (inElementRange) {
+    const elementNameCompletion = (parentName: string, parentHierarchy: string[]) => {
+      const possibleElements = xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
+      if (possibleElements !== undefined) {
+        if (exceedinglyVerbose) {
+          logger.info(`Possible elements for ${parentName}:`, possibleElements);
+        }
+        const currentLinePrefix =  document.lineAt(position).text.substring(0, position.character);
+        const startTagIndex = currentLinePrefix.lastIndexOf('<');
+        if (startTagIndex === -1) {
+          if (exceedinglyVerbose) {
+            logger.info('No start tag found in current line prefix:', currentLinePrefix);
+          }
+          return undefined; // Skip if no start tag found
+        }
+        const startTagInsidePrefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
+        if (startTagInsidePrefix.includes(' ')) {
+          if (exceedinglyVerbose) {
+            logger.info('Start tag inside prefix contains space, skipping:', startTagInsidePrefix);
+          }
+          return undefined; // Skip if the start tag inside prefix contains a space
+        }
+        for (const [value, info] of possibleElements.entries()) {
+          if (!startTagInsidePrefix || value.startsWith(startTagInsidePrefix)) {
+            this.addElement(items, `${value}`, info, new vscode.Range(position, position));
+          }
+        }
+        return this.makeCompletionList(items);
+        // return new vscode.CompletionList(Array.from(items.values()), false);
+      } else {
+        if (exceedinglyVerbose) {
+          logger.info('No possible elements found for:', parentName);
+        }
+      }
+    }
+
+    const inElementStartTag = xmlTracker.isInElementStartTag(document, position);
+    if (inElementStartTag) {
       if (exceedinglyVerbose) {
-        logger.info(`Completion requested in element: ${inElementRange.name}`);
+        logger.info(`Completion requested in element: ${inElementStartTag.name}`);
+      }
+
+      const elementByName = xmlTracker.isInElementName(document, position);
+      if (elementByName) {
+        const parent: ElementRange = xmlTracker.getParentElement(document, elementByName);
+        return elementNameCompletion(parent.name, parent.hierarchy);
       }
 
       const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
         schema,
-        inElementRange.name,
-        inElementRange.hierarchy
+        inElementStartTag.name,
+        inElementStartTag.hierarchy
       );
 
       // Check if we're in an attribute value for context-aware completions
@@ -474,9 +580,8 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       if (attributeRange === undefined) {
         if (elementAttributes !== undefined) {
-          const items = new Map<string, vscode.CompletionItem>();
           for (const attr of elementAttributes) {
-            if (!inElementRange.attributes.some((a) => a.name === attr.name)) {
+            if (!inElementStartTag.attributes.some((a) => a.name === attr.name)) {
               this.addItem(
                 items,
                 attr.name,
@@ -507,8 +612,6 @@ class CompletionDict implements vscode.CompletionItemProvider {
         return specializedCompletion;
       }
 
-      const items = new Map<string, vscode.CompletionItem>();
-      const currentLine = position.line;
       const attributeValueStartLine = attributeRange.valueRange.start.line;
       let textToProcess = document.lineAt(position).text;
       if (currentLine === attributeRange.valueRange.start.line && currentLine === attributeRange.valueRange.end.line) {
@@ -600,6 +703,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
         this.buildType('', key, items, 0);
       }
       return this.makeCompletionList(items);
+    } else {
+      const inElementRange = xmlTracker.isInElement(document, position);
+      if (inElementRange) {
+        if (exceedinglyVerbose) {
+          logger.info(`Completion requested in element range: ${inElementRange.name}`);
+        }
+        return elementNameCompletion(inElementRange.name, inElementRange.hierarchy);
+      }
     }
     return undefined; // Skip if not in an element range
   }
@@ -650,7 +761,8 @@ class LocationDict implements vscode.DefinitionProvider {
   }
 
   provideDefinition(document: vscode.TextDocument, position: vscode.Position) {
-    if (getDocumentScriptType(document) == '') {
+    const scheme = getDocumentScriptType(document);
+    if (scheme == '') {
       return undefined; // Skip if the document is not valid
     }
     const line = document.lineAt(position).text;
@@ -740,16 +852,16 @@ class VariableTracker {
   }
 
   getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
-    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
-    const scriptType = getDocumentScriptType(document);
+    const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scriptType);
+    const scriptTypeMap = this.documentVariables.get(scheme);
     if (!scriptTypeMap) return undefined;
 
     const uriMap = scriptTypeMap.get(document.uri.toString());
     if (!uriMap) return undefined;
 
+    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
     // Check all variable types for this variable name
     for (const typeMap of uriMap.values()) {
       const variableData = typeMap.get(normalizedName);
@@ -762,11 +874,10 @@ class VariableTracker {
   }
 
   getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
-    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
-    const scriptType = getDocumentScriptType(document);
+    const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scriptType);
+    const scriptTypeMap = this.documentVariables.get(scheme);
     if (!scriptTypeMap) return [];
 
     const uriMap = scriptTypeMap.get(document.uri.toString());
@@ -775,6 +886,7 @@ class VariableTracker {
     const typeMap = uriMap.get(type);
     if (!typeMap) return [];
 
+    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
     const variableData = typeMap.get(normalizedName);
     if (!variableData) return [];
 
@@ -792,10 +904,10 @@ class VariableTracker {
     locations: vscode.Location[];
     scriptType: string;
   } | null {
-    const scriptType = getDocumentScriptType(document);
+    const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scriptType);
+    const scriptTypeMap = this.documentVariables.get(scheme);
     if (!scriptTypeMap) return null;
 
     const uriMap = scriptTypeMap.get(document.uri.toString());
@@ -812,7 +924,7 @@ class VariableTracker {
             location: variableData.definition,
             definition: variableData.definition,
             locations: variableData.locations,
-            scriptType: scriptType,
+            scriptType: scheme,
           };
         }
         const variableLocation = variableData.locations.find((loc) => loc.range.contains(position));
@@ -823,7 +935,7 @@ class VariableTracker {
             location: variableLocation,
             definition: variableData.definition,
             locations: variableData.locations,
-            scriptType: scriptType,
+            scriptType: scheme,
           };
         }
       }
@@ -833,12 +945,10 @@ class VariableTracker {
   }
 
   updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
-    const normalizedOldName = oldName.startsWith('$') ? oldName.substring(1) : oldName;
-    const normalizedNewName = newName.startsWith('$') ? newName.substring(1) : newName;
-    const scriptType = getDocumentScriptType(document);
+    const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scriptType);
+    const scriptTypeMap = this.documentVariables.get(scheme);
     if (!scriptTypeMap) return;
 
     const uriMap = scriptTypeMap.get(document.uri.toString());
@@ -846,6 +956,9 @@ class VariableTracker {
 
     const typeMap = uriMap.get(type);
     if (!typeMap) return;
+
+    const normalizedOldName = oldName.startsWith('$') ? oldName.substring(1) : oldName;
+    const normalizedNewName = newName.startsWith('$') ? newName.substring(1) : newName;
 
     const variableData = typeMap.get(normalizedOldName);
     if (!variableData) return;
@@ -864,14 +977,14 @@ class VariableTracker {
 
   getAllVariablesForDocument(uri: vscode.Uri, exclude: string = ''): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
-    const scriptType = getDocumentScriptType(
+    const scheme = getDocumentScriptType(
       vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString())!
     );
 
-    if (!scriptType) return result;
+    if (!scheme) return result;
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scriptType);
+    const scriptTypeMap = this.documentVariables.get(scheme);
     if (!scriptTypeMap) return result;
 
     const uriMap = scriptTypeMap.get(uri.toString());
@@ -888,7 +1001,7 @@ class VariableTracker {
         const totalLocations = variableData.locations.length;
 
         const item = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
-        item.detail = `${scriptTypes[scriptType] || 'Script'} ${variableTypes[variableType] || 'Variable'}`;
+        item.detail = `${scriptNodes[scheme]?.info || 'Script'} ${variableTypes[variableType] || 'Variable'}`;
         item.documentation = new vscode.MarkdownString(`Used ${totalLocations} time${totalLocations !== 1 ? 's' : ''}`);
 
         item.insertText = variableName;
@@ -1008,7 +1121,7 @@ class LabelTracker {
     // Process all labels
     for (const [name, location] of documentData.labels.entries()) {
       const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Reference);
-      item.detail = `Label in ${scriptTypes[documentData.scriptType] || 'Script'}`;
+      item.detail = `Label in ${scriptNodes[documentData.scriptType]?.info || 'Script'}`;
 
       // Count references
       const referenceCount = documentData.references.get(name)?.length || 0;
@@ -1162,18 +1275,21 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 
 function getDocumentScriptType(document: vscode.TextDocument): string {
   let languageSubId: string = '';
+
   if (document.languageId !== 'xml') {
-    return languageSubId; // Only process XML files
+    if (exceedinglyVerbose) {
+      logger.info(`Document ${document.uri.toString()} is not recognized as a xml.`);
+    }
+    return languageSubId; // Skip if the document is not recognized as a xml
   }
 
-  // Check if the languageSubId is already stored
-  const cachedLanguageSubId = documentLanguageSubIdMap.get(document.uri.toString());
-  if (cachedLanguageSubId) {
-    languageSubId = cachedLanguageSubId;
+  const scriptMetaData = scriptsMetadata.get(document)!;
+  if (scriptMetaData && scriptMetaData.scheme) {
+    languageSubId = scriptMetaData.scheme;
     if (exceedinglyVerbose) {
-      logger.info(`Using cached languageSubId: ${cachedLanguageSubId} for document: ${document.uri.toString()}`);
+      logger.info(`Document ${document.uri.toString()} recognized as script type: ${languageSubId}`);
     }
-    return languageSubId; // If cached, no need to re-validate
+    return languageSubId; // Return the cached type if available
   }
 
   const text = document.getText();
@@ -1181,10 +1297,10 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
 
   parser.onopentag = (node) => {
     // Check if the root element is <aiscript> or <mdscript>
-    if ([aiScript, mdScript].includes(node.name)) {
-      languageSubId = node.name; // Store the root node name as the languageSubId
-      parser.close(); // Stop parsing as soon as the root element is identified
+    if (scriptNodesNames.includes(node.name)) {
+      languageSubId = scriptNodes[node.name].id;
     }
+    parser.close(); // Stop parsing as soon as the root element is identified
   };
 
   try {
@@ -1195,19 +1311,22 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
 
   if (languageSubId) {
     // Cache the languageSubId for future use
-    documentLanguageSubIdMap.set(document.uri.toString(), languageSubId);
+    if (!scriptsMetadata.has(document)) {
+      scriptsMetadata.set(document, { scheme: languageSubId });
+    } else {
+        scriptMetaData.scheme = languageSubId;
+    }
     if (exceedinglyVerbose) {
       logger.info(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
     }
-    return languageSubId;
   }
 
   return languageSubId;
 }
 
 function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
-  const scriptType = getDocumentScriptType(document);
-  if (scriptType !== aiScript) {
+  const scheme = getDocumentScriptType(document);
+  if (scheme !== aiScriptId) {
     return []; // Only validate AI scripts
   }
 
@@ -1267,11 +1386,11 @@ function unTrackScriptDocument(document: vscode.TextDocument): void {
 }
 
 function trackScriptDocument(document: vscode.TextDocument, update: boolean = false): void {
-  const scriptType = getDocumentScriptType(document);
-  if (scriptType == '') {
+  const scheme = getDocumentScriptType(document);
+  if (scheme == '') {
     return; // Skip processing if the document is not valid
   }
-  const schema = scriptTypesToSchema[scriptType];
+  const schema = scriptTypesToSchema[scheme];
   const diagnostics: vscode.Diagnostic[] = [];
 
   const isXMLParsed = xmlTracker.checkDocumentParsed(document);
@@ -1281,6 +1400,21 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   }
 
   const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
+  const offsets = xmlTracker.getOffsets(document);
+  for (const offset of offsets) {
+    const documentLine = document.lineAt(document.positionAt(offset.index).line - 1);
+    const tagStart = documentLine.text.lastIndexOf('<', offset.index);
+    const diagnostic = new vscode.Diagnostic(
+      new vscode.Range(
+        documentLine.range.start.translate(0, tagStart),
+        documentLine.range.end
+      ),
+      'Unclosed XML tag',
+      vscode.DiagnosticSeverity.Warning
+    );
+    diagnostics.push(diagnostic);
+  }
+
   // Clear existing data for this document
   variableTracker.clearVariablesForDocument(document.uri);
   labelTracker.clearLabelsForDocument(document.uri);
@@ -1296,7 +1430,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
     if (elementDefinition === undefined) {
       const diagnostic = new vscode.Diagnostic(
         element.range,
-        `Unknown element '${element.name}' in script type '${scriptType}'`,
+        `Unknown element '${element.name}' in script type '${scheme}'`,
         vscode.DiagnosticSeverity.Error
       );
       diagnostic.code = 'unknown-element';
@@ -1329,13 +1463,13 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(nameAttr.valueRange.start),
             document.offsetAt(nameAttr.valueRange.end)
           );
-          labelTracker.addLabel(labelName, scriptType, document.uri, nameAttr.valueRange);
+          labelTracker.addLabel(labelName, scheme, document.uri, nameAttr.valueRange);
         }
       }
 
       // Handle action definitions (only for AIScript in library elements)
       if (
-        scriptType === aiScript &&
+        scheme === aiScriptId &&
         element.name === 'actions' &&
         xmlTracker.isInElementByName(document, element, 'library')
       ) {
@@ -1345,7 +1479,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(nameAttr.valueRange.start),
             document.offsetAt(nameAttr.valueRange.end)
           );
-          actionTracker.addAction(actionName, scriptType, document.uri, nameAttr.valueRange);
+          actionTracker.addAction(actionName, scheme, document.uri, nameAttr.valueRange);
         }
       }
       // Process attributes for references and variables
@@ -1382,21 +1516,21 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             }
           }
           // Check for label references
-          if (scriptType === aiScript && labelElementAttributeMap[element.name]?.includes(attr.name)) {
+          if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
             const labelRefValue = text.substring(
               document.offsetAt(attr.valueRange.start),
               document.offsetAt(attr.valueRange.end)
             );
-            labelTracker.addLabelReference(labelRefValue, scriptType, document.uri, attr.valueRange);
+            labelTracker.addLabelReference(labelRefValue, scheme, document.uri, attr.valueRange);
           }
 
           // Check for action references
-          if (scriptType === aiScript && actionElementAttributeMap[element.name]?.includes(attr.name)) {
+          if (scheme === aiScriptId && actionElementAttributeMap[element.name]?.includes(attr.name)) {
             const actionRefValue = text.substring(
               document.offsetAt(attr.valueRange.start),
               document.offsetAt(attr.valueRange.end)
             );
-            actionTracker.addActionReference(actionRefValue, scriptType, document.uri, attr.valueRange);
+            actionTracker.addActionReference(actionRefValue, scheme, document.uri, attr.valueRange);
           }
 
           // Check for variables inside attribute values
@@ -1419,7 +1553,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           //     break;
           //   }
           // }
-          if (scriptType === aiScript && isLValueAttribute) {
+          if (scheme === aiScriptId && isLValueAttribute) {
             if (xmlTracker.isInElementByName(document, element, 'library')) {
               priority = 10;
             } else if (xmlTracker.isInElementByName(document, element, 'init')) {
@@ -1444,7 +1578,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
               variableTracker.addVariable(
                 variableType,
                 variableName,
-                scriptType,
+                scheme,
                 document.uri,
                 new vscode.Range(start, end),
                 true, // isDefinition
@@ -1454,7 +1588,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
               variableTracker.addVariable(
                 variableType,
                 variableName,
-                scriptType,
+                scheme,
                 document.uri,
                 new vscode.Range(start, end)
               );
@@ -1474,6 +1608,9 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Set diagnostics for the document
   diagnosticCollection.set(document.uri, diagnostics);
   logger.info(`Document ${document.uri.toString()} tracked.`);
+  logger.debug(`Diagnostics for ${document.uri.toString()}:`, diagnostics.entries.length, 'diagnostics found.');
+  logger.level = 'debug'; // Reset logger level to debug after processing
+  logger.debug(`Document ${document.uri.toString()} processed with ${xmlElements.length} elements.`);
 }
 
 const completionProvider = new CompletionDict();
@@ -2016,6 +2153,10 @@ export function activate(context: vscode.ExtensionContext) {
   exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
   scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
 
+  logger.debug('X4CodeComplete activated with settings');
+  logger.level = 'debug'; // Set logger level to debug for detailed output
+  logger.debug('X4CodeComplete activated with settings 2');
+  logger.level = 'info'; // Set logger level to info for normal operation
   // Create diagnostic collection
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
@@ -2048,7 +2189,8 @@ export function activate(context: vscode.ExtensionContext) {
     '.',
     '"',
     '{',
-    ' '
+    ' ',
+    '<'
   );
   context.subscriptions.push(disposableCompleteProvider);
 
@@ -2062,12 +2204,12 @@ export function activate(context: vscode.ExtensionContext) {
         document: vscode.TextDocument,
         position: vscode.Position
       ): Promise<vscode.Hover | undefined> => {
-        const scriptType = getDocumentScriptType(document);
-        if (scriptType == '') {
+        const scheme = getDocumentScriptType(document);
+        if (scheme == '') {
           return undefined; // Skip if the document is not valid
         }
 
-        const schema = scriptTypesToSchema[scriptType];
+        const schema = scriptTypesToSchema[scheme];
         const tPattern =
           /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
         // matches:
@@ -2123,11 +2265,11 @@ export function activate(context: vscode.ExtensionContext) {
               const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, attribute.elementName, attribute.hierarchy);
               const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
               if (attributeInfo) {
-                hoverText.appendMarkdown(`**${attributeInfo.name}**: ${attributeInfo.annotation ? '\`' + attributeInfo.annotation + '\`' : ''}\n\n`);
+                hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '\`' + attributeInfo.annotation + '\`' : ''}\n\n`);
                 hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`\n\n`);
                 hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`\n\n`);
               } else {
-                hoverText.appendMarkdown(`**${attributeInfo.name}**: \`Wrong attribute!\`\n\n`);
+                hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`\n\n`);
               }
               return new vscode.Hover(hoverText, attribute.nameRange);
           } else if (xmlTracker.isInElementName(document, position)) {
@@ -2143,7 +2285,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        if (scriptType == aiScript) {
+        if (scheme == aiScriptId) {
           // Check for actions (only in AI scripts)
           const actionAtPosition = actionTracker.getActionAtPosition(document, position);
           if (actionAtPosition !== null) {
@@ -2200,7 +2342,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Generate hover text for the variable
           const hoverText = new vscode.MarkdownString();
           hoverText.appendMarkdown(
-            `**${scriptTypes[variableAtPosition.scriptType] || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}**: \`${variableAtPosition.name}\`\n\n`
+            `**${scriptNodes[variableAtPosition.scriptType]?.info || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}**: \`${variableAtPosition.name}\`\n\n`
           );
 
           hoverText.appendMarkdown(
@@ -2257,8 +2399,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Update the definition provider to support actions
   definitionProvider.provideDefinition = (document: vscode.TextDocument, position: vscode.Position) => {
-    const scriptType = getDocumentScriptType(document);
-    if (scriptType === '') {
+    const scheme = getDocumentScriptType(document);
+    if (scheme === '') {
       return undefined;
     }
 
@@ -2266,7 +2408,7 @@ export function activate(context: vscode.ExtensionContext) {
     const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
     if (variableAtPosition !== null) {
       // For AI scripts, try to find the definition first
-      if (scriptType === aiScript) {
+      if (scheme === aiScriptId) {
         const definition = variableTracker.getVariableDefinition(variableAtPosition.name, document);
         if (definition) {
           if (exceedinglyVerbose) {
@@ -2283,7 +2425,7 @@ export function activate(context: vscode.ExtensionContext) {
       return /* variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : */ undefined;
     }
 
-    if (getDocumentScriptType(document) == aiScript) {
+    if (scheme == aiScriptId) {
       // Check if we're on an action (only in AI scripts)
       const actionAtPosition = actionTracker.getActionAtPosition(document, position);
       if (actionAtPosition !== null) {
@@ -2382,7 +2524,7 @@ export function activate(context: vscode.ExtensionContext) {
   logger.info('XSD schemas loaded successfully.'); // Instead of parsing all open documents, just parse the active one
   if (vscode.window.activeTextEditor) {
     const document = vscode.window.activeTextEditor.document;
-    if (getDocumentScriptType(document)) {
+    if (scriptMetadataInit(document)) {
       trackScriptDocument(document);
     }
   }
@@ -2390,7 +2532,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Listen for editor changes to parse documents as they become active
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor && getDocumentScriptType(editor.document)) {
+      if (editor && scriptMetadataInit(editor.document)) {
         trackScriptDocument(editor.document);
       }
     })
@@ -2398,7 +2540,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Keep the onDidOpenTextDocument handler for newly opened documents
   vscode.workspace.onDidOpenTextDocument((document) => {
-    if (getDocumentScriptType(document)) {
+    if (scriptMetadataInit(document)) {
       // Only parse if this is the active document
       const activeEditor = vscode.window.activeTextEditor;
       if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
@@ -2411,7 +2553,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidChangeTextDocument((event) => {
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor || event.document !== activeEditor.document) return;
-    if (getDocumentScriptType(event.document)) {
+    if (scriptMetadataInit(event.document, true)) {
       trackScriptDocument(event.document, true); // Update the document structure
       const cursorPos = activeEditor.selection.active;
 
@@ -2434,8 +2576,8 @@ export function activate(context: vscode.ExtensionContext) {
             !changeText.includes(',') &&
             !changeText.includes('  ')
           ) {
-            // logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
-            vscode.commands.executeCommand('editor.action.triggerSuggest');
+            logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
+            // vscode.commands.executeCommand('editor.action.triggerSuggest');
           }
         }
       }
@@ -2443,14 +2585,13 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   vscode.workspace.onDidSaveTextDocument((document) => {
-    if (getDocumentScriptType(document)) {
+    if (scriptMetadataInit(document, true)) {
       trackScriptDocument(document, true); // Update the document structure on save
     }
   });
 
   // Clear the cached languageSubId and diagnosticCollection when a document is closed
   vscode.workspace.onDidCloseTextDocument((document) => {
-    documentLanguageSubIdMap.delete(document.uri.toString());
     diagnosticCollection.delete(document.uri);
     unTrackScriptDocument(document);
     if (exceedinglyVerbose) {
@@ -2605,7 +2746,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(sel, {
       provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
-        if (getDocumentScriptType(document) == '') {
+        const scheme = getDocumentScriptType(document);
+        if (scheme == '') {
           return undefined;
         }
 
@@ -2618,7 +2760,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
         }
-        if (getDocumentScriptType(document) == aiScript) {
+        if (scheme == aiScriptId) {
           // Check if we're on an action
           const actionAtPosition = actionTracker.getActionAtPosition(document, position);
           if (actionAtPosition !== null) {
@@ -2661,7 +2803,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerRenameProvider(sel, {
       provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
-        if (getDocumentScriptType(document) == '') {
+        const scheme = getDocumentScriptType(document);
+        if (scheme == '') {
           return undefined; // Skip if the document is not valid
         }
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
