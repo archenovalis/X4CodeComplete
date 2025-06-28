@@ -1352,6 +1352,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
     return; // Skip if the document is already parsed
   }
 
+  const lValueTypes = ['lvalueexpression', ...xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
   const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
   const offsets = xmlTracker.getOffsets(document);
   for (const offset of offsets) {
@@ -1447,6 +1448,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic); // Skip further processing for this attribute
         } else {
+          const attrDefinition = schemaAttributes.find((a) => a.name === attr.name);
           const attributeValue = text.substring(
             document.offsetAt(attr.valueRange.start),
             document.offsetAt(attr.valueRange.end)
@@ -1496,16 +1498,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           let match: RegExpExecArray | null;
           const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
           let priority = -1;
-          const isLValueAttribute = false;
-          // for (const elementAttributes of allElementAttributes) {
-          //   isLValueAttribute =
-          //     elementAttributes.attributes.has(attr.name) &&
-          //     (elementAttributes.attributes.get(attr.name)?.['type'] === 'lvalueexpression' ||
-          //       elementAttributes.attributes.get(attr.name)?.['restriction'] === 'lvalueexpression');
-          //   if (isLValueAttribute) {
-          //     break;
-          //   }
-          // }
+          const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
           if (scheme === aiScriptId && isLValueAttribute) {
             if (xmlTracker.isInElementByName(document, element, 'library')) {
               priority = 10;
@@ -1561,12 +1554,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Set diagnostics for the document
   diagnosticCollection.set(document.uri, diagnostics);
   logger.info(`Document ${document.uri.toString()} tracked.`);
-  // setLoggerLevel('info'); // Set logger level to info for normal operation
-  logger.debug(`hidden`);
-  logger.debug(`Diagnostics for ${document.uri.toString()}:`, diagnostics.entries.length, 'diagnostics found.');
-  // setLoggerLevel('debug'); // Reset logger level to debug after processing
-  logger.debug(`Document ${document.uri.toString()} processed with ${xmlElements.length} elements.`);
-  // setLoggerLevel('info'); // Set logger level to info for normal operation
 }
 
 const completionProvider = new CompletionDict();
