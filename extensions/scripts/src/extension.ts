@@ -387,7 +387,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
     const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Operator);
     item.documentation = info ? new vscode.MarkdownString(info) : undefined;
-    item.range = range;
+    // item.range = range;
 
     logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
     items.set(complete, item);
@@ -535,7 +535,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;
 
-    const elementNameCompletion = (parentName: string, parentHierarchy: string[]) => {
+    const elementNameCompletion = (parentName: string, parentHierarchy: string[], range: vscode.Range) => {
       const possibleElements = xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
       if (possibleElements !== undefined) {
         logger.debug(`Possible elements for ${parentName}:`, possibleElements);
@@ -552,7 +552,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
         }
         for (const [value, info] of possibleElements.entries()) {
           if (!startTagInsidePrefix || value.startsWith(startTagInsidePrefix)) {
-            this.addElement(items, `${value}`, info, new vscode.Range(position, position));
+            this.addElement(items, `${value}`, info, range);
           }
         }
         return this.makeCompletionList(items);
@@ -569,7 +569,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       const elementByName = xmlTracker.elementNameInPosition(document, position);
       if (elementByName) {
         const parent: ElementRange = xmlTracker.getParentElement(document, elementByName);
-        return elementNameCompletion(parent.name, parent.hierarchy);
+        return elementNameCompletion(parent.name, parent.hierarchy, new vscode.Range(position, position));
       }
 
       const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
@@ -649,7 +649,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       const inElementRange = xmlTracker.elementInPosition(document, position);
       if (inElementRange) {
         logger.debug(`Completion requested in element range: ${inElementRange.name}`);
-        return elementNameCompletion(inElementRange.name, inElementRange.hierarchy);
+        return elementNameCompletion(inElementRange.name, inElementRange.hierarchy, inElementRange.nameRange);
       }
     }
     return undefined; // Skip if not in an element range
