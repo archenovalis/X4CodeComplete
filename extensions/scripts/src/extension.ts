@@ -1333,32 +1333,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           diagnostics.push(diagnostic);
         });
       }
-      if (element.name === 'label' && element.attributes.some((attr) => attr.name === 'name')) {
-        const nameAttr = element.attributes.find((attr) => attr.name === 'name');
-        if (nameAttr) {
-          const labelName = text.substring(
-            document.offsetAt(nameAttr.valueRange.start),
-            document.offsetAt(nameAttr.valueRange.end)
-          );
-          labelTracker.addLabel(labelName, scheme, document, nameAttr.valueRange);
-        }
-      }
-
-      // Handle action definitions (only for AIScript in library elements)
-      if (
-        scheme === aiScriptId &&
-        element.name === 'actions' &&
-        element.hierarchy.includes('library')
-      ) {
-        const nameAttr = element.attributes.find((attr) => attr.name === 'name');
-        if (nameAttr) {
-          const actionName = text.substring(
-            document.offsetAt(nameAttr.valueRange.start),
-            document.offsetAt(nameAttr.valueRange.end)
-          );
-          actionTracker.addAction(actionName, scheme, document, nameAttr.valueRange);
-        }
-      }
       // Process attributes for references and variables
       element.attributes.forEach((attr) => {
         if (nameValidation.missingRequiredAttributes.includes(attr.name)) {
@@ -1400,11 +1374,18 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(attr.valueRange.end)
           );
 
+          // Check for label definitions
+          if (scheme === aiScriptId && element.name === 'label' && attr.name === 'name') {
+            labelTracker.addLabel(attrValue, scheme, document, attr.valueRange);
+          }
           // Check for label references
           if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
             labelTracker.addLabelReference(attrValue, scheme, document, attr.valueRange);
           }
-
+          // Check for action definitions
+          if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && attr.hierarchy[0] === 'library') {
+            actionTracker.addAction(attrValue, scheme, document, attr.valueRange);
+          }
           // Check for action references
           if (scheme === aiScriptId && actionElementAttributeMap[element.name]?.includes(attr.name)) {
             actionTracker.addActionReference(attrValue, scheme, document, attr.valueRange);
