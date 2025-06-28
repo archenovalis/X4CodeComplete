@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as sax from 'sax';
+import { off } from 'process';
 
 export interface ElementRange {
   name: string;
@@ -77,17 +78,42 @@ function revertOffset(patchedOffset: number, offsetMap: { index: number; shift: 
   return realOffset;
 }
 
+type OffsetItem = { index: number; shift: number };
+type DocumentInfo = {
+  elements: ElementRange[];
+  lastParsed: number;
+  offsets: OffsetItem[];
+};
 
 export class XmlStructureTracker {
-  private documentMap: Map<string, ElementRange[]> = new Map();
-  private offsetsMap: Map<string, { index: number; shift: number }[]> = new Map();
-  private lastParseTimestamps: Map<string, number> = new Map();
+  // private documentMap: WeakMap<vscode.TextDocument, ElementRange[]> = new WeakMap();
+  // private offsetsMap: WeakMap<vscode.TextDocument, OffsetItem[]> = new WeakMap();
+  // private lastParseTimestamps: WeakMap<vscode.TextDocument, number> = new WeakMap();
+  private documentInfoMap: WeakMap<vscode.TextDocument, DocumentInfo> = new WeakMap();
+
+  prepareDocumentInfo(document: vscode.TextDocument): DocumentInfo  {
+    let documentInfo = this.documentInfoMap.get(document);
+    if (!documentInfo) {
+      // If no document info exists, create a new one
+      documentInfo = {
+        elements: [],
+        lastParsed: 0,
+        offsets: [],
+      };
+      this.documentInfoMap.set(document, documentInfo);
+    }
+    return documentInfo;
+  }
 
   // New method to ensure a document is parsed only when needed
   checkDocumentParsed(document: vscode.TextDocument): boolean {
-    const documentUri = document.uri.toString();
     const lastModified = document.version;
-    const lastParsed = this.lastParseTimestamps.get(documentUri);
+    const documentInfo = this.documentInfoMap.get(document);
+    if (!documentInfo) {
+      // If no document info exists, we need to parse it
+      return false;
+    }
+    const lastParsed = documentInfo.lastParsed;
 
     // Parse only if not parsed before or if the document has changed
     return lastParsed && lastParsed > lastModified ? true : false;
@@ -95,12 +121,15 @@ export class XmlStructureTracker {
 
   // Make this method return the parsed elements
   parseDocument(document: vscode.TextDocument): ElementRange[] {
+    let documentInfo = this.prepareDocumentInfo(document);
+    if (document.version === documentInfo.lastParsed) {
+      // If the document has not changed since last parse, return cached elements
+      return documentInfo.elements;
+    }
     try {
       const text = document.getText();
-
-      const documentUri = document.uri.toString();
       const { patchedText, offsetMap } = patchUnclosedTags(text);
-      this.offsetsMap.set(documentUri, offsetMap);
+      documentInfo.offsets = offsetMap;
 
       // Create a non-strict parser to be more tolerant of errors
       const parser = sax.parser(true);
@@ -235,156 +264,28 @@ export class XmlStructureTracker {
       parser.write(patchedText).close();
 
       // Store the parsed structure
-      this.documentMap.set(document.uri.toString(), elements);
+      documentInfo.elements = elements;
+      documentInfo.lastParsed = document.version;
     } catch (error) {
       // Last-resort error handling - if anything fails, just continue
       // console.error(`Failed to parse document structure: ${error}`);
 
-      // Ensure we don't leave the document without any structure
-      if (!this.documentMap.has(document.uri.toString())) {
-        this.documentMap.set(document.uri.toString(), []);
-      }
+      documentInfo = undefined;
     }
-    this.lastParseTimestamps.set(document.uri.toString(), document.version);
-    return this.documentMap.get(document.uri.toString()) || [];
+    if (documentInfo === undefined) {
+      this.documentInfoMap.delete(document);
+      return [];
+    }
+    else {
+      return documentInfo.elements;
+    }
   }
-
-
-  // parseDocument(document: vscode.TextDocument): ElementRange[] {
-  //   const documentUri = document.uri.toString();
-  //   const text = document.getText();
-  //   const elements: ElementRange[] = [];
-  //   const openElementStack: number[] = [];
-  //   const { patchedText, offsetMap } = patchUnclosedTags(text);
-  //   this.offsetsMap.set(documentUri, offsetMap);
-
-  //   const parser = new Parser(
-  //     {
-  //       onopentag(name, attributes) {
-  //         const tagStartOffsetPatched = parser.startIndex ?? 0;
-  //         const tagStartOffset = revertOffset(tagStartOffsetPatched, offsetMap);
-  //         const tagEndOffsetPatched = parser.endIndex ?? tagStartOffset + name.length;
-  //         const tagEndOffset = revertOffset(tagEndOffsetPatched, offsetMap);
-
-  //         const tagRawText = patchedText.slice(tagStartOffsetPatched, tagEndOffsetPatched + 1);
-  //         const isSelfClosing = tagRawText.includes('/>');
-
-  //         const startPos = document.positionAt(tagStartOffset);
-  //         const endPos = document.positionAt(tagEndOffset + 1);
-
-  //         const nameStartOffset = tagStartOffset + 1;
-  //         const nameStart = document.positionAt(nameStartOffset);
-  //         const nameEnd = document.positionAt(nameStartOffset + name.length);
-
-  //         const newElement: ElementRange = {
-  //           name,
-  //           range: new vscode.Range(startPos, endPos),
-  //           startTagRange: new vscode.Range(startPos, endPos),
-  //           nameRange: new vscode.Range(nameStart, nameEnd),
-  //           isSelfClosing,
-  //           children: [],
-  //           attributes: [],
-  //           hierarchy: [],
-  //         };
-
-  //         const currentIndex = elements.length;
-
-  //         if (openElementStack.length > 0) {
-  //           const parentIndex = openElementStack[openElementStack.length - 1];
-  //           newElement.parentId = parentIndex;
-  //           newElement.parentName = elements[parentIndex].name;
-  //           newElement.hierarchy = [elements[parentIndex].name, ...elements[parentIndex].hierarchy];
-  //           elements[parentIndex].children.push(currentIndex);
-  //         }
-
-  //         // Parse attributes using raw tag text
-  //         for (const [attrName, attrValue] of Object.entries(attributes)) {
-  //           const attrPattern = new RegExp(`${attrName}\\s*=\\s*(['"])(.*?)\\1`);
-  //           const match = attrPattern.exec(tagRawText);
-
-  //           if (match) {
-  //             const attrStartInTag = match.index;
-  //             const valueStartInTag = tagRawText.indexOf(match[2], attrStartInTag);
-  //             const valueEndInTag = valueStartInTag + match[2].length;
-
-  //             const attrNameStart = document.positionAt(tagStartOffset + attrStartInTag);
-  //             const attrNameEnd = document.positionAt(tagStartOffset + attrStartInTag + attrName.length);
-  //             const valueStart = document.positionAt(tagStartOffset + valueStartInTag);
-  //             const valueEnd = document.positionAt(tagStartOffset + valueEndInTag);
-
-  //             newElement.attributes.push({
-  //               name: attrName,
-  //               elementName: name,
-  //               parentName: newElement.parentName || '',
-  //               hierarchy: newElement.hierarchy,
-  //               nameRange: new vscode.Range(attrNameStart, attrNameEnd),
-  //               valueRange: new vscode.Range(valueStart, valueEnd),
-  //               quoteChar: match[1],
-  //               elementId: currentIndex,
-  //             });
-  //           }
-  //         }
-
-  //         elements.push(newElement);
-
-  //         if (!isSelfClosing) {
-  //           openElementStack.push(currentIndex);
-  //         }
-  //       },
-
-  //       onclosetag(name) {
-  //         // Find the last matching open tag
-  //         for (let i = openElementStack.length - 1; i >= 0; i--) {
-  //           const elIndex = openElementStack[i];
-  //           const el = elements[elIndex];
-  //           if (el.name === name) {
-  //             const tagEndOffset = revertOffset(parser.endIndex ?? 0, offsetMap);
-  //             el.range = new vscode.Range(el.range.start, document.positionAt(tagEndOffset + 1));
-  //             // el.startTagRange = new vscode.Range(el.range.start, document.positionAt(tagEndOffset + 1));
-
-  //             // Remove this and anything after it from the stack
-  //             openElementStack.splice(i);
-  //             return;
-  //           }
-  //         }
-
-  //         // If no matching open tag found, ignore (invalid close)
-  //       }
-  //       ,
-
-  //       onerror(err) {
-  //         console.warn('HTMLParser2 error:', err.message);
-  //       },
-
-  //       ontext(_text) {
-  //         // Ignored here but could be used for content ranges
-  //       }
-  //     },
-  //     {
-  //       xmlMode: true,
-  //       recognizeSelfClosing: true
-  //     }
-  //   );
-
-  //   try {
-  //     parser.write(patchedText);
-  //   } catch (e) {
-  //     console.warn("Failed to parse XML:", e);
-  //   }
-
-  //   this.documentMap.set(documentUri, elements);
-  //   this.lastParseTimestamps.set(documentUri, document.version);
-  //   return elements;
-  // }
-
 
   isInAttributeName(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
     try {
-      const rootElements = this.documentMap.get(document.uri.toString());
-      if (!rootElements) return undefined;
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: ElementRange | undefined = this.isInElementStartTag(document, position);
+      const elementContainingPosition: ElementRange | undefined = this.elementStartTagInPosition(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -403,11 +304,9 @@ export class XmlStructureTracker {
 
   isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
     try {
-      const rootElements = this.documentMap.get(document.uri.toString());
-      if (!rootElements) return undefined;
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: ElementRange | undefined = this.isInElementStartTag(document, position);
+      const elementContainingPosition: ElementRange | undefined = this.elementStartTagInPosition(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -424,38 +323,40 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  isInElement(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
-    const rootElements = this.documentMap.get(document.uri.toString());
+  elementInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+    const documentInfo = this.documentInfoMap.get(document);
+    if (!documentInfo) return undefined;
+    const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
 
     const elements = rootElements.filter((element) => element.range.contains(position)).sort((a, b) => a.range.contains(b.range) ? 1 : a.range.isEqual(b.range) ? 0 : -1);
     return elements.length > 0 ? elements[0] : undefined;
   }
 
-  isInElementStartTag(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
-    const rootElements = this.documentMap.get(document.uri.toString());
+  elementStartTagInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+    const documentInfo = this.documentInfoMap.get(document);
+    if (!documentInfo) return undefined;
+    const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
 
     return rootElements.find((element) => element.startTagRange.contains(position));
   }
 
-  isInElementName(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
-    const rootElements = this.documentMap.get(document.uri.toString());
+  elementNameInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+    const documentInfo = this.documentInfoMap.get(document);
+    if (!documentInfo) return undefined;
+    const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
 
     return rootElements.find((element) => element.nameRange.contains(position));
   }
 
-  clear(document: vscode.TextDocument): void {
-    this.documentMap.delete(document.uri.toString());
-  }
-
   getOffsets(document: vscode.TextDocument): { index: number; shift: number }[]  {
-    return this.offsetsMap.get(document.uri.toString()) || [];
+    return this.documentInfoMap.get(document)?.offsets || [];
   }
 
   getElements(document: vscode.TextDocument): ElementRange[] {
-    return this.documentMap.get(document.uri.toString()) || [];
+    return this.documentInfoMap.get(document)?.elements || [];
   }
 
   getParentElement(document: vscode.TextDocument, element: ElementRange): ElementRange | undefined {
@@ -466,15 +367,6 @@ export class XmlStructureTracker {
       return undefined; // Parent index out of bounds
     }
     return elements[element.parentId];
-  }
-
-  isInElementByName(document: vscode.TextDocument, currentElement: ElementRange, name: string): boolean {
-    if (currentElement.name === name) {
-      return true;
-    }
-
-    // Check if the current element is nested within another element of the same name
-    return this.getParentElement(document, currentElement) !== undefined;
   }
 }
 export const xmlTracker = new XmlStructureTracker();

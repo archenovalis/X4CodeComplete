@@ -39,41 +39,6 @@ function scriptMetadataInit(document: vscode.TextDocument, reInit: boolean = fal
   return undefined;
 }
 
-// // Extract property completion logic into a function
-// function getPropertyCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-//   if (getDocumentScriptType(document) === '') {
-//     return []; // Skip if the document is not valid
-//   }
-
-//   // Get the current line up to the cursor position
-//   const linePrefix = document.lineAt(position).text.substring(0, position.character);
-
-//   // First scenario: . was just typed
-//   if (linePrefix.endsWith('.')) {
-//     return Loc;
-//   }
-
-//   // Second scenario: We're editing an existing variable
-//   // Find the last $ character before the cursor
-//   const lastDollarIndex = linePrefix.lastIndexOf('$');
-//   if (lastDollarIndex >= 0) {
-//     // Check if we're within a variable (no whitespace or special chars between $ and cursor)
-//     const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
-
-//     // If this text is a valid variable name part
-//     if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
-//       // Get the partial variable name we're typing (without the $)
-//       const partialName = textBetweenDollarAndCursor;
-//       // Get all variables and filter them by the current prefix
-//       const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
-//       // Filter variables that match the partial name
-//       return allVariables.filter((item) => item.label.toString().toLowerCase().startsWith(partialName.toLowerCase()));
-//     }
-//   }
-
-//   return []; // No completions if not in a variable context
-// }
-
 // Extract variable completion logic into a function
 function getVariableCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
   if (getDocumentScriptType(document) === '') {
@@ -85,7 +50,7 @@ function getVariableCompletions(document: vscode.TextDocument, position: vscode.
 
   // First scenario: $ was just typed
   if (linePrefix.endsWith('$')) {
-    return variableTracker.getAllVariablesForDocument(document.uri);
+    return variableTracker.getAllVariablesForDocument(document);
   }
 
   // Second scenario: We're editing an existing variable
@@ -100,7 +65,7 @@ function getVariableCompletions(document: vscode.TextDocument, position: vscode.
       // Get the partial variable name we're typing (without the $)
       const partialName = textBetweenDollarAndCursor;
       // Get all variables and filter them by the current prefix
-      const allVariables = variableTracker.getAllVariablesForDocument(document.uri, partialName);
+      const allVariables = variableTracker.getAllVariablesForDocument(document, partialName);
       // Filter variables that match the partial name
       return allVariables.filter((item) => item.label.toString().toLowerCase().startsWith(partialName.toLowerCase()));
     }
@@ -128,7 +93,7 @@ function getLabelCompletions(document: vscode.TextDocument, position: vscode.Pos
       const match = elementAttrPattern.exec(textBefore);
       if (match) {
         const partialText = match[1];
-        const allLabels = labelTracker.getAllLabelsForDocument(document.uri);
+        const allLabels = labelTracker.getAllLabelsForDocument(document);
 
         // If there's partial text, filter labels that start with it
         if (partialText) {
@@ -177,7 +142,7 @@ function getActionCompletions(document: vscode.TextDocument, position: vscode.Po
       const match = elementAttrPattern.exec(textBefore);
       if (match) {
         const partialText = match[1];
-        const allActions = actionTracker.getAllActionsForDocument(document.uri);
+        const allActions = actionTracker.getAllActionsForDocument(document);
 
         // If there's partial text, filter actions that start with it
         if (partialText) {
@@ -530,11 +495,11 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
     }
 
-    const inElementStartTag = xmlTracker.isInElementStartTag(document, position);
+    const inElementStartTag = xmlTracker.elementStartTagInPosition(document, position);
     if (inElementStartTag) {
       logger.debug(`Completion requested in element: ${inElementStartTag.name}`);
 
-      const elementByName = xmlTracker.isInElementName(document, position);
+      const elementByName = xmlTracker.elementNameInPosition(document, position);
       if (elementByName) {
         const parent: ElementRange = xmlTracker.getParentElement(document, elementByName);
         return elementNameCompletion(parent.name, parent.hierarchy);
@@ -665,7 +630,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       return this.makeCompletionList(items);
     } else {
-      const inElementRange = xmlTracker.isInElement(document, position);
+      const inElementRange = xmlTracker.elementInPosition(document, position);
       if (inElementRange) {
         logger.debug(`Completion requested in element range: ${inElementRange.name}`);
         return elementNameCompletion(inElementRange.name, inElementRange.hierarchy);
@@ -738,31 +703,34 @@ class LocationDict implements vscode.DefinitionProvider {
   }
 }
 
+type ScriptVariableInfo = {
+  definition?: vscode.Location;
+  definitionPriority?: number;
+  locations: vscode.Location[];
+};
+
+type ScriptVariablesMap = Map<string, ScriptVariableInfo>;
+type ScriptVariablesPerType = Map<string, ScriptVariablesMap>;
+type ScriptVariablesPerDocument = WeakMap<vscode.TextDocument, ScriptVariablesPerType>;
+
+type ScriptVariableDetails = {
+  name: string;
+  type: string;
+  location: vscode.Location;
+  definition?: vscode.Location;
+  locations: vscode.Location[];
+  scriptType: string;
+};
+
 class VariableTracker {
   // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
-  documentVariables: Map<
-    string,
-    Map<
-      string,
-      Map<
-        string,
-        Map<
-          string,
-          {
-            definition?: vscode.Location;
-            definitionPriority?: number;
-            locations: vscode.Location[];
-          }
-        >
-      >
-    >
-  > = new Map();
+  documentVariables: ScriptVariablesPerDocument = new WeakMap();
 
   addVariable(
     type: string,
     name: string,
     scriptType: string,
-    uri: vscode.Uri,
+    document: vscode.TextDocument,
     range: vscode.Range,
     isDefinition: boolean = false,
     definitionPriority?: number
@@ -770,22 +738,16 @@ class VariableTracker {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
 
     // Get or create the scriptType level
-    if (!this.documentVariables.has(scriptType)) {
-      this.documentVariables.set(scriptType, new Map());
+    if (!this.documentVariables.has(document)) {
+      this.documentVariables.set(document, new Map());
     }
-    const scriptTypeMap = this.documentVariables.get(scriptType)!;
-
-    // Get or create the document URI level
-    if (!scriptTypeMap.has(uri.toString())) {
-      scriptTypeMap.set(uri.toString(), new Map());
-    }
-    const uriMap = scriptTypeMap.get(uri.toString())!;
+    const variablesTypes = this.documentVariables.get(document)!;
 
     // Get or create the variable type level
-    if (!uriMap.has(type)) {
-      uriMap.set(type, new Map());
+    if (!variablesTypes.has(type)) {
+      variablesTypes.set(type, new Map());
     }
-    const typeMap = uriMap.get(type)!;
+    const typeMap = variablesTypes.get(type)!;
 
     // Get or create the variable name level
     if (!typeMap.has(normalizedName)) {
@@ -794,7 +756,7 @@ class VariableTracker {
     const variableData = typeMap.get(normalizedName)!;
 
     // Add to locations
-    variableData.locations.push(new vscode.Location(uri, range));
+    variableData.locations.push(new vscode.Location(document.uri, range));
 
     // Handle definition if this is marked as one
     if (isDefinition && definitionPriority !== undefined) {
@@ -804,7 +766,7 @@ class VariableTracker {
         !variableData.definitionPriority ||
         definitionPriority < variableData.definitionPriority
       ) {
-        variableData.definition = new vscode.Location(uri, range);
+        variableData.definition = new vscode.Location(document.uri, range);
         variableData.definitionPriority = definitionPriority;
       }
     }
@@ -814,15 +776,12 @@ class VariableTracker {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scheme);
-    if (!scriptTypeMap) return undefined;
-
-    const uriMap = scriptTypeMap.get(document.uri.toString());
-    if (!uriMap) return undefined;
+    const variablesTypes = this.documentVariables.get(document);
+    if (!variablesTypes) return undefined;
 
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
     // Check all variable types for this variable name
-    for (const typeMap of uriMap.values()) {
+    for (const typeMap of variablesTypes.values()) {
       const variableData = typeMap.get(normalizedName);
       if (variableData?.definition) {
         return variableData.definition;
@@ -836,13 +795,10 @@ class VariableTracker {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scheme);
-    if (!scriptTypeMap) return [];
+    const variablesTypes = this.documentVariables.get(document);
+    if (!variablesTypes) return [];
 
-    const uriMap = scriptTypeMap.get(document.uri.toString());
-    if (!uriMap) return [];
-
-    const typeMap = uriMap.get(type);
+    const typeMap = variablesTypes.get(type);
     if (!typeMap) return [];
 
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
@@ -852,28 +808,15 @@ class VariableTracker {
     return variableData.locations;
   }
 
-  getVariableAtPosition(
-    document: vscode.TextDocument,
-    position: vscode.Position
-  ): {
-    name: string;
-    type: string;
-    location: vscode.Location;
-    definition?: vscode.Location;
-    locations: vscode.Location[];
-    scriptType: string;
-  } | null {
+  getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableDetails | null {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scheme);
-    if (!scriptTypeMap) return null;
-
-    const uriMap = scriptTypeMap.get(document.uri.toString());
-    if (!uriMap) return null;
+    const variablesTypes = this.documentVariables.get(document);
+    if (!variablesTypes) return null;
 
     // Check all variable types
-    for (const [variableType, typeMap] of uriMap) {
+    for (const [variableType, typeMap] of variablesTypes) {
       // Check all variable names
       for (const [variableName, variableData] of typeMap) {
         if (variableData.definition && variableData.definition.range.contains(position)) {
@@ -907,13 +850,10 @@ class VariableTracker {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scheme);
-    if (!scriptTypeMap) return;
+    const variablesTypes = this.documentVariables.get(document);
+    if (!variablesTypes) return;
 
-    const uriMap = scriptTypeMap.get(document.uri.toString());
-    if (!uriMap) return;
-
-    const typeMap = uriMap.get(type);
+    const typeMap = variablesTypes.get(type);
     if (!typeMap) return;
 
     const normalizedOldName = oldName.startsWith('$') ? oldName.substring(1) : oldName;
@@ -927,30 +867,19 @@ class VariableTracker {
     typeMap.delete(normalizedOldName);
   }
 
-  clearVariablesForDocument(uri: vscode.Uri): void {
-    // Clear variables for all script types
-    for (const scriptTypeMap of this.documentVariables.values()) {
-      scriptTypeMap.delete(uri.toString());
-    }
+  clearVariablesForDocument(document: vscode.TextDocument): void {
+    this.documentVariables.delete(document);
   }
 
-  getAllVariablesForDocument(uri: vscode.Uri, exclude: string = ''): vscode.CompletionItem[] {
+  getAllVariablesForDocument(document: vscode.TextDocument, exclude: string = ''): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
-    const scheme = getDocumentScriptType(
-      vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString())!
-    );
-
-    if (!scheme) return result;
-
     // Navigate through the map levels
-    const scriptTypeMap = this.documentVariables.get(scheme);
-    if (!scriptTypeMap) return result;
+    const variablesTypes = this.documentVariables.get(document);
+    if (!variablesTypes) return result;
 
-    const uriMap = scriptTypeMap.get(uri.toString());
-    if (!uriMap) return result;
-
+    const scheme = getDocumentScriptType(document);
     // Process all variable types
-    for (const [variableType, typeMap] of uriMap) {
+    for (const [variableType, typeMap] of variablesTypes) {
       // Process all variables
       for (const [variableName, variableData] of typeMap) {
         if (variableName === exclude) {
@@ -974,26 +903,27 @@ class VariableTracker {
 
 const variableTracker = new VariableTracker();
 
+type ScriptLabels = {
+  labels: Map<string, vscode.Location>;
+  references: Map<string, vscode.Location[]>;
+};
+
 class LabelTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
-  documentLabels: Map<
-    string,
-    { scriptType: string; labels: Map<string, vscode.Location>; references: Map<string, vscode.Location[]> }
-  > = new Map();
+  documentLabels: WeakMap<vscode.TextDocument, ScriptLabels> = new WeakMap();
 
-  addLabel(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+  addLabel(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
-    if (!this.documentLabels.has(uri.toString())) {
-      this.documentLabels.set(uri.toString(), {
-        scriptType: scriptType,
+    if (!this.documentLabels.has(document)) {
+      this.documentLabels.set(document, {
         labels: new Map(),
         references: new Map(),
       });
     }
-    const labelData = this.documentLabels.get(uri.toString())!;
+    const labelData = this.documentLabels.get(document)!;
 
     // Add the label definition location
-    labelData.labels.set(name, new vscode.Location(uri, range));
+    labelData.labels.set(name, new vscode.Location(document.uri, range));
 
     // Initialize references map if not exists
     if (!labelData.references.has(name)) {
@@ -1001,26 +931,25 @@ class LabelTracker {
     }
   }
 
-  addLabelReference(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+  addLabelReference(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
-    if (!this.documentLabels.has(uri.toString())) {
-      this.documentLabels.set(uri.toString(), {
-        scriptType: scriptType,
+    if (!this.documentLabels.has(document)) {
+      this.documentLabels.set(document, {
         labels: new Map(),
         references: new Map(),
       });
     }
-    const labelData = this.documentLabels.get(uri.toString())!;
+    const labelData = this.documentLabels.get(document)!;
 
     // Add the reference location
     if (!labelData.references.has(name)) {
       labelData.references.set(name, []);
     }
-    labelData.references.get(name)!.push(new vscode.Location(uri, range));
+    labelData.references.get(name)!.push(new vscode.Location(document.uri, range));
   }
 
   getLabelDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
-    const documentData = this.documentLabels.get(document.uri.toString());
+    const documentData = this.documentLabels.get(document);
     if (!documentData) {
       return undefined;
     }
@@ -1028,7 +957,7 @@ class LabelTracker {
   }
 
   getLabelReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
-    const documentData = this.documentLabels.get(document.uri.toString());
+    const documentData = this.documentLabels.get(document);
     if (!documentData || !documentData.references.has(name)) {
       return [];
     }
@@ -1039,7 +968,7 @@ class LabelTracker {
     document: vscode.TextDocument,
     position: vscode.Position
   ): { name: string; location: vscode.Location; isDefinition: boolean } | null {
-    const documentData = this.documentLabels.get(document.uri.toString());
+    const documentData = this.documentLabels.get(document);
     if (!documentData) {
       return null;
     }
@@ -1070,17 +999,19 @@ class LabelTracker {
     return null;
   }
 
-  getAllLabelsForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+  getAllLabelsForDocument(document: vscode.TextDocument): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
-    const documentData = this.documentLabels.get(uri.toString());
+    const documentData = this.documentLabels.get(document);
     if (!documentData) {
       return result;
     }
 
+    const scheme = getDocumentScriptType(document);
+
     // Process all labels
     for (const [name, location] of documentData.labels.entries()) {
       const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Reference);
-      item.detail = `Label in ${scriptNodes[documentData.scriptType]?.info || 'Script'}`;
+      item.detail = `Label in ${scriptNodes[scheme]?.info || 'Script'}`;
 
       // Count references
       const referenceCount = documentData.references.get(name)?.length || 0;
@@ -1094,8 +1025,8 @@ class LabelTracker {
     return result;
   }
 
-  clearLabelsForDocument(uri: vscode.Uri): void {
-    this.documentLabels.delete(uri.toString());
+  clearLabelsForDocument(document: vscode.TextDocument): void {
+    this.documentLabels.delete(document);
   }
 }
 
@@ -1104,24 +1035,24 @@ const labelTracker = new LabelTracker();
 // ActionTracker class for tracking AIScript actions
 class ActionTracker {
   // Map to store actions per document: Map<DocumentURI, Map<ActionName, vscode.Location>>
-  documentActions: Map<
-    string,
+  documentActions: WeakMap<
+    vscode.TextDocument,
     { scriptType: string; actions: Map<string, vscode.Location>; references: Map<string, vscode.Location[]> }
   > = new Map();
 
-  addAction(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+  addAction(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the action map for the document
-    if (!this.documentActions.has(uri.toString())) {
-      this.documentActions.set(uri.toString(), {
+    if (!this.documentActions.has(document)) {
+      this.documentActions.set(document, {
         scriptType: scriptType,
         actions: new Map(),
         references: new Map(),
       });
     }
-    const actionData = this.documentActions.get(uri.toString())!;
+    const actionData = this.documentActions.get(document)!;
 
     // Add the action definition location
-    actionData.actions.set(name, new vscode.Location(uri, range));
+    actionData.actions.set(name, new vscode.Location(document.uri, range));
 
     // Initialize references map if not exists
     if (!actionData.references.has(name)) {
@@ -1129,26 +1060,26 @@ class ActionTracker {
     }
   }
 
-  addActionReference(name: string, scriptType: string, uri: vscode.Uri, range: vscode.Range): void {
+  addActionReference(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the action map for the document
-    if (!this.documentActions.has(uri.toString())) {
-      this.documentActions.set(uri.toString(), {
+    if (!this.documentActions.has(document)) {
+      this.documentActions.set(document, {
         scriptType: scriptType,
         actions: new Map(),
         references: new Map(),
       });
     }
-    const actionData = this.documentActions.get(uri.toString())!;
+    const actionData = this.documentActions.get(document)!;
 
     // Add the reference location
     if (!actionData.references.has(name)) {
       actionData.references.set(name, []);
     }
-    actionData.references.get(name)!.push(new vscode.Location(uri, range));
+    actionData.references.get(name)!.push(new vscode.Location(document.uri, range));
   }
 
   getActionDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
-    const documentData = this.documentActions.get(document.uri.toString());
+    const documentData = this.documentActions.get(document);
     if (!documentData) {
       return undefined;
     }
@@ -1156,7 +1087,7 @@ class ActionTracker {
   }
 
   getActionReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
-    const documentData = this.documentActions.get(document.uri.toString());
+    const documentData = this.documentActions.get(document);
     if (!documentData || !documentData.references.has(name)) {
       return [];
     }
@@ -1167,7 +1098,7 @@ class ActionTracker {
     document: vscode.TextDocument,
     position: vscode.Position
   ): { name: string; location: vscode.Location; isDefinition: boolean } | null {
-    const documentData = this.documentActions.get(document.uri.toString());
+    const documentData = this.documentActions.get(document);
     if (!documentData) {
       return null;
     }
@@ -1198,9 +1129,9 @@ class ActionTracker {
     return null;
   }
 
-  getAllActionsForDocument(uri: vscode.Uri): vscode.CompletionItem[] {
+  getAllActionsForDocument(document: vscode.TextDocument): vscode.CompletionItem[] {
     const result: vscode.CompletionItem[] = [];
-    const documentData = this.documentActions.get(uri.toString());
+    const documentData = this.documentActions.get(document);
     if (!documentData) {
       return result;
     }
@@ -1222,8 +1153,8 @@ class ActionTracker {
     return result;
   }
 
-  clearActionsForDocument(uri: vscode.Uri): void {
-    this.documentActions.delete(uri.toString());
+  clearActionsForDocument(document: vscode.TextDocument): void {
+    this.documentActions.delete(document);
   }
 }
 
@@ -1283,8 +1214,8 @@ function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] 
     return []; // Only validate AI scripts
   }
 
-  const documentData = labelTracker.documentLabels.get(document.uri.toString());
-  const actionData = actionTracker.documentActions.get(document.uri.toString());
+  const documentData = labelTracker.documentLabels.get(document);
+  const actionData = actionTracker.documentActions.get(document);
 
   const diagnostics: vscode.Diagnostic[] = [];
 
@@ -1330,14 +1261,6 @@ function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] 
   return diagnostics;
 }
 
-function unTrackScriptDocument(document: vscode.TextDocument): void {
-  // Clear existing data for this document
-  variableTracker.clearVariablesForDocument(document.uri);
-  labelTracker.clearLabelsForDocument(document.uri);
-  actionTracker.clearActionsForDocument(document.uri);
-  xmlTracker.clear(document);
-}
-
 function trackScriptDocument(document: vscode.TextDocument, update: boolean = false): void {
   const scheme = getDocumentScriptType(document);
   if (scheme == '') {
@@ -1370,9 +1293,9 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   }
 
   // Clear existing data for this document
-  variableTracker.clearVariablesForDocument(document.uri);
-  labelTracker.clearLabelsForDocument(document.uri);
-  actionTracker.clearActionsForDocument(document.uri);
+  variableTracker.clearVariablesForDocument(document);
+  labelTracker.clearLabelsForDocument(document);
+  actionTracker.clearActionsForDocument(document);
 
   // Use the XML structure to find labels, actions, and variables more efficiently
   const text = document.getText();
@@ -1417,7 +1340,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(nameAttr.valueRange.start),
             document.offsetAt(nameAttr.valueRange.end)
           );
-          labelTracker.addLabel(labelName, scheme, document.uri, nameAttr.valueRange);
+          labelTracker.addLabel(labelName, scheme, document, nameAttr.valueRange);
         }
       }
 
@@ -1425,7 +1348,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
       if (
         scheme === aiScriptId &&
         element.name === 'actions' &&
-        xmlTracker.isInElementByName(document, element, 'library')
+        element.hierarchy.includes('library')
       ) {
         const nameAttr = element.attributes.find((attr) => attr.name === 'name');
         if (nameAttr) {
@@ -1433,7 +1356,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(nameAttr.valueRange.start),
             document.offsetAt(nameAttr.valueRange.end)
           );
-          actionTracker.addAction(actionName, scheme, document.uri, nameAttr.valueRange);
+          actionTracker.addAction(actionName, scheme, document, nameAttr.valueRange);
         }
       }
       // Process attributes for references and variables
@@ -1470,23 +1393,6 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
               diagnostics.push(diagnostic);
             }
           }
-          // Check for label references
-          if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
-            const labelRefValue = text.substring(
-              document.offsetAt(attr.valueRange.start),
-              document.offsetAt(attr.valueRange.end)
-            );
-            labelTracker.addLabelReference(labelRefValue, scheme, document.uri, attr.valueRange);
-          }
-
-          // Check for action references
-          if (scheme === aiScriptId && actionElementAttributeMap[element.name]?.includes(attr.name)) {
-            const actionRefValue = text.substring(
-              document.offsetAt(attr.valueRange.start),
-              document.offsetAt(attr.valueRange.end)
-            );
-            actionTracker.addActionReference(actionRefValue, scheme, document.uri, attr.valueRange);
-          }
 
           // Check for variables inside attribute values
           const attrValue = text.substring(
@@ -1494,19 +1400,41 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(attr.valueRange.end)
           );
 
+          // Check for label references
+          if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
+            labelTracker.addLabelReference(attrValue, scheme, document, attr.valueRange);
+          }
+
+          // Check for action references
+          if (scheme === aiScriptId && actionElementAttributeMap[element.name]?.includes(attr.name)) {
+            actionTracker.addActionReference(attrValue, scheme, document, attr.valueRange);
+          }
+
+          if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && attr.hierarchy[0] === 'params') {
+            variableTracker.addVariable(
+              'normal',
+              attrValue,
+              scheme,
+              document,
+              new vscode.Range(attr.valueRange.start, attr.valueRange.end),
+              true, // isDefinition
+              0
+            );
+          }
+
           const tableIsFound = tableKeyPattern.test(attrValue);
           let match: RegExpExecArray | null;
           const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
           let priority = -1;
           const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
           if (scheme === aiScriptId && isLValueAttribute) {
-            if (xmlTracker.isInElementByName(document, element, 'library')) {
+            if (element.hierarchy.includes('library')) {
               priority = 10;
-            } else if (xmlTracker.isInElementByName(document, element, 'init')) {
+            } else if (element.hierarchy.includes('init')) {
               priority = 20;
-            } else if (xmlTracker.isInElementByName(document, element, 'patch')) {
+            } else if (element.hierarchy.includes('patch')) {
               priority = 30;
-            } else if (xmlTracker.isInElementByName(document, element, 'attention')) {
+            } else if (element.hierarchy.includes('attention')) {
               priority = 40;
             }
           }
@@ -1525,7 +1453,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
                 variableType,
                 variableName,
                 scheme,
-                document.uri,
+                document,
                 new vscode.Range(start, end),
                 true, // isDefinition
                 priority
@@ -1535,7 +1463,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
                 variableType,
                 variableName,
                 scheme,
-                document.uri,
+                document,
                 new vscode.Range(start, end)
               );
             }
@@ -2192,7 +2120,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        const element = xmlTracker.isInElementStartTag(document, position);
+        const element = xmlTracker.elementStartTagInPosition(document, position);
         if (element) {
           const attribute = xmlTracker.isInAttributeName(document, position);
           if (attribute) {
@@ -2207,7 +2135,7 @@ export function activate(context: vscode.ExtensionContext) {
                 hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`\n\n`);
               }
               return new vscode.Hover(hoverText, attribute.nameRange);
-          } else if (xmlTracker.isInElementName(document, position)) {
+          } else if (xmlTracker.elementNameInPosition(document, position)) {
             const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
             const hoverText = new vscode.MarkdownString();
             if (elementInfo) {
@@ -2518,7 +2446,6 @@ export function activate(context: vscode.ExtensionContext) {
   // Clear the cached languageSubId and diagnosticCollection when a document is closed
   vscode.workspace.onDidCloseTextDocument((document) => {
     diagnosticCollection.delete(document.uri);
-    unTrackScriptDocument(document);
     logger.debug(`Removed cached data for document: ${document.uri.toString()}`);
   });
 
@@ -2588,7 +2515,7 @@ export function activate(context: vscode.ExtensionContext) {
               const labelName = diagnostic.message.match(/'(.+)'/)?.[1];
               if (labelName) {
                 // Get available labels and find similar ones
-                const documentData = labelTracker.documentLabels.get(document.uri.toString());
+                const documentData = labelTracker.documentLabels.get(document);
                 if (documentData) {
                   const availableLabels = Array.from(documentData.labels.keys());
                   const similarLabels = findSimilarItems(labelName, availableLabels);
@@ -2646,7 +2573,7 @@ export function activate(context: vscode.ExtensionContext) {
                 actions.push(createAction);
 
                 // Get available actions and find similar ones
-                const actionData = actionTracker.documentActions.get(document.uri.toString());
+                const actionData = actionTracker.documentActions.get(document);
                 if (actionData) {
                   const availableActions = Array.from(actionData.actions.keys());
                   const similarActions = findSimilarItems(actionName, availableActions);
