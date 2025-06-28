@@ -7,14 +7,13 @@ import * as xpath from 'xml2js-xpath';
 import * as path from 'path';
 import * as sax from 'sax';
 import { xmlTracker, ElementRange } from './xmlStructureTracker';
-import { logger } from './logger';
+import { logger, setLoggerLevel } from './logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 import { get } from 'http';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
-const debug = false;
-let exceedinglyVerbose: boolean = false;
+let isDebugEnabled = false;
 let rootpath: string;
 let scriptPropertiesPath: string;
 let extensionsFolder: string;
@@ -415,9 +414,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     if (items.has(complete)) {
-      if (exceedinglyVerbose) {
-        logger.info('\t\tSkipped existing completion: ', complete);
-      }
+      logger.debug('\t\tSkipped existing completion: ', complete);
       return;
     }
 
@@ -425,9 +422,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     item.documentation = info ? new vscode.MarkdownString(info) : undefined;
     item.range = range;
 
-    if (exceedinglyVerbose) {
-      logger.info('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
-    }
+    logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
     items.set(complete, item);
   }
 
@@ -438,18 +433,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
     }
 
     if (items.has(complete)) {
-      if (exceedinglyVerbose) {
-        logger.info('\t\tSkipped existing completion: ', complete);
-      }
+      logger.debug('\t\tSkipped existing completion: ', complete);
       return;
     }
 
     const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Property);
     item.documentation = info ? new vscode.MarkdownString(info) : undefined;
 
-    if (exceedinglyVerbose) {
-      logger.info('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
-    }
+    logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
     items.set(complete, item);
   }
 
@@ -458,17 +449,13 @@ class CompletionDict implements vscode.CompletionItemProvider {
     if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(typeName) > -1) {
       return;
     }
-    if (exceedinglyVerbose) {
-      logger.info('Building Type: ', typeName, 'depth: ', depth, 'prefix: ', prefix);
-    }
+    logger.debug('Building Type: ', typeName, 'depth: ', depth, 'prefix: ', prefix);
     const entry = this.typeDict.get(typeName);
     if (entry === undefined) {
       return;
     }
     if (depth > 1) {
-      if (exceedinglyVerbose) {
-        logger.info('\t\tMax depth reached, returning');
-      }
+      logger.debug('\t\tMax depth reached, returning');
       return;
     }
 
@@ -477,9 +464,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     // }
 
     if (items.size > 1000) {
-      if (exceedinglyVerbose) {
-        logger.info('\t\tMax count reached, returning');
-      }
+      logger.debug('\t\tMax count reached, returning');
       return;
     }
 
@@ -490,9 +475,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       this.addItem(items, literal);
     }
     if (entry.supertype !== undefined) {
-      if (exceedinglyVerbose) {
-        logger.info('Recursing on supertype: ', entry.supertype);
-      }
+      logger.debug('Recursing on supertype: ', entry.supertype);
       this.buildType(typeName, entry.supertype, items, depth /*  + 1 */);
     }
   }
@@ -523,22 +506,16 @@ class CompletionDict implements vscode.CompletionItemProvider {
     const elementNameCompletion = (parentName: string, parentHierarchy: string[]) => {
       const possibleElements = xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
       if (possibleElements !== undefined) {
-        if (exceedinglyVerbose) {
-          logger.info(`Possible elements for ${parentName}:`, possibleElements);
-        }
+        logger.debug(`Possible elements for ${parentName}:`, possibleElements);
         const currentLinePrefix =  document.lineAt(position).text.substring(0, position.character);
         const startTagIndex = currentLinePrefix.lastIndexOf('<');
         if (startTagIndex === -1) {
-          if (exceedinglyVerbose) {
-            logger.info('No start tag found in current line prefix:', currentLinePrefix);
-          }
+          logger.debug('No start tag found in current line prefix:', currentLinePrefix);
           return undefined; // Skip if no start tag found
         }
         const startTagInsidePrefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
         if (startTagInsidePrefix.includes(' ')) {
-          if (exceedinglyVerbose) {
-            logger.info('Start tag inside prefix contains space, skipping:', startTagInsidePrefix);
-          }
+          logger.debug('Start tag inside prefix contains space, skipping:', startTagInsidePrefix);
           return undefined; // Skip if the start tag inside prefix contains a space
         }
         for (const [value, info] of possibleElements.entries()) {
@@ -549,17 +526,13 @@ class CompletionDict implements vscode.CompletionItemProvider {
         return this.makeCompletionList(items);
         // return new vscode.CompletionList(Array.from(items.values()), false);
       } else {
-        if (exceedinglyVerbose) {
-          logger.info('No possible elements found for:', parentName);
-        }
+        logger.debug('No possible elements found for:', parentName);
       }
     }
 
     const inElementStartTag = xmlTracker.isInElementStartTag(document, position);
     if (inElementStartTag) {
-      if (exceedinglyVerbose) {
-        logger.info(`Completion requested in element: ${inElementStartTag.name}`);
-      }
+      logger.debug(`Completion requested in element: ${inElementStartTag.name}`);
 
       const elementByName = xmlTracker.isInElementName(document, position);
       if (elementByName) {
@@ -575,8 +548,8 @@ class CompletionDict implements vscode.CompletionItemProvider {
 
       // Check if we're in an attribute value for context-aware completions
       const attributeRange = xmlTracker.isInAttributeValue(document, position);
-      if (attributeRange && exceedinglyVerbose) {
-        logger.info(`Completion requested in attribute: ${attributeRange.elementName}.${attributeRange.name}`);
+      if (attributeRange) {
+        logger.debug(`Completion requested in attribute: ${attributeRange.elementName}.${attributeRange.name}`);
       }
       if (attributeRange === undefined) {
         if (elementAttributes !== undefined) {
@@ -628,16 +601,12 @@ class CompletionDict implements vscode.CompletionItemProvider {
       }
       const interesting = findRelevantPortion(textToProcess);
       if (interesting === null) {
-        if (exceedinglyVerbose) {
-          logger.info('no relevant portion detected');
-        }
+        logger.debug('no relevant portion detected');
         return this.keywordItems;
       }
       let prevToken = interesting[0];
       const newToken = interesting[1];
-      if (exceedinglyVerbose) {
-        logger.info('Previous token: ', interesting[0], ' New token: ', interesting[1]);
-      }
+      logger.debug('Previous token: ', interesting[0], ' New token: ', interesting[1]);
       // If we have a previous token & it's in the typeDictionary or a property with type, only use that's entries
       if (prevToken !== '') {
         prevToken = this.typeDict.has(prevToken)
@@ -646,9 +615,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
             ? this.allProp.get(prevToken) || ''
             : '';
         if (prevToken === undefined || prevToken === '') {
-          if (exceedinglyVerbose) {
-            logger.info('Missing previous token!');
-          }
+          logger.debug('Missing previous token!');
           return newToken.length > 0
             ? new vscode.CompletionList(
                 this.defaultCompletions.items.filter((item) => {
@@ -659,18 +626,14 @@ class CompletionDict implements vscode.CompletionItemProvider {
               )
             : this.defaultCompletions;
         } else {
-          if (exceedinglyVerbose) {
-            logger.info(`Matching on type: ${prevToken}!`);
-          }
+          logger.debug(`Matching on type: ${prevToken}!`);
           this.buildType('', prevToken, items, 0);
           return this.makeCompletionList(items);
         }
       }
       // Ignore tokens where all we have is a short string and no previous data to go off of
       if (prevToken === '' && newToken === '') {
-        if (exceedinglyVerbose) {
-          logger.info('Ignoring short token without context!');
-        }
+        logger.debug('Ignoring short token without context!');
         return undefined;
       }
       // Now check for the special hard to complete ones
@@ -692,9 +655,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
       //   }
       // }
 
-      if (exceedinglyVerbose) {
-        logger.info('Trying fallback');
-      }
+      logger.debug('Trying fallback');
       // Otherwise fall back to looking at keys of the typeDictionary for the new string
       for (const key of this.typeDict.keys()) {
         if (!key.startsWith(newToken)) {
@@ -706,9 +667,7 @@ class CompletionDict implements vscode.CompletionItemProvider {
     } else {
       const inElementRange = xmlTracker.isInElement(document, position);
       if (inElementRange) {
-        if (exceedinglyVerbose) {
-          logger.info(`Completion requested in element range: ${inElementRange.name}`);
-        }
+        logger.debug(`Completion requested in element range: ${inElementRange.name}`);
         return elementNameCompletion(inElementRange.name, inElementRange.hierarchy);
       }
     }
@@ -1277,18 +1236,14 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
   let languageSubId: string = '';
 
   if (document.languageId !== 'xml') {
-    if (exceedinglyVerbose) {
-      logger.info(`Document ${document.uri.toString()} is not recognized as a xml.`);
-    }
+    logger.debug(`Document ${document.uri.toString()} is not recognized as a xml.`);
     return languageSubId; // Skip if the document is not recognized as a xml
   }
 
   const scriptMetaData = scriptsMetadata.get(document)!;
   if (scriptMetaData && scriptMetaData.scheme) {
     languageSubId = scriptMetaData.scheme;
-    if (exceedinglyVerbose) {
-      logger.info(`Document ${document.uri.toString()} recognized as script type: ${languageSubId}`);
-    }
+    logger.debug(`Document ${document.uri.toString()} recognized as script type: ${languageSubId}`);
     return languageSubId; // Return the cached type if available
   }
 
@@ -1316,9 +1271,7 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
     } else {
         scriptMetaData.scheme = languageSubId;
     }
-    if (exceedinglyVerbose) {
-      logger.info(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
-    }
+    logger.debug(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
   }
 
   return languageSubId;
@@ -1608,9 +1561,12 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   // Set diagnostics for the document
   diagnosticCollection.set(document.uri, diagnostics);
   logger.info(`Document ${document.uri.toString()} tracked.`);
+  // setLoggerLevel('info'); // Set logger level to info for normal operation
+  logger.debug(`hidden`);
   logger.debug(`Diagnostics for ${document.uri.toString()}:`, diagnostics.entries.length, 'diagnostics found.');
-  logger.level = 'debug'; // Reset logger level to debug after processing
+  // setLoggerLevel('debug'); // Reset logger level to debug after processing
   logger.debug(`Document ${document.uri.toString()} processed with ${xmlElements.length} elements.`);
+  // setLoggerLevel('info'); // Set logger level to info for normal operation
 }
 
 const completionProvider = new CompletionDict();
@@ -1649,9 +1605,7 @@ function escapeRegex(text: string) {
 
 function processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
   const name = prop.$.name;
-  if (exceedinglyVerbose) {
-    logger.info('\tProperty read: ', name);
-  }
+  logger.debug('\tProperty read: ', name);
   definitionProvider.addPropertyLocation(rawData, name, parent, parentType);
   completionProvider.addProperty(parent, name, prop.$.type, prop.$.result);
 }
@@ -1660,9 +1614,7 @@ function processKeyword(rawData: string, e: Keyword) {
   const name = e.$.name;
   definitionProvider.addNonPropertyLocation(rawData, name, 'keyword');
   completionProvider.addDescription(name, e.$.description);
-  if (exceedinglyVerbose) {
-    logger.info('Keyword read: ' + name);
-  }
+  logger.debug('Keyword read: ' + name);
 
   if (e.import !== undefined) {
     const imp = e.import[0];
@@ -1739,9 +1691,7 @@ interface Datatype {
 function processDatatype(rawData: any, e: Datatype) {
   const name = e.$.name;
   definitionProvider.addNonPropertyLocation(rawData, name, 'datatype');
-  if (exceedinglyVerbose) {
-    logger.info('Datatype read: ' + name);
-  }
+  logger.debug('Datatype read: ' + name);
   if (e.property === undefined) {
     return;
   }
@@ -2019,10 +1969,8 @@ function generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes
       d.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord)) // Check if any property name includes hoverWord
   );
 
-  if (debug) {
-    logger.info('matchingKeyNames:', matchingKeyNames);
-    logger.info('matchingDatatypes:', matchingDatatypes);
-  }
+  logger.debug('matchingKeyNames:', matchingKeyNames);
+  logger.debug('matchingDatatypes:', matchingDatatypes);
 
   // Define the type for the grouped matches
   interface GroupedMatch {
@@ -2147,16 +2095,18 @@ export function activate(context: vscode.ExtensionContext) {
   if (!config || !validateSettings(config)) {
     return;
   }
+  extensionsFolder = config.get('extensionsFolder') || '';
+  if (config.get('exceedinglyVerbose') || false) {
+    isDebugEnabled = true;
+    setLoggerLevel('debug'); // Set logger level to debug for detailed output
+  } else {
+    setLoggerLevel('info'); // Set logger level to info for normal operation
+  }
+  logger.debug('X4CodeComplete activation started.');
 
   rootpath = config.get('unpackedFileLocation') || '';
-  extensionsFolder = config.get('extensionsFolder') || '';
-  exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
-  scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
 
-  logger.debug('X4CodeComplete activated with settings');
-  logger.level = 'debug'; // Set logger level to debug for detailed output
-  logger.debug('X4CodeComplete activated with settings 2');
-  logger.level = 'info'; // Set logger level to info for normal operation
+  scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
   // Create diagnostic collection
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
@@ -2241,9 +2191,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             if (pageId && textId) {
-              if (exceedinglyVerbose) {
-                logger.info(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
-              }
+              logger.debug(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
               const languageText = findLanguageText(pageId, textId);
               if (languageText) {
                 const hoverText = new vscode.MarkdownString();
@@ -2336,9 +2284,7 @@ export function activate(context: vscode.ExtensionContext) {
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
 
         if (variableAtPosition !== null) {
-          if (exceedinglyVerbose) {
-            logger.info(`Hovering over variable: ${variableAtPosition.name}`);
-          }
+          logger.debug(`Hovering over variable: ${variableAtPosition.name}`);
           // Generate hover text for the variable
           const hoverText = new vscode.MarkdownString();
           hoverText.appendMarkdown(
@@ -2366,13 +2312,11 @@ export function activate(context: vscode.ExtensionContext) {
         const parts = slicedPhrase.split('.');
         let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
 
-        if (debug) {
-          logger.info('Hover word: ', hoverWord);
-          logger.info('Phrase: ', phrase);
-          logger.info('Sliced phrase: ', slicedPhrase);
-          logger.info('Parts: ', parts);
-          logger.info('First part: ', firstPart);
-        }
+        logger.debug('Hover word: ', hoverWord);
+        logger.debug('Phrase: ', phrase);
+        logger.debug('Sliced phrase: ', slicedPhrase);
+        logger.debug('Parts: ', parts);
+        logger.debug('First part: ', firstPart);
 
         let hoverText = '';
         while (hoverText === '' && parts.length > 0) {
@@ -2411,12 +2355,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (scheme === aiScriptId) {
         const definition = variableTracker.getVariableDefinition(variableAtPosition.name, document);
         if (definition) {
-          if (exceedinglyVerbose) {
-            logger.info(
-              `Definition found for variable: ${variableAtPosition.name}: ${definition.range.start.line + 1}`
-            );
-            logger.info(`Locations:`, variableAtPosition.locations);
-          }
+          logger.debug(
+            `Definition found for variable: ${variableAtPosition.name}: ${definition.range.start.line + 1}`
+          );
+          logger.debug(`Locations:`, variableAtPosition.locations);
           return definition;
         }
       }
@@ -2429,9 +2371,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Check if we're on an action (only in AI scripts)
       const actionAtPosition = actionTracker.getActionAtPosition(document, position);
       if (actionAtPosition !== null) {
-        if (exceedinglyVerbose) {
-          logger.info(`Definition found for action: ${actionAtPosition.name}`);
-        }
+        logger.debug(`Definition found for action: ${actionAtPosition.name}`);
 
         // If we're already at the definition, show references instead
         if (actionAtPosition.isDefinition) {
@@ -2446,9 +2386,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Check if we're on a label
       const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
       if (labelAtPosition !== null) {
-        if (exceedinglyVerbose) {
-          logger.info(`Definition found for label: ${labelAtPosition.name}`);
-        }
+        logger.debug(`Definition found for label: ${labelAtPosition.name}`);
 
         // If we're already at the definition, show references instead
         if (labelAtPosition.isDefinition) {
@@ -2594,9 +2532,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidCloseTextDocument((document) => {
     diagnosticCollection.delete(document.uri);
     unTrackScriptDocument(document);
-    if (exceedinglyVerbose) {
-      logger.info(`Removed cached data for document: ${document.uri.toString()}`);
-    }
+    logger.debug(`Removed cached data for document: ${document.uri.toString()}`);
   });
 
   // React to configuration changes
@@ -2609,7 +2545,15 @@ export function activate(context: vscode.ExtensionContext) {
         // Update settings
         rootpath = config.get('unpackedFileLocation') || '';
         extensionsFolder = config.get('extensionsFolder') || '';
-        exceedinglyVerbose = config.get('exceedinglyVerbose') || false;
+        const debugValue = config.get('exceedinglyVerbose') || false ? true : false;
+        if (debugValue !== isDebugEnabled) {
+          isDebugEnabled = debugValue;
+          if (isDebugEnabled) {
+            setLoggerLevel('debug'); // Set logger level to debug for detailed output
+          } else {
+            setLoggerLevel('info'); // Set logger level to info for normal operation
+          }
+        }
 
         // Reload language files if paths have changed or reloadLanguageData is toggled
         if (
@@ -2754,19 +2698,15 @@ export function activate(context: vscode.ExtensionContext) {
         // Check if we're on a variable
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
-          if (exceedinglyVerbose) {
-            logger.info(`References found for variable: ${variableAtPosition.name}`);
-            logger.info(`Locations:`, variableAtPosition.locations);
-          }
+          logger.debug(`References found for variable: ${variableAtPosition.name}`);
+          logger.debug(`Locations:`, variableAtPosition.locations);
           return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
         }
         if (scheme == aiScriptId) {
           // Check if we're on an action
           const actionAtPosition = actionTracker.getActionAtPosition(document, position);
           if (actionAtPosition !== null) {
-            if (exceedinglyVerbose) {
-              logger.info(`References found for action: ${actionAtPosition.name}`);
-            }
+            logger.debug(`References found for action: ${actionAtPosition.name}`);
 
             const references = actionTracker.getActionReferences(actionAtPosition.name, document);
             const definition = actionTracker.getActionDefinition(actionAtPosition.name, document);
@@ -2781,9 +2721,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Check if we're on a label
           const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
           if (labelAtPosition !== null) {
-            if (exceedinglyVerbose) {
-              logger.info(`References found for label: ${labelAtPosition.name}`);
-            }
+            logger.debug(`References found for label: ${labelAtPosition.name}`);
 
             const references = labelTracker.getLabelReferences(labelAtPosition.name, document);
             const definition = labelTracker.getLabelDefinition(labelAtPosition.name, document);
@@ -2817,22 +2755,18 @@ export function activate(context: vscode.ExtensionContext) {
             locations.push(variableAtPosition.definition);
           }
 
-          if (exceedinglyVerbose) {
-            // Debug log: Print old name, new name, and locations
-            logger.info(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
-            logger.info(`Variable type: ${variableType}`);
-            logger.info(`Locations to update:`, locations);
-          }
+          // Debug log: Print old name, new name, and locations
+          logger.debug(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
+          logger.debug(`Variable type: ${variableType}`);
+          logger.debug(`Locations to update:`, locations);
           const workspaceEdit = new vscode.WorkspaceEdit();
           locations.forEach((location) => {
             // Debug log: Print each edit
             const rangeText = location.range ? document.getText(location.range) : '';
             const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-            if (exceedinglyVerbose) {
-              logger.info(
-                `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
-              );
-            }
+            logger.debug(
+              `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
+            );
             workspaceEdit.replace(location.uri, location.range, replacementText);
           });
 
@@ -2843,9 +2777,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Debug log: No variable name found
-        if (exceedinglyVerbose) {
-          logger.info(`No variable name found at position: ${position}`);
-        }
+        logger.debug(`No variable name found at position: ${position}`);
         return undefined;
       },
     })
