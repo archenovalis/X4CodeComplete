@@ -17,6 +17,7 @@ let isDebugEnabled = false;
 let rootpath: string;
 let scriptPropertiesPath: string;
 let extensionsFolder: string;
+let forcedCompletion: boolean = false;
 let languageData: Map<string, Map<string, string>> = new Map();
 let xsdReference: XsdReference;
 
@@ -37,167 +38,6 @@ function scriptMetadataInit(document: vscode.TextDocument, reInit: boolean = fal
     }
   }
   return undefined;
-}
-
-// Extract variable completion logic into a function
-function getVariableCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  if (getDocumentScriptType(document) === '') {
-    return []; // Skip if the document is not valid
-  }
-
-  // Get the current line up to the cursor position
-  const linePrefix = document.lineAt(position).text.substring(0, position.character);
-
-  // First scenario: $ was just typed
-  if (linePrefix.endsWith('$')) {
-    return variableTracker.getAllVariablesForDocument(document);
-  }
-
-  // Second scenario: We're editing an existing variable
-  // Find the last $ character before the cursor
-  const lastDollarIndex = linePrefix.lastIndexOf('$');
-  if (lastDollarIndex >= 0) {
-    // Check if we're within a variable (no whitespace or special chars between $ and cursor)
-    const textBetweenDollarAndCursor = linePrefix.substring(lastDollarIndex + 1);
-
-    // If this text is a valid variable name part
-    if (/^[a-zA-Z0-9_]*$/.test(textBetweenDollarAndCursor)) {
-      // Get the partial variable name we're typing (without the $)
-      const partialName = textBetweenDollarAndCursor;
-      // Get all variables and filter them by the current prefix
-      const allVariables = variableTracker.getAllVariablesForDocument(document, partialName);
-      // Filter variables that match the partial name
-      return allVariables.filter((item) => item.label.toString().toLowerCase().startsWith(partialName.toLowerCase()));
-    }
-  }
-
-  return []; // No completions if not in a variable context
-}
-
-// Extract label completion logic into a function
-function getLabelCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  const scheme = getDocumentScriptType(document);
-  if (scheme !== aiScriptId) {
-    return [];
-  }
-
-  // Check if we're inside an attribute that might use labels
-  const lineText = document.lineAt(position).text;
-  const textBefore = lineText.substring(0, position.character);
-
-  // First check for element+attribute combinations using regex patterns
-  for (const [element, attributes] of Object.entries(labelElementAttributeMap)) {
-    for (const attr of attributes) {
-      // Pattern to match <element attr="partial_text| or <element attr='partial_text|
-      const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-      const match = elementAttrPattern.exec(textBefore);
-      if (match) {
-        const partialText = match[1];
-        const allLabels = labelTracker.getAllLabelsForDocument(document);
-
-        // If there's partial text, filter labels that start with it
-        if (partialText) {
-          let filtered = allLabels.filter(
-            (item) =>
-              item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
-              item.label.toString() !== partialText
-          );
-          if (filtered.length === 0 && partialText.length > 0) {
-            // Fallback: match all items where label contains all partialText chars in order (not necessarily consecutive)
-            const pattern = partialText
-              .split('')
-              .map((c) => escapeRegex(c))
-              .join('.*?');
-            const regex = new RegExp(pattern, 'i');
-            filtered = allLabels.filter((item) => regex.test(item.label.toString()));
-          }
-          return filtered;
-        }
-
-        // Return all labels if no partial text
-        return allLabels;
-      }
-    }
-  }
-
-  return [];
-}
-
-// Extract action completion logic into a function
-function getActionCompletions(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  const scheme = getDocumentScriptType(document);
-  if (scheme !== aiScriptId) {
-    return [];
-  }
-
-  // Check if we're inside an attribute that might use actions
-  const lineText = document.lineAt(position).text;
-  const textBefore = lineText.substring(0, position.character);
-
-  // Check for being inside an action-using attribute value
-  for (const [element, attributes] of Object.entries(actionElementAttributeMap)) {
-    for (const attr of attributes) {
-      // Pattern to match <element attr="partial_text| or <element attr='partial_text|
-      const elementAttrPattern = new RegExp(`<${element}[^>]*\\s+${attr}=["']([^"']*)$`);
-      const match = elementAttrPattern.exec(textBefore);
-      if (match) {
-        const partialText = match[1];
-        const allActions = actionTracker.getAllActionsForDocument(document);
-
-        // If there's partial text, filter actions that start with it
-        if (partialText) {
-          let filtered = allActions.filter(
-            (item) =>
-              item.label.toString().toLowerCase().startsWith(partialText.toLowerCase()) &&
-              item.label.toString() !== partialText
-          );
-          if (filtered.length === 0 && partialText.length > 0) {
-            // Fallback: match all items where actions contains all partialText chars in order (not necessarily consecutive)
-            const pattern = partialText
-              .split('')
-              .map((c) => escapeRegex(c))
-              .join('.*?');
-            const regex = new RegExp(pattern, 'i');
-            filtered = allActions.filter((item) => regex.test(item.label.toString()));
-          }
-          return filtered;
-        }
-
-        // Return all actions if no partial text
-        return allActions;
-      }
-    }
-  }
-
-  return [];
-}
-
-// Function to check if we're in a specialized completion context
-function specializedCompletionContext(
-  document: vscode.TextDocument,
-  position: vscode.Position
-): vscode.CompletionItem[] {
-  const attributeRange = xmlTracker.isInAttributeValue(document, position);
-  if (attributeRange) {
-    const elementName = attributeRange.elementName;
-    const attributeName = attributeRange.name;
-    // Check if any of the specialized completion functions return results
-    const variableCompletions = getVariableCompletions(document, position);
-    if (variableCompletions.length > 0) {
-      return variableCompletions;
-    }
-
-    const labelCompletions = getLabelCompletions(document, position);
-    if (labelCompletions.length > 0) {
-      return labelCompletions;
-    }
-
-    const actionCompletions = getActionCompletions(document, position);
-    if (actionCompletions.length > 0) {
-      return actionCompletions;
-    }
-  }
-  return [];
 }
 
 // Flag to indicate if specialized completion is active
@@ -236,7 +76,7 @@ const labelElementAttributeMap: { [element: string]: string[] } = {
 };
 
 // Map of elements and their attributes that can contain action references
-const actionElementAttributeMap: { [element: string]: string[] } = {
+const actionsElementAttributeMap: { [element: string]: string[] } = {
   include_interrupt_actions: ['ref'],
 };
 
@@ -303,7 +143,7 @@ class TypeEntry {
   }
 }
 
-class CompletionDict implements vscode.CompletionItemProvider {
+class CompletionDict {
   typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   allProp: Map<string, string> = new Map<string, string>();
   allPropItems: vscode.CompletionItem[] = [];
@@ -526,134 +366,6 @@ class CompletionDict implements vscode.CompletionItemProvider {
     return this.makeCompletionList(items);
   }
 
-  provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context: vscode.CompletionContext) {
-    const schema = getDocumentScriptType(document);
-    if (schema == '') {
-      return undefined; // Skip if the document is not valid
-    }
-
-    const items = new Map<string, vscode.CompletionItem>();
-    const currentLine = position.line;
-
-    const elementNameCompletion = (parentName: string, parentHierarchy: string[], range?: vscode.Range) => {
-      const possibleElements = xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
-      if (possibleElements !== undefined) {
-        logger.debug(`Possible elements for ${parentName}:`, possibleElements);
-        const currentLinePrefix =  document.lineAt(position).text.substring(0, position.character);
-        const startTagIndex = currentLinePrefix.lastIndexOf('<');
-        if (startTagIndex === -1) {
-          logger.debug('No start tag found in current line prefix:', currentLinePrefix);
-          return undefined; // Skip if no start tag found
-        }
-        const startTagInsidePrefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
-        if (startTagInsidePrefix.includes(' ')) {
-          logger.debug('Start tag inside prefix contains space, skipping:', startTagInsidePrefix);
-          return undefined; // Skip if the start tag inside prefix contains a space
-        }
-        for (const [value, info] of possibleElements.entries()) {
-          if (!startTagInsidePrefix || value.startsWith(startTagInsidePrefix)) {
-            this.addElement(items, `${value}`, info, range);
-          }
-        }
-        return this.makeCompletionList(items);
-        // return new vscode.CompletionList(Array.from(items.values()), false);
-      } else {
-        logger.debug('No possible elements found for:', parentName);
-      }
-    }
-
-    const inElementStartTag = xmlTracker.elementStartTagInPosition(document, position);
-    if (inElementStartTag) {
-      logger.debug(`Completion requested in element: ${inElementStartTag.name}`);
-
-      const elementByName = xmlTracker.elementNameInPosition(document, position);
-      if (elementByName) {
-        const parent: ElementRange = xmlTracker.getParentElement(document, elementByName);
-        return elementNameCompletion(parent.name, parent.hierarchy, inElementStartTag.nameRange);
-      }
-
-      const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
-        schema,
-        inElementStartTag.name,
-        inElementStartTag.hierarchy
-      );
-
-      // Check if we're in an attribute value for context-aware completions
-      const attributeRange = xmlTracker.isInAttributeValue(document, position);
-      if (attributeRange) {
-        logger.debug(`Completion requested in attribute: ${attributeRange.elementName}.${attributeRange.name}`);
-      }
-      if (attributeRange === undefined) {
-        if (elementAttributes !== undefined) {
-          for (const attr of elementAttributes) {
-            if (!inElementStartTag.attributes.some((a) => a.name === attr.name)) {
-              CompletionDict.addItem(
-                items,
-                attr.name,
-                `${attr.annotation || ''}\n\n**Required**: ${attr.required ? '**Yes**' : 'No'}\n\n**Type**: ${attr.type || 'unknown'}`
-              );
-            }
-          }
-          return this.makeCompletionList(items);
-        } else {
-          return undefined; // Skip if not in an attribute value
-        }
-      }
-      const attributeValues: Map<string, string> = elementAttributes
-        ? XsdReference.getAttributePossibleValues(elementAttributes, attributeRange.name)
-        : new Map<string, string>();
-      if (attributeValues) {
-        // If the attribute has predefined values, return them as completions
-        const items = new Map<string, vscode.CompletionItem>();
-        for (const [value, info] of attributeValues.entries()) {
-          CompletionDict.addItem(items, value, info);
-        }
-        return this.makeCompletionList(items);
-      }
-
-      // Check if we're in a specialized completion context (variables, labels, actions)
-      const specializedCompletion = specializedCompletionContext(document, position);
-      if (specializedCompletion.length > 0) {
-        return specializedCompletion;
-      }
-
-      const documentLine = document.lineAt(position);
-      let textToProcess = document.lineAt(position).text;
-      let textToProcessAfter = '';
-      if (currentLine === attributeRange.valueRange.start.line && currentLine === attributeRange.valueRange.end.line) {
-        // If we're on the same line as the attribute value, use the current line text
-        if (position.character < attributeRange.valueRange.end.character) {
-          // If the position is before the end of the attribute value, use the rest of the line
-          textToProcessAfter = textToProcess.substring(position.character, attributeRange.valueRange.end.character);
-        }
-        textToProcess = textToProcess.substring(attributeRange.valueRange.start.character, position.character);
-      } else if (currentLine === attributeRange.valueRange.start.line) {
-        // If we're on the start line of the attribute value, use the text from the start character to the end of the line
-        if (position.character < attributeRange.valueRange.start.character) {
-          textToProcessAfter = textToProcess.substring(position.character);
-        }
-        textToProcess = textToProcess.substring(attributeRange.valueRange.start.character, position.character);
-      } else if (currentLine === attributeRange.valueRange.end.line) {
-        if (position.character < attributeRange.valueRange.end.character) {
-          textToProcessAfter = textToProcess.substring(position.character, attributeRange.valueRange.end.character);
-        }
-        textToProcess = textToProcess.substring(0, position.character);
-      } else {
-         if (position.character < documentLine.range.end.character) {
-            textToProcessAfter = textToProcess.substring(position.character);
-         }
-         textToProcess = textToProcess.substring(0, position.character);
-      }
-      return this.processText(textToProcess);
-    } else {
-      const inElementRange = xmlTracker.elementInPosition(document, position);
-      if (inElementRange) {
-        logger.debug(`Completion requested in element range: ${inElementRange.name}`);
-        return elementNameCompletion(inElementRange.name, inElementRange.hierarchy);
-      }
-    }
-    return undefined; // Skip if not in an element range
-  }
 }
 
 class LocationDict implements vscode.DefinitionProvider {
@@ -911,34 +623,6 @@ class VariableTracker {
     return result;
   }
 
-  getAllVariablesForDocument(document: vscode.TextDocument, exclude: string = ''): vscode.CompletionItem[] {
-    const result: vscode.CompletionItem[] = [];
-    // Navigate through the map levels
-    const variablesTypes = this.documentVariables.get(document);
-    if (!variablesTypes) return result;
-
-    const scheme = getDocumentScriptType(document);
-    // Process all variable types
-    for (const [variableType, typeMap] of variablesTypes) {
-      // Process all variables
-      for (const [variableName, variableData] of typeMap) {
-        if (variableName === exclude) {
-          continue;
-        }
-
-        const totalLocations = variableData.locations.length;
-
-        const item = new vscode.CompletionItem(variableName, vscode.CompletionItemKind.Variable);
-        item.detail = `${scriptNodes[scheme]?.info || 'Script'} ${variableTypes[variableType] || 'Variable'}`;
-        item.documentation = new vscode.MarkdownString(`Used ${totalLocations} time${totalLocations !== 1 ? 's' : ''}`);
-
-        item.insertText = variableName;
-        result.push(item);
-      }
-    }
-
-    return result;
-  }
 }
 
 const variableTracker = new VariableTracker();
@@ -1052,32 +736,6 @@ class LabelTracker {
       // Only add the item if it matches the prefix
         result.set(name, new vscode.MarkdownString(`Label in ${scriptNodes[schema]?.info || 'Script'}`));
       }
-    }
-
-    return result;
-  }
-
-  getAllLabelsForDocument(document: vscode.TextDocument): vscode.CompletionItem[] {
-    const result: vscode.CompletionItem[] = [];
-    const documentData = this.documentLabels.get(document);
-    if (!documentData) {
-      return result;
-    }
-
-    const schema = getDocumentScriptType(document);
-
-    // Process all labels
-    for (const [name, location] of documentData.labels.entries()) {
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Reference);
-      item.detail = `Label in ${scriptNodes[schema]?.info || 'Script'}`;
-
-      // Count references
-      const referenceCount = documentData.references.get(name)?.length || 0;
-      item.documentation = new vscode.MarkdownString(
-        `Label \`${name}\` referenced ${referenceCount} time${referenceCount !== 1 ? 's' : ''}`
-      );
-
-      result.push(item);
     }
 
     return result;
@@ -1205,30 +863,6 @@ class ActionsTracker {
     return result;
   }
 
-  getAllActionsForDocument(document: vscode.TextDocument): vscode.CompletionItem[] {
-    const result: vscode.CompletionItem[] = [];
-    const documentData = this.documentActions.get(document);
-    if (!documentData) {
-      return result;
-    }
-
-    // Process all actions
-    for (const [name, location] of documentData.actions.entries()) {
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
-      item.detail = `AI Script Action`;
-
-      // Count references
-      const referenceCount = documentData.references.get(name)?.length || 0;
-      item.documentation = new vscode.MarkdownString(
-        `Action \`${name}\` referenced ${referenceCount} time${referenceCount !== 1 ? 's' : ''}`
-      );
-
-      result.push(item);
-    }
-
-    return result;
-  }
-
   clearActionsForDocument(document: vscode.TextDocument): void {
     this.documentActions.delete(document);
   }
@@ -1292,11 +926,18 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
 
   // ! TODO: Add a ranges to completions items
 
-  private static makeCompletionList(items: CompletionsMap, isIncomplete: boolean = true): vscode.CompletionList {
+  private static emptyCompletion = new vscode.CompletionList([], false);
+
+  private static makeCompletionList(items: CompletionsMap, prefix: string = '', isIncomplete: boolean = true): vscode.CompletionList {
+    if (items.size === 0) {
+      return this.emptyCompletion;
+    } else if (items.size === 1 && prefix !== '' && items.has(prefix)) {
+      return this.emptyCompletion;
+    }
     return new vscode.CompletionList(Array.from(items.values()), isIncomplete);
   }
 
-  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, parentName: string, parentHierarchy: string[], range?: vscode.Range): vscode.CompletionList | undefined {
+  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: ElementRange, parentName: string, parentHierarchy: string[], range?: vscode.Range): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     const possibleElements = this.xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
     if (possibleElements !== undefined) {
@@ -1305,26 +946,29 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       const startTagIndex = currentLinePrefix.lastIndexOf('<');
       if (startTagIndex === -1) {
         logger.debug('No start tag found in current line prefix:', currentLinePrefix);
-        return undefined; // Skip if no start tag found
+        return ScriptCompletion.emptyCompletion;; // Skip if no start tag found
       }
-      const startTagInsidePrefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
-      if (startTagInsidePrefix.includes(' ')) {
-        logger.debug('Start tag inside prefix contains space, skipping:', startTagInsidePrefix);
-        return undefined; // Skip if the start tag inside prefix contains a space
+      let prefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
+      if (prefix.includes(' ')) {
+        logger.debug('Start tag inside prefix contains space, skipping:', prefix);
+        return ScriptCompletion.emptyCompletion;; // Skip if the start tag inside prefix contains a space
+      }
+      if (prefix === '' && element !== undefined && element.name !== '') {
+        prefix = element.name;
       }
       for (const [value, info] of possibleElements.entries()) {
-        if (!startTagInsidePrefix || value.startsWith(startTagInsidePrefix)) {
+        if (!prefix || value.startsWith(prefix)) {
           ScriptCompletion.addItem(items, 'element', `${value}`, new vscode.MarkdownString(info), range);
         }
       }
-      return ScriptCompletion.makeCompletionList(items);
+      return ScriptCompletion.makeCompletionList(items, prefix);
       // return new vscode.CompletionList(Array.from(items.values()), false);
     } else {
       logger.debug('No possible elements found for:', parentName);
     }
   }
 
-  private static attributeNameCompletion(element: ElementRange, elementAttributes: EnhancedAttributeInfo[], prefix: string = '', range?: vscode.Range): vscode.CompletionList | undefined {
+  private static attributeNameCompletion(element: ElementRange, elementAttributes: EnhancedAttributeInfo[], prefix: string = '', range?: vscode.Range): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     for (const attr of elementAttributes) {
       if (!element.attributes.some((a) => a.name === attr.name) && (prefix == '' || attr.name.startsWith(prefix))) {
@@ -1338,15 +982,15 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       }
     }
     if (items.size > 0) {
-      return ScriptCompletion.makeCompletionList(items);
+      return ScriptCompletion.makeCompletionList(items, prefix);
     }
-    return undefined;
+    return this.emptyCompletion;
   }
 
   public prepareCompletion(document: vscode.TextDocument, position: vscode.Position, checkOnly: boolean, token?: vscode.CancellationToken, context?: vscode.CompletionContext): vscode.CompletionItem[] | vscode.CompletionList | undefined {
     const schema = getDocumentScriptType(document);
     if (schema == '') {
-      return undefined; // Skip if the document is not valid
+      return ScriptCompletion.emptyCompletion;; // Skip if the document is not valid
     }
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;
@@ -1363,7 +1007,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
           return []; // Return empty list if only checking
         } else {
           const parent: ElementRange = this.xmlTracker.getParentElement(document, elementByName);
-          return this.elementNameCompletion(schema, document, position, parent.name, parent.hierarchy, elementByName.nameRange);
+          return this.elementNameCompletion(schema, document, position, element, parent.name, parent.hierarchy, elementByName.nameRange);
         }
       }
 
@@ -1382,7 +1026,10 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
           return []; // Return empty list if only checking
         }
         if (elementAttributes !== undefined) {
-          const prefix = document.getText(new vscode.Range(attribute.nameRange.start, position));
+          let prefix = document.getText(new vscode.Range(attribute.nameRange.start, position));
+          if (prefix === '' && attribute.name !== '') {
+            prefix = attribute.name; // If the prefix is empty, use the current attribute name
+          }
           return ScriptCompletion.attributeNameCompletion(element, elementAttributes, prefix, attribute.nameRange);
         }
       }
@@ -1392,58 +1039,69 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       if (attribute) {
         logger.debug(`Completion requested in attribute value: ${attribute.elementName}.${attribute.name}`);
       }
-      if (attribute === undefined && characterAtPosition !== '=') {
+      if (attribute === undefined) {
         if (checkOnly) {
-          return []; // Return empty list if only checking
+          return undefined; // Return empty list if only checking
         }
-        if (elementAttributes !== undefined) {
+        if (characterAtPosition !== '=' && elementAttributes !== undefined) {
           return ScriptCompletion.attributeNameCompletion(element, elementAttributes);
         } else {
-          return undefined; // Skip if not in an attribute value
+          return ScriptCompletion.emptyCompletion;; // Skip if not in an attribute value
         }
       }
       if (checkOnly) {
         return []; // Return empty list if only checking
       }
 
+      const attributeValue = document.getText(attribute.valueRange);
+
       // If we're in an attribute value, we need to check for possible values
       const attributeValues: Map<string, string> = elementAttributes
         ? XsdReference.getAttributePossibleValues(elementAttributes, attribute.name)
         : new Map<string, string>();
-      if (attributeValues) {
+      if (attributeValues.size > 0) {
         // If the attribute has predefined values, return them as completions
-        const prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+        let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+        if (prefix === '' && attributeValue !== '') {
+          prefix = attributeValue; // If the prefix is empty, use the current attribute value
+        }
         for (const [value, info] of attributeValues.entries()) {
           if (prefix == '' || value.startsWith(prefix)) {
             // Only add the item if it matches the prefix
             ScriptCompletion.addItem(items, 'value', value, new vscode.MarkdownString(info), attribute.valueRange);
           }
         }
-        return ScriptCompletion.makeCompletionList(items);
+        return ScriptCompletion.makeCompletionList(items, prefix);
       }
       // Check if we're in a label or action context
-      if (schema === aiScriptId && labelElementAttributeMap[elementByName.name]?.includes(attribute.name)) {
-        const prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+      if (schema === aiScriptId && labelElementAttributeMap[element.name]?.includes(attribute.name)) {
+        let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+        if (prefix === '' && attributeValue !== '') {
+          prefix = attributeValue; // If the prefix is empty, use the current attribute value
+        }
         const labelCompletion = this.labelTracker.getAllLabelsForDocumentMap(document, prefix);
         if (labelCompletion.size > 0) {
           for (const [labelName, info] of labelCompletion.entries()) {
             ScriptCompletion.addItem(items, 'label', labelName, info, attribute.valueRange);
           }
-          return ScriptCompletion.makeCompletionList(items);
+          return ScriptCompletion.makeCompletionList(items, prefix);
         }
-        return undefined; // Skip if no labels found
+        return ScriptCompletion.emptyCompletion;; // Skip if no labels found
       }
       // Check if we're in an action context
-      if (schema === aiScriptId && actionElementAttributeMap[elementByName.name]?.includes(attribute.name)) {
-        const prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+      if (schema === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attribute.name)) {
+        let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+        if (prefix === '' && attributeValue !== '') {
+          prefix = attributeValue; // If the prefix is empty, use the current attribute value
+        }
         const actionCompletion = this.actionsTracker.getAllActionsForDocumentMap(document, prefix);
         if (actionCompletion.size > 0) {
           for (const [actionName, info] of actionCompletion.entries()) {
             ScriptCompletion.addItem(items, 'actions', actionName, info, attribute.valueRange);
           }
-          return ScriptCompletion.makeCompletionList(items);
+          return ScriptCompletion.makeCompletionList(items, prefix);
         }
-        return undefined; // Skip if no actions found
+        return ScriptCompletion.emptyCompletion; // Skip if no actions found
       }
 
       const documentLine = document.lineAt(position);
@@ -1478,7 +1136,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';
         if (prefix === '' || /^[a-zA-Z0-9_]*$/.test(prefix)) {
           let suffixLength = textToProcessAfter.length;
-          for (const breakSymbol of [' ', '.', '[', '{', ',']) {
+          for (const breakSymbol of [' ', '.', '[', ']', '{', '}', '(', ')']) {
             const breakIndex = textToProcessAfter.indexOf(breakSymbol);
             if (breakIndex >= 0 && breakIndex < suffixLength) {
               suffixLength = breakIndex;
@@ -1493,18 +1151,24 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
           for (const [variableName, info] of variableCompletion.entries()) {
             ScriptCompletion.addItem(items, 'variable', variableName, info, variableRange);
           }
-          return ScriptCompletion.makeCompletionList(items);
+          return ScriptCompletion.makeCompletionList(items, prefix);
         }
       }
       return this.scriptProperties.processText(textToProcessBefore);
     } else {
+      if (checkOnly) {
+        return undefined; // Return empty list if only checking
+      }
       const inElementRange = this.xmlTracker.elementInPosition(document, position);
       if (inElementRange) {
         logger.debug(`Completion requested in element range: ${inElementRange.name}`);
-        return this.elementNameCompletion(schema, document, position,inElementRange.name, inElementRange.hierarchy);
+        return this.elementNameCompletion(schema, document, position, undefined, inElementRange.name, inElementRange.hierarchy);
       }
     }
-    return undefined; // Skip if not in an element range
+    if (checkOnly) {
+      return undefined; // Return empty list if only checking
+    }
+    return ScriptCompletion.emptyCompletion;; // Skip if not in an element range
   }
 
   public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context?: vscode.CompletionContext
@@ -1614,7 +1278,7 @@ function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] 
   return diagnostics;
 }
 
-function trackScriptDocument(document: vscode.TextDocument, update: boolean = false): void {
+function trackScriptDocument(document: vscode.TextDocument, update: boolean = false, position?: vscode.Position): void {
   const scheme = getDocumentScriptType(document);
   if (scheme == '') {
     return; // Skip processing if the document is not valid
@@ -1740,7 +1404,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             actionTracker.addActions(attrValue, scheme, document, attr.valueRange);
           }
           // Check for action references
-          if (scheme === aiScriptId && actionElementAttributeMap[element.name]?.includes(attr.name)) {
+          if (scheme === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attr.name)) {
             actionTracker.addActionsReference(attrValue, scheme, document, attr.valueRange);
           }
 
@@ -1782,24 +1446,27 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
             // Simple version of the existing variable type detection
             const variableType = tableIsFound ? 'tableKey' : 'normal';
-            if (end.isEqual(attr.valueRange.end) && priority >= 0) {
-              variableTracker.addVariable(
-                variableType,
-                variableName,
-                scheme,
-                document,
-                new vscode.Range(start, end),
-                true, // isDefinition
-                priority
-              );
-            } else {
-              variableTracker.addVariable(
-                variableType,
-                variableName,
-                scheme,
-                document,
-                new vscode.Range(start, end)
-              );
+            const variableRange = new vscode.Range(start, end);
+            if (!(position && variableRange.contains(position))) {
+              if (end.isEqual(attr.valueRange.end) && priority >= 0) {
+                variableTracker.addVariable(
+                  variableType,
+                  variableName,
+                  scheme,
+                  document,
+                  new vscode.Range(start, end),
+                  true, // isDefinition
+                  priority
+                );
+              } else {
+                variableTracker.addVariable(
+                  variableType,
+                  variableName,
+                  scheme,
+                  document,
+                  new vscode.Range(start, end)
+                );
+              }
             }
           }
         }
@@ -2355,6 +2022,7 @@ export function activate(context: vscode.ExtensionContext) {
   logger.debug('X4CodeComplete activation started.');
 
   rootpath = config.get('unpackedFileLocation') || '';
+  forcedCompletion = config.get('forcedCompletion') || false;
 
   scriptPropertiesPath = path.join(rootpath, '/libraries/scriptproperties.xml');
   // Create diagnostic collection
@@ -2669,48 +2337,6 @@ export function activate(context: vscode.ExtensionContext) {
     return undefined;
   };
 
-  // // Register variable completion provider (when $ is typed)
-  // context.subscriptions.push(
-  //   vscode.languages.registerCompletionItemProvider(
-  //     sel,
-  //     {
-  //       provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  //         return getVariableCompletions(document, position);
-  //       },
-  //     },
-  //     '$', // Trigger character (still needed for the initial $ typing)
-  //     '.', // Trigger character for dot completion
-  //     '"'
-  //   )
-  // );
-
-  // // Register label completion provider
-  // context.subscriptions.push(
-  //   vscode.languages.registerCompletionItemProvider(
-  //     sel,
-  //     {
-  //       provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  //         return getLabelCompletions(document, position);
-  //       },
-  //     },
-  //     '"', // Trigger after quote in attribute
-  //     "'" // Trigger after single quote in attribute
-  //   )
-  // );
-
-  // // Register action completion provider for AIScript
-  // context.subscriptions.push(
-  //   vscode.languages.registerCompletionItemProvider(
-  //     sel,
-  //     {
-  //       provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
-  //         return getActionCompletions(document, position);
-  //       },
-  //     },
-  //     '"', // Trigger after quote in attribute
-  //     "'" // Trigger after single quote in attribute
-  //   )
-  // );
   logger.info('XSD schemas loaded successfully.'); // Instead of parsing all open documents, just parse the active one
   if (vscode.window.activeTextEditor) {
     const document = vscode.window.activeTextEditor.document;
@@ -2744,31 +2370,16 @@ export function activate(context: vscode.ExtensionContext) {
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor || event.document !== activeEditor.document) return;
     if (scriptMetadataInit(event.document, true)) {
-      trackScriptDocument(event.document, true); // Update the document structure
-      const cursorPos = activeEditor.selection.active;
+      if (event.contentChanges.length > 0) {
+        const cursorPos = activeEditor.selection.active;
 
-      // Check if we're in a specialized completion context
-      // Move the position one character forward if possible
-      let nextPos = cursorPos;
-      const line = event.document.lineAt(cursorPos.line);
-      if (cursorPos.character < line.text.length) {
-        nextPos = cursorPos.translate(0, 1);
-      }
-      if (xmlTracker.isInAttributeValue(event.document, nextPos) !== undefined) {
-        // Programmatically trigger suggestions
-        if (event.contentChanges.length > 0 && event.contentChanges[0].text.length > 0) {
-          // If there are content changes, trigger suggestions
-          const changeText = event.contentChanges[0].text;
-          if (
-            !changeText.includes('\n') &&
-            !changeText.includes('\r') &&
-            !changeText.includes('\t') &&
-            !changeText.includes(',') &&
-            !changeText.includes('  ')
-          ) {
-            logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
-            // vscode.commands.executeCommand('editor.action.triggerSuggest');
-          }
+        trackScriptDocument(event.document, true, cursorPos); // Update the document structure on change
+        // Check if we're in a specialized completion context
+        // Move the position one character forward if possible
+        if (forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
+          // If the completion provider is ready, trigger suggestions
+          logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
+          vscode.commands.executeCommand('editor.action.triggerSuggest');
         }
       }
     }
@@ -2795,6 +2406,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Update settings
         rootpath = config.get('unpackedFileLocation') || '';
+        forcedCompletion = config.get('forcedCompletion') || false;
         extensionsFolder = config.get('extensionsFolder') || '';
         const debugValue = config.get('exceedinglyVerbose') || false ? true : false;
         if (debugValue !== isDebugEnabled) {
