@@ -2037,7 +2037,7 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
   extensionsFolder = config.get('extensionsFolder') || '';
-  if (config.get('exceedinglyVerbose') || false) {
+  if (config.get('debug') || false) {
     isDebugEnabled = true;
     setLoggerLevel('debug'); // Set logger level to debug for detailed output
   } else {
@@ -2432,7 +2432,7 @@ export function activate(context: vscode.ExtensionContext) {
         rootpath = config.get('unpackedFileLocation') || '';
         forcedCompletion = config.get('forcedCompletion') || false;
         extensionsFolder = config.get('extensionsFolder') || '';
-        const debugValue = config.get('exceedinglyVerbose') || false ? true : false;
+        const debugValue = config.get('debug') || false ? true : false;
         if (debugValue !== isDebugEnabled) {
           isDebugEnabled = debugValue;
           if (isDebugEnabled) {
