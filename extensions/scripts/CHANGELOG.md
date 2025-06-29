@@ -2,6 +2,79 @@
 
 All notable changes to the "x4codecomplete" extension will be documented in this file.
 
+## [1.6.0](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.4...X4CodeComplete@v1.6.0) (2025-06-29)
+
+
+### Features
+
+* **completion:** add forced completion setting for simple edits ([9a62ff8](https://github.com/archenovalis/X4CodeComplete/commit/9a62ff85c026b7ebcdb8dd9fc0fe2b6606820f1b))
+* implemented hover for element name and attribute name ([6ce4d4e](https://github.com/archenovalis/X4CodeComplete/commit/6ce4d4e9837d91f79f7f659ed1f8e0b030b9e3a0))
+* **xml:** preliminary implement XML structure tracking and context-aware completions ([0eab4ff](https://github.com/archenovalis/X4CodeComplete/commit/0eab4ff9744473f32adf05485c88cb05178e0837))
+
+
+### Bug Fixes
+
+* **extension:** finally recover pre xsd_lookup functionality ([aff0d2b](https://github.com/archenovalis/X4CodeComplete/commit/aff0d2bec7c9994f063f2a3c6a6d9979a2cc36d0))
+* **scripts:** fixed parent detection on scripts xml source  parsing ([e45f808](https://github.com/archenovalis/X4CodeComplete/commit/e45f8085284fcaf4929c4b0e9e312237556665bb))
+* **scripts:** get rid of exceedinglyVerbose variable and make logger.debug working right way, only if debug is enabled ([893683c](https://github.com/archenovalis/X4CodeComplete/commit/893683c5136dd6e803058110cfabc2bd086277c5))
+
+
+### Code Refactoring
+
+* another turn to work with xsd ([e268964](https://github.com/archenovalis/X4CodeComplete/commit/e268964045411a7b89b7765392924e2ad74636e4))
+* **completion:** fully switched to ScriptCompletion provider ([9a62ff8](https://github.com/archenovalis/X4CodeComplete/commit/9a62ff85c026b7ebcdb8dd9fc0fe2b6606820f1b))
+* **completion:** preliminary partially worked version of ScriptCompletion provider ([3193c29](https://github.com/archenovalis/X4CodeComplete/commit/3193c29d22f144a4445635b0b0467bc2380201e8))
+* **completion:** preparation to implement comprehensive completion via new ScriptCompletion ([cc07f56](https://github.com/archenovalis/X4CodeComplete/commit/cc07f562aed1270ec1fe66a045d49a5dca566325))
+* **completion:** re-enable range usage for element name completions ([8f5bc25](https://github.com/archenovalis/X4CodeComplete/commit/8f5bc254d2ce5af6cfe3751956956d9e7b27a853))
+* **completion:** update element name completion to use provided range, but commented ([8d4b7ba](https://github.com/archenovalis/X4CodeComplete/commit/8d4b7bac25cfa9a5e19a693da647682e1861845b))
+* **deactivation:** enhance memory management by adding dispose methods to trackers and clearing data on extension deactivation ([dc0ebfe](https://github.com/archenovalis/X4CodeComplete/commit/dc0ebfede41a1d12be5e8ad726606c2170248600))
+* **extension:** rewrite VariableTracker, ActionTracker and LabelTracker to use WeakMap ([aff0d2b](https://github.com/archenovalis/X4CodeComplete/commit/aff0d2bec7c9994f063f2a3c6a6d9979a2cc36d0))
+* **logger:** change default logger level to 'info' and ensure singleton pattern ([893683c](https://github.com/archenovalis/X4CodeComplete/commit/893683c5136dd6e803058110cfabc2bd086277c5))
+* **logger:** make logger as separate module ([dccbb15](https://github.com/archenovalis/X4CodeComplete/commit/dccbb150b6bca138db32832ac21920815fa55533))
+* **logging:** rename 'exceedinglyVerbose' setting to 'debug' for clarity and update related logic ([c607746](https://github.com/archenovalis/X4CodeComplete/commit/c607746d6d1a08bb178ace97b0a7c4ed57080442))
+* replace the xsdReference.ts  by xsd_lookup package for the XML structure  trucking, element validating and context-aware  completion ([7252e97](https://github.com/archenovalis/X4CodeComplete/commit/7252e974952c5ed2ab7f58a3a3241999132b710c))
+* **scripts:** add parentName to AttributeRange for improved context ([13e8e50](https://github.com/archenovalis/X4CodeComplete/commit/13e8e50c6b2d628644213b45c71628db6a637d9a))
+* **scripts:** added an `offsetsMap` to track changes in text offsets due to patching, allowing accurate position tracking during parsing. ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **scripts:** added xsd parsing and usage for the variable definition detection ([04ea834](https://github.com/archenovalis/X4CodeComplete/commit/04ea8347ebcf678ac908c851a9b668bf472c0fdb))
+* **scripts:** another turn of enrichment methods for improved element handling. TODO: to find a way to define rights parents for standard actions under conditions, init, and actions (outside attention) ([edd27b9](https://github.com/archenovalis/X4CodeComplete/commit/edd27b90e6de8c3e9374a496ea7deeda2690dd87))
+* **scripts:** apply approach from group enrichment of complex type by complex type enrichment ([59364cd](https://github.com/archenovalis/X4CodeComplete/commit/59364cdf0788772fa66bc3269918e9b8db13aa47))
+* **scripts:** clear some garbage ([8c020a8](https://github.com/archenovalis/X4CodeComplete/commit/8c020a865e1e296731a386423c7121663e0a6531))
+* **scripts:** enhance completion item provider to utilize parentName for attribute context ([0dd9bbc](https://github.com/archenovalis/X4CodeComplete/commit/0dd9bbc0831e0777e1e3a6c2eaf26139023f5a8a))
+* **scripts:** enhance getAllPossibleAttributes to include parentName filtering ([b590f46](https://github.com/archenovalis/X4CodeComplete/commit/b590f4619a141903005da8e81304879230867e43))
+* **scripts:** enhance nested element definition search with parent context ([c106328](https://github.com/archenovalis/X4CodeComplete/commit/c10632871717f510d6af6e7ec610e38bf348dbef))
+* **scripts:** enhance Schema class with group reference handling and XPath improvements ([1f675e0](https://github.com/archenovalis/X4CodeComplete/commit/1f675e0d6ca323b3faa3f7deed45d1617e630057))
+* **scripts:** enhance Schema class with pre-caching and enrichment methods for improved element and group handling ([fd6c618](https://github.com/archenovalis/X4CodeComplete/commit/fd6c6185103ba88220f97508a3fde78f1f1b0ac5))
+* **scripts:** enhanced the `isInElementStartTag` method to improve element detection logic. ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **scripts:** finally implemented processing multiple variation of element attributes combinations ([e45f808](https://github.com/archenovalis/X4CodeComplete/commit/e45f8085284fcaf4929c4b0e9e312237556665bb))
+* **scripts:** group content instead references in groups is rewritten ([1f675e0](https://github.com/archenovalis/X4CodeComplete/commit/1f675e0d6ca323b3faa3f7deed45d1617e630057))
+* **scripts:** improve completion working inside the attribute value range ([04ea834](https://github.com/archenovalis/X4CodeComplete/commit/04ea8347ebcf678ac908c851a9b668bf472c0fdb))
+* **scripts:** introduced a new function `patchUnclosedTags` to automatically close unclosed XML tags during parsing. ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **scripts:** modified the `getElements` method to return elements based on their range, ensuring the correct element is identified. ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **scripts:** optimize schema loading by caching included schemas ([96cabd6](https://github.com/archenovalis/X4CodeComplete/commit/96cabd63f7f2cbc530af444306c956d0ee875864))
+* **scripts:** refactor getting possible attribute values to be comply with multiple element attributes sets definition ([2e346bb](https://github.com/archenovalis/X4CodeComplete/commit/2e346bb6ea1125f3a9d7d734a566ec1f9f8f3fb2))
+* **scripts:** streamline schema processing by reorganizing group and type application logic ([6c0dd98](https://github.com/archenovalis/X4CodeComplete/commit/6c0dd987bb8fd796d7d65ddd14dc4ae09fcc6048))
+* **scripts:** update caching logic in Schema class for improved type and element handling ([7056599](https://github.com/archenovalis/X4CodeComplete/commit/7056599aa7ffe10bd2d2c8fb0077ed32bf4dba30))
+* **scripts:** update element and attribute handling to support multiple definitions ([b3507f7](https://github.com/archenovalis/X4CodeComplete/commit/b3507f70e0a1522716d6c97fa4e94aa598114885))
+* **scripts:** update element structure to use parentId and parentName for better clarity ([2e346bb](https://github.com/archenovalis/X4CodeComplete/commit/2e346bb6ea1125f3a9d7d734a566ec1f9f8f3fb2))
+* **scripts:** updated the `XmlStructureTracker` class to utilize the new patching function, ensuring more robust XML handling. ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **scripts:** use manual xPath to avoid cycling in xsd structures searches ([0dd9bbc](https://github.com/archenovalis/X4CodeComplete/commit/0dd9bbc0831e0777e1e3a6c2eaf26139023f5a8a))
+* **scripts:** XML parsing and enhance error handling ([6ac8666](https://github.com/archenovalis/X4CodeComplete/commit/6ac86666268f1a6809460ebcf039b51c2ac82c9c))
+* **trackScriptDocument:** restore functionality after switching to the xsd_lookup related to lvalue ([8c020a8](https://github.com/archenovalis/X4CodeComplete/commit/8c020a865e1e296731a386423c7121663e0a6531))
+* **trackScriptDocument:** streamline label and action handling logic ([68d7696](https://github.com/archenovalis/X4CodeComplete/commit/68d769671378306eb6a52b7d90329da5ca90b0cf))
+* update xsd-lookup package to version 1.2.1 and enhance attribute names and possible values handling in completion logic ([8695a76](https://github.com/archenovalis/X4CodeComplete/commit/8695a76145a90f1cd612fc6cccecc6cc37b9c4ec))
+* update xsd-lookup package to version 1.2.4 and adjust dependencies ([ea0cb7d](https://github.com/archenovalis/X4CodeComplete/commit/ea0cb7d7890842c85191aad31c741ab46c9a7418))
+* update xsd-lookup package to version 1.3.0 ([6ce4d4e](https://github.com/archenovalis/X4CodeComplete/commit/6ce4d4e9837d91f79f7f659ed1f8e0b030b9e3a0))
+* **validation:** initial realization of  diagnostic for xml elements ([20b2c40](https://github.com/archenovalis/X4CodeComplete/commit/20b2c40ed845cd29c4ea023590676ab5523aa032))
+* **xml:** optimize XML structure tracking with improved parsing logic and document change detection ([28f764a](https://github.com/archenovalis/X4CodeComplete/commit/28f764a004e9f07f66b7ed23f3b2d6c4b5e0abe6))
+* **xmlStructureTracker:** unify the parsed element store in WeakMap attribute ([aff0d2b](https://github.com/archenovalis/X4CodeComplete/commit/aff0d2bec7c9994f063f2a3c6a6d9979a2cc36d0))
+* **xsd_lookup:** update version of xsd_lookup to 1.4.0 ([dc0ebfe](https://github.com/archenovalis/X4CodeComplete/commit/dc0ebfede41a1d12be5e8ad726606c2170248600))
+
+
+### Miscellaneous Chores
+
+* migrate out deprecated vscode package ([0b187c8](https://github.com/archenovalis/X4CodeComplete/commit/0b187c85e9d239c047c8f9a33f271b69a58b150c))
+* **scripts:** update dependencies ([3b1b306](https://github.com/archenovalis/X4CodeComplete/commit/3b1b3063dc18dc1c7b125935f0f8bace8010667e))
+
 ## [1.5.4](https://github.com/archenovalis/X4CodeComplete/compare/X4CodeComplete@v1.5.3...X4CodeComplete@v1.5.4) (2025-06-18)
 
 
