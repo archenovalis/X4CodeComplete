@@ -27,7 +27,7 @@ type ScriptMetadata = {
 
 type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
 
-const scriptsMetadata: ScriptsMetadata = new WeakMap();
+let scriptsMetadata: ScriptsMetadata = new WeakMap();
 
 function scriptMetadataInit(document: vscode.TextDocument, reInit: boolean = false): ScriptMetadata | undefined {
   if (document.languageId === 'xml') {
@@ -366,6 +366,14 @@ class CompletionDict {
     return this.makeCompletionList(items);
   }
 
+  dispose(): void {
+    this.typeDict.clear();
+    this.allProp.clear();
+    this.allPropItems = [];
+    this.keywordItems = [];
+    this.descriptions.clear();
+  }
+
 }
 
 class LocationDict implements vscode.DefinitionProvider {
@@ -428,6 +436,10 @@ class LocationDict implements vscode.DefinitionProvider {
       relevant = relevant.substring(relevant.indexOf('.') + 1);
     } while (relevant.indexOf('.') !== -1);
     return undefined;
+  }
+
+  dispose(): void {
+    this.dict.clear();
   }
 }
 
@@ -623,6 +635,10 @@ class VariableTracker {
     return result;
   }
 
+  dispose(): void {
+    this.documentVariables = new WeakMap();
+  }
+
 }
 
 const variableTracker = new VariableTracker();
@@ -743,6 +759,10 @@ class LabelTracker {
 
   clearLabelsForDocument(document: vscode.TextDocument): void {
     this.documentLabels.delete(document);
+  }
+
+  dispose(): void {
+    this.documentLabels = new WeakMap();
   }
 }
 
@@ -865,6 +885,10 @@ class ActionsTracker {
 
   clearActionsForDocument(document: vscode.TextDocument): void {
     this.documentActions.delete(document);
+  }
+
+  dispose(): void {
+    this.documentActions = new WeakMap();
   }
 }
 
@@ -2649,7 +2673,83 @@ export function activate(context: vscode.ExtensionContext) {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
-  logger.info('Deactivated');
+  logger.info('Extension deactivation started...');
+
+  try {
+
+    // Clear all diagnostic collections
+    if (diagnosticCollection) {
+      diagnosticCollection.clear();
+      diagnosticCollection.dispose();
+    }
+
+    // Clear all tracking data
+    if (variableTracker) {
+      // Clear all document-specific data
+      // Note: WeakMap will be garbage collected automatically, but we can clear specific documents if needed
+      variableTracker.dispose();
+    }
+
+    if (labelTracker) {
+      // Clear all document-specific data
+      // Note: WeakMap will be garbage collected automatically
+      labelTracker.dispose();
+    }
+
+    if (actionTracker) {
+      // Clear all document-specific data
+      // Note: WeakMap will be garbage collected automatically
+      actionTracker.dispose();
+    }
+
+    // Clear XML tracker data
+    if (xmlTracker) {
+      xmlTracker.dispose();
+    }
+
+    // Clear completion provider data
+    if (completionProvider) {
+      // Clear any cached completion data
+      if (completionProvider.allPropItems) {
+        completionProvider.allPropItems.length = 0;
+      }
+      completionProvider.dispose();
+    }
+
+    if (definitionProvider) {
+      // Clear any cached definitions
+      definitionProvider.dispose();
+    }
+    // Clear script completion provider
+    if (scriptCompletionProvider) {
+      // Script completion provider will be garbage collected
+    }
+
+    // Clear language data
+    if (languageData) {
+      languageData.clear();
+    }
+
+    // Clear scripts metadata
+    if (scriptsMetadata) {
+      // Note: WeakMap will be garbage collected automatically
+      scriptsMetadata = new WeakMap();
+    }
+
+    // Clear XSD reference data
+    if (xsdReference) {
+      // XSD reference internal caches will be garbage collected
+      xsdReference.dispose();
+    }
+
+    // Reset global flags
+    isDebugEnabled = false;
+    forcedCompletion = false;
+
+    logger.info('Extension deactivated successfully');
+  } catch (error) {
+    logger.error('Error during extension deactivation:', error);
+  }
 }
 
 // Helper function to calculate string similarity (Levenshtein distance based)

@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as sax from 'sax';
-import { off } from 'process';
 
 export interface ElementRange {
   name: string;
@@ -368,5 +367,15 @@ export class XmlStructureTracker {
     }
     return elements[element.parentId];
   }
+
+  /**
+   * Clear all tracking data for all documents
+   * This should be called during extension deactivation to free memory
+   */
+  dispose(): void {
+    // WeakMaps don't have a clear method, but we can recreate them
+    this.documentInfoMap = new WeakMap();
+  }
+
 }
 export const xmlTracker = new XmlStructureTracker();
