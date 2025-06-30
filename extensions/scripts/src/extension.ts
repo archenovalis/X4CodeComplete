@@ -6,7 +6,7 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
 import * as path from 'path';
 import * as sax from 'sax';
-import { xmlTracker, ElementRange, XmlStructureTracker } from './xmlStructureTracker';
+import { xmlTracker, XmlElement, XmlStructureTracker } from './xmlStructureTracker';
 import { logger, setLoggerLevel } from './logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 import { get } from 'http';
@@ -148,7 +148,6 @@ class CompletionDict {
   allProp: Map<string, string> = new Map<string, string>();
   allPropItems: vscode.CompletionItem[] = [];
   keywordItems: vscode.CompletionItem[] = [];
-  defaultCompletions: vscode.CompletionList;
   descriptions: Map<string, string> = new Map<string, string>();
 
   addType(key: string, supertype?: string): void {
@@ -200,7 +199,7 @@ class CompletionDict {
       return;
     } else if (type !== undefined) {
       this.allProp.set(shortProp, type);
-      const item = new vscode.CompletionItem(shortProp);
+      const item = CompletionDict.createItem(shortProp, CompletionDict.getPropertyDescription(shortProp, type, details));
       this.allPropItems.push(item);
     }
   }
@@ -233,7 +232,19 @@ class CompletionDict {
     items.set(complete, item);
   }
 
-  public static addItem(items: Map<string, vscode.CompletionItem>, complete: string, info?: string): void {
+
+  private static createItem(complete: string, info: string[] = []): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Property);
+    if (info.length > 0) {
+      item.documentation = new vscode.MarkdownString();
+      for (const line of info) {
+        item.documentation.appendMarkdown(line + '\n\n');
+      }
+    }
+    return item;
+  }
+
+  private static addItem(items: Map<string, vscode.CompletionItem>, complete: string, info: string[] = []): void {
     // TODO handle better
     if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(complete) > -1) {
       return;
@@ -244,11 +255,21 @@ class CompletionDict {
       return;
     }
 
-    const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Property);
-    item.documentation = info ? new vscode.MarkdownString(info) : undefined;
+    const item = CompletionDict.createItem(complete, info);
 
-    logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.detail);
+    logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.documentation);
     items.set(complete, item);
+  }
+
+  private static getPropertyDescription(name: string, type?: string, details?: string): string[] {
+    const result: string[] = [];
+    if (type) {
+      result.push(`**${name}**${details ? ': ' + details : ''}`);
+    }
+    if (type) {
+      result.push(`**Returned value type**: ${type}`);
+    }
+    return result;
   }
 
   buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
@@ -272,18 +293,33 @@ class CompletionDict {
     }
 
     for (const prop of entry.properties.entries()) {
-      CompletionDict.addItem(items, prop[0], '**' + [typeName, prop[0]].join('.') + '**: ' + entry.details.get(prop[0]));
+      if (prefix === '' || prop[0].startsWith(prefix)) {
+        CompletionDict.addItem(items, prop[0], CompletionDict.getPropertyDescription(prop[0], prop[1], entry.details.get(prop[0])));
+      }
     }
     for (const literal of entry.literals.values()) {
-      CompletionDict.addItem(items, literal);
+      if (prefix === '' || literal.startsWith(prefix)) {
+        // If the literal starts with the prefix, add it to the items
+        CompletionDict.addItem(items, literal);
+      }
     }
     if (entry.supertype !== undefined) {
       logger.debug('Recursing on supertype: ', entry.supertype);
       this.buildType(typeName, entry.supertype, items, depth /*  + 1 */);
     }
   }
-  makeCompletionList(items: Map<string, vscode.CompletionItem>): vscode.CompletionList {
-    return new vscode.CompletionList(Array.from(items.values()), true);
+  makeCompletionList(items: Map<string, vscode.CompletionItem>|vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
+    if (items instanceof Map) {
+      items = Array.from(items.values());
+    }
+    let isIncomplete = true;
+    if (items.length === 0) {
+      isIncomplete = false;
+    } else if (items.length === 1 && items[0].label === prefix) {
+      isIncomplete = false;
+      items = [];
+    }
+    return new vscode.CompletionList(items, isIncomplete);
   }
 
   makeKeywords(): void {
@@ -316,19 +352,18 @@ class CompletionDict {
           : '';
       if (prevToken === undefined || prevToken === '') {
         logger.debug('Missing previous token!');
-        return newToken.length > 0
-          ? new vscode.CompletionList(
-              this.defaultCompletions.items.filter((item) => {
-                const label = typeof item.label === 'string' ? item.label : item.label.label;
-                return label.startsWith(newToken);
-              }),
-              true
-            )
-          : this.defaultCompletions;
+        return this.makeCompletionList(newToken.length > 0
+          ? this.allPropItems.filter((item) => {
+              const label = typeof item.label === 'string' ? item.label : item.label.label;
+              return label.startsWith(newToken);
+            })
+          : this.allPropItems,
+            newToken
+          );
       } else {
         logger.debug(`Matching on type: ${prevToken}!`);
-        this.buildType('', prevToken, items, 0);
-        return this.makeCompletionList(items);
+        this.buildType(newToken, prevToken, items, 0);
+        return this.makeCompletionList(items, newToken);
       }
     }
     // Ignore tokens where all we have is a short string and no previous data to go off of
@@ -961,7 +996,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
     return new vscode.CompletionList(Array.from(items.values()), isIncomplete);
   }
 
-  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: ElementRange, parentName: string, parentHierarchy: string[], range?: vscode.Range): vscode.CompletionList {
+  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: XmlElement, parentName: string, parentHierarchy: string[], range?: vscode.Range): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     const possibleElements = this.xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
     if (possibleElements !== undefined) {
@@ -992,7 +1027,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
     }
   }
 
-  private static attributeNameCompletion(element: ElementRange, elementAttributes: EnhancedAttributeInfo[], prefix: string = '', range?: vscode.Range): vscode.CompletionList {
+  private static attributeNameCompletion(element: XmlElement, elementAttributes: EnhancedAttributeInfo[], prefix: string = '', range?: vscode.Range): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     for (const attr of elementAttributes) {
       if (!element.attributes.some((a) => a.name === attr.name) && (prefix == '' || attr.name.startsWith(prefix))) {
@@ -1030,7 +1065,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         if (checkOnly) {
           return []; // Return empty list if only checking
         } else {
-          const parent: ElementRange = this.xmlTracker.getParentElement(document, elementByName);
+          const parent: XmlElement = this.xmlTracker.getParentElement(document, elementByName);
           return this.elementNameCompletion(schema, document, position, element, parent.name, parent.hierarchy, elementByName.nameRange);
         }
       }
@@ -1043,7 +1078,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
 
       let attribute = this.xmlTracker.isInAttributeName(document, position);
       if (attribute) {
-        logger.debug(`Completion requested in attribute name: ${attribute.elementName}.${attribute.name}`);
+        logger.debug(`Completion requested in attribute name: ${attribute.element.name}.${attribute.name}`);
       }
       if (attribute) {
         if (checkOnly) {
@@ -1061,7 +1096,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       // Check if we're in an attribute value for context-aware completions
       attribute = this.xmlTracker.isInAttributeValue(document, position);
       if (attribute) {
-        logger.debug(`Completion requested in attribute value: ${attribute.elementName}.${attribute.name}`);
+        logger.debug(`Completion requested in attribute value: ${attribute.element.name}.${attribute.name}`);
       }
       if (attribute === undefined) {
         if (checkOnly) {
@@ -1317,7 +1352,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   }
 
   const lValueTypes = ['lvalueexpression', ...xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
-  const xmlElements: ElementRange[] = xmlTracker.parseDocument(document);
+  const xmlElements: XmlElement[] = xmlTracker.parseDocument(document);
   const offsets = xmlTracker.getOffsets(document);
   for (const offset of offsets) {
     const documentLine = document.lineAt(document.positionAt(offset.index).line - 1);
@@ -1342,8 +1377,8 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
   const text = document.getText();
 
   // Process all elements recursively
-  const processElement = (element: ElementRange) => {
-    const parentName = element.parentName || '';
+  const processElement = (element: XmlElement) => {
+    const parentName = element.parent?.name || '';
     const elementDefinition = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
     if (elementDefinition === undefined) {
       const diagnostic = new vscode.Diagnostic(
@@ -1424,7 +1459,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             labelTracker.addLabelReference(attrValue, scheme, document, attr.valueRange);
           }
           // Check for action definitions
-          if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && attr.hierarchy[0] === 'library') {
+          if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'library') {
             actionTracker.addActions(attrValue, scheme, document, attr.valueRange);
           }
           // Check for action references
@@ -1432,7 +1467,7 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             actionTracker.addActionsReference(attrValue, scheme, document, attr.valueRange);
           }
 
-          if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && attr.hierarchy[0] === 'params') {
+          if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
             variableTracker.addVariable(
               'normal',
               attrValue,
@@ -1528,7 +1563,6 @@ function readScriptProperties(filepath: string) {
     // Process keywords and datatypes here, return the completed results
     keywords = processKeywords(rawData, result['scriptproperties']['keyword']);
     datatypes = processDatatypes(rawData, result['scriptproperties']['datatype']);
-    completionProvider.defaultCompletions = new vscode.CompletionList(completionProvider.allPropItems, true);
     completionProvider.addTypeLiteral('boolean', '==false');
     logger.info('Parsed scriptproperties.xml');
   });
@@ -2154,7 +2188,7 @@ export function activate(context: vscode.ExtensionContext) {
           const attribute = xmlTracker.isInAttributeName(document, position);
           if (attribute) {
               const hoverText = new vscode.MarkdownString();
-              const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, attribute.elementName, attribute.hierarchy);
+              const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, attribute.element.name, attribute.element.hierarchy);
               const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
               if (attributeInfo) {
                 hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '\`' + attributeInfo.annotation + '\`' : ''}\n\n`);
@@ -2709,10 +2743,6 @@ export function deactivate() {
 
     // Clear completion provider data
     if (completionProvider) {
-      // Clear any cached completion data
-      if (completionProvider.allPropItems) {
-        completionProvider.allPropItems.length = 0;
-      }
       completionProvider.dispose();
     }
 

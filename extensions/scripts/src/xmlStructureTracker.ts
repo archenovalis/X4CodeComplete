@@ -1,24 +1,21 @@
 import * as vscode from 'vscode';
 import * as sax from 'sax';
 
-export interface ElementRange {
+export interface XmlElement {
   name: string;
   range: vscode.Range;
   startTagRange: vscode.Range; // Range of the start tag, used for attribute parsing
   nameRange: vscode.Range; // Range of just the element name within the start tag
   isSelfClosing: boolean;
-  parentId?: number;
-  parentName?: string;
+  parent? : XmlElement; // Optional parent element for easier hierarchy traversal
   hierarchy: string[]; // Array representing the full hierarchy of parent elements
-  children: number[];
-  attributes: AttributeRange[];
+  children: XmlElement[];
+  attributes: XmlElementAttribute[];
 }
 
-export interface AttributeRange {
+export interface XmlElementAttribute {
   name: string;
-  elementName: string;
-  parentName: string;
-  hierarchy: string[];
+  element: XmlElement; // Reference to the element this attribute belongs to
   nameRange: vscode.Range;
   valueRange: vscode.Range;
   quoteChar: string;
@@ -79,7 +76,7 @@ function revertOffset(patchedOffset: number, offsetMap: { index: number; shift: 
 
 type OffsetItem = { index: number; shift: number };
 type DocumentInfo = {
-  elements: ElementRange[];
+  elements: XmlElement[];
   lastParsed: number;
   offsets: OffsetItem[];
 };
@@ -119,7 +116,7 @@ export class XmlStructureTracker {
   }
 
   // Make this method return the parsed elements
-  parseDocument(document: vscode.TextDocument): ElementRange[] {
+  parseDocument(document: vscode.TextDocument): XmlElement[] {
     let documentInfo = this.prepareDocumentInfo(document);
     if (document.version === documentInfo.lastParsed) {
       // If the document has not changed since last parse, return cached elements
@@ -133,8 +130,8 @@ export class XmlStructureTracker {
       // Create a non-strict parser to be more tolerant of errors
       const parser = sax.parser(true);
 
-      const elements: ElementRange[] = [];
-      const openElementStack: number[] = [];
+      const elements: XmlElement[] = [];
+      const openElementStack: XmlElement[] = [];
 
       // Track parse position
       parser.startTagPosition = 0;
@@ -153,7 +150,7 @@ export class XmlStructureTracker {
           const nameStartPos = document.positionAt(tagStartPos + 1);
           const nameEndPos = document.positionAt(tagStartPos + 1 + node.name.length);
 
-          const newElement: ElementRange = {
+          const newElement: XmlElement = {
             name: node.name,
             range: new vscode.Range(startPos, document.positionAt(tagEndPos)), // Will update end position when tag is closed
             startTagRange: new vscode.Range(startPos, document.positionAt(tagEndPos)),
@@ -168,13 +165,12 @@ export class XmlStructureTracker {
 
           // Set parent-child relationships
           if (openElementStack.length > 0) {
-            const parentIndex = openElementStack[openElementStack.length - 1];
-            newElement.parentId = parentIndex;
-            newElement.parentName = elements[parentIndex].name;
-            elements[parentIndex].children.push(currentIndex);
+            const parent = openElementStack[openElementStack.length - 1];
+            newElement.parent = parent;
+            parent.children.push(newElement);
 
             // Update hierarchy
-            newElement.hierarchy = [elements[parentIndex].name, ...elements[parentIndex].hierarchy];
+            newElement.hierarchy = [parent.name, ...parent.hierarchy];
           }
 
           // Process attributes (with error handling)
@@ -199,11 +195,9 @@ export class XmlStructureTracker {
                         const valueStart = document.positionAt(tagStartPos + valueStartIndex);
                         const valueEnd = document.positionAt(tagStartPos + valueEndIndex);
 
-                        const attribute: AttributeRange = {
+                        const attribute: XmlElementAttribute = {
                           name: attrName,
-                          elementName: newElement.name, // Store the element name for reference
-                          parentName: newElement.parentName || '', // Store the parent name for reference
-                          hierarchy: newElement.hierarchy, // Use the hierarchy from the element
+                          element: newElement, // Reference to the element this attribute belongs to
                           nameRange: new vscode.Range(attrNameStart, attrNameEnd),
                           valueRange: new vscode.Range(valueStart, valueEnd),
                           quoteChar: quoteChar,
@@ -227,7 +221,7 @@ export class XmlStructureTracker {
           elements.push(newElement);
 
           if (!node.isSelfClosing) {
-            openElementStack.push(currentIndex);
+            openElementStack.push(newElement);
           } else {
             const tagEndPos = revertOffset(tagEndPosPatched, offsetMap);
             newElement.range = new vscode.Range(newElement.range.start, document.positionAt(tagEndPos));
@@ -239,8 +233,7 @@ export class XmlStructureTracker {
 
       parser.onclosetag = (tagName: string) => {
         if (openElementStack.length > 0) {
-          const lastOpenIndex = openElementStack[openElementStack.length - 1];
-          const lastOpenElement = elements[lastOpenIndex];
+          const lastOpenElement = openElementStack[openElementStack.length - 1];
           if (lastOpenElement.name === tagName) {
             lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(parser.position));
             openElementStack.pop();
@@ -280,11 +273,11 @@ export class XmlStructureTracker {
     }
   }
 
-  isInAttributeName(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
+  isInAttributeName(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: ElementRange | undefined = this.elementStartTagInPosition(document, position);
+      const elementContainingPosition: XmlElement | undefined = this.elementStartTagInPosition(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -301,11 +294,11 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): AttributeRange | undefined {
+  isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: ElementRange | undefined = this.elementStartTagInPosition(document, position);
+      const elementContainingPosition: XmlElement | undefined = this.elementStartTagInPosition(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -322,7 +315,7 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  elementInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+  elementInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -332,7 +325,7 @@ export class XmlStructureTracker {
     return elements.length > 0 ? elements[0] : undefined;
   }
 
-  elementStartTagInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+  elementStartTagInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -341,7 +334,7 @@ export class XmlStructureTracker {
     return rootElements.find((element) => element.startTagRange.contains(position));
   }
 
-  elementNameInPosition(document: vscode.TextDocument, position: vscode.Position): ElementRange | undefined {
+  elementNameInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -354,18 +347,14 @@ export class XmlStructureTracker {
     return this.documentInfoMap.get(document)?.offsets || [];
   }
 
-  getElements(document: vscode.TextDocument): ElementRange[] {
+  getElements(document: vscode.TextDocument): XmlElement[] {
     return this.documentInfoMap.get(document)?.elements || [];
   }
 
-  getParentElement(document: vscode.TextDocument, element: ElementRange): ElementRange | undefined {
-    if (element.parentId === undefined) return undefined;
+  getParentElement(document: vscode.TextDocument, element: XmlElement): XmlElement | undefined {
+    if (element.parent === undefined) return undefined;
 
-    const elements = this.getElements(document);
-    if (element.parentId < 0 || element.parentId >= elements.length) {
-      return undefined; // Parent index out of bounds
-    }
-    return elements[element.parentId];
+    return element.parent;
   }
 
   /**
