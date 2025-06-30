@@ -95,18 +95,6 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
   return isValid;
 }
 
-function getLastSubstring(text: string, chars: string): string {
-  const charsSorted = chars.split('').sort((a, b) => text.lastIndexOf(b) - text.lastIndexOf(a));
-  if (charsSorted.length > 0 && charsSorted[charsSorted.length - 1] !== undefined) {
-    const lastChar = charsSorted[charsSorted.length - 1];
-    const lastIndex = text.lastIndexOf(lastChar);
-    if (lastIndex !== -1) {
-      return text.substring(lastIndex + 1).trim();
-    }
-  }
-  return '';
-}
-
 function findRelevantPortion(text: string) {
   const bracketPos = text.lastIndexOf('{');
   text = text.substring(bracketPos + 1).trim();
@@ -803,27 +791,30 @@ class LabelTracker {
 
 const labelTracker = new LabelTracker();
 
+type ActionsLocal = {
+  definitions: Map<string, vscode.Location>;
+  references: Map<string, vscode.Location[]>;
+}
+
+type ExternalPositions = Map<string, number>;
+type ExternalActions = Map<string, ExternalPositions>;
 // ActionTracker class for tracking AIScript actions
 class ActionsTracker {
   // Map to store actions per document: Map<DocumentURI, Map<ActionName, vscode.Location>>
-  documentActions: WeakMap<
-    vscode.TextDocument,
-    { scriptType: string; actions: Map<string, vscode.Location>; references: Map<string, vscode.Location[]> }
-  > = new Map();
+  documentActions: WeakMap<vscode.TextDocument, ActionsLocal> = new Map();
 
-  addActions(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
+  addActions(name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the action map for the document
     if (!this.documentActions.has(document)) {
       this.documentActions.set(document, {
-        scriptType: scriptType,
-        actions: new Map(),
+        definitions: new Map(),
         references: new Map(),
       });
     }
     const actionData = this.documentActions.get(document)!;
 
     // Add the action definition location
-    actionData.actions.set(name, new vscode.Location(document.uri, range));
+    actionData.definitions.set(name, new vscode.Location(document.uri, range));
 
     // Initialize references map if not exists
     if (!actionData.references.has(name)) {
@@ -831,12 +822,11 @@ class ActionsTracker {
     }
   }
 
-  addActionsReference(name: string, scriptType: string, document: vscode.TextDocument, range: vscode.Range): void {
+  addActionsReference(name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the action map for the document
     if (!this.documentActions.has(document)) {
       this.documentActions.set(document, {
-        scriptType: scriptType,
-        actions: new Map(),
+        definitions: new Map(),
         references: new Map(),
       });
     }
@@ -854,7 +844,7 @@ class ActionsTracker {
     if (!documentData) {
       return undefined;
     }
-    return documentData.actions.get(name);
+    return documentData.definitions.get(name);
   }
 
   getActionsReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
@@ -875,7 +865,7 @@ class ActionsTracker {
     }
 
     // Check if position is at an action definition
-    for (const [actionName, location] of documentData.actions.entries()) {
+    for (const [actionName, location] of documentData.definitions.entries()) {
       if (location.range.contains(position)) {
         return {
           name: actionName,
@@ -908,7 +898,7 @@ class ActionsTracker {
     }
     const schema = getDocumentScriptType(document);
     // Process all actions
-    for (const [name, location] of documentData.actions.entries()) {
+    for (const [name, location] of documentData.definitions.entries()) {
       if (prefix === '' || name.startsWith(prefix)) {
         // Only add the item if it matches the prefix
         result.set(name, new vscode.MarkdownString(`AI Script Action in ${scriptNodes[schema]?.info || 'Script'}`));
@@ -1056,17 +1046,18 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
 
     const characterAtPosition = document.getText(new vscode.Range(position, position.translate(0, 1)));
 
-    const element = this.xmlTracker.elementStartTagInPosition(document, position);
+    const element = this.xmlTracker.elementWithPosInStartTag(document, position);
     if (element) {
       logger.debug(`Completion requested in element: ${element.name}`);
 
-      const elementByName = this.xmlTracker.elementNameInPosition(document, position);
+      const elementByName = this.xmlTracker.elementWithPosInName(document, position);
       if (elementByName) {
         if (checkOnly) {
           return []; // Return empty list if only checking
         } else {
-          const parent: XmlElement = this.xmlTracker.getParentElement(document, elementByName);
-          return this.elementNameCompletion(schema, document, position, element, parent.name, parent.hierarchy, elementByName.nameRange);
+          if (element.parent !== undefined) {
+            return this.elementNameCompletion(schema, document, position, element, element.parent.name, element.parent.hierarchy, element.nameRange);
+          }
         }
       }
 
@@ -1076,7 +1067,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         element.hierarchy
       );
 
-      let attribute = this.xmlTracker.isInAttributeName(document, position);
+      let attribute = this.xmlTracker.attributeWithPosInName(document, position);
       if (attribute) {
         logger.debug(`Completion requested in attribute name: ${attribute.element.name}.${attribute.name}`);
       }
@@ -1094,7 +1085,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       }
 
       // Check if we're in an attribute value for context-aware completions
-      attribute = this.xmlTracker.isInAttributeValue(document, position);
+      attribute = this.xmlTracker.attributeWithPosInValue(document, position);
       if (attribute) {
         logger.debug(`Completion requested in attribute value: ${attribute.element.name}.${attribute.name}`);
       }
@@ -1218,10 +1209,10 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       if (checkOnly) {
         return undefined; // Return empty list if only checking
       }
-      const inElementRange = this.xmlTracker.elementInPosition(document, position);
-      if (inElementRange) {
-        logger.debug(`Completion requested in element range: ${inElementRange.name}`);
-        return this.elementNameCompletion(schema, document, position, undefined, inElementRange.name, inElementRange.hierarchy);
+      const element = this.xmlTracker.elementWithPosIn(document, position);
+      if (element) {
+        logger.debug(`Completion requested in element range: ${element.name}`);
+        return this.elementNameCompletion(schema, document, position, undefined, element.name, element.hierarchy);
       }
     }
     if (checkOnly) {
@@ -1318,7 +1309,7 @@ function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] 
   // Validate action references
   if (actionData) {
     for (const [actionName, references] of actionData.references.entries()) {
-      const hasDefinition = actionData.actions.has(actionName);
+      const hasDefinition = actionData.definitions.has(actionName);
 
       if (!hasDefinition) {
         references.forEach((reference) => {
@@ -1460,11 +1451,11 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
           }
           // Check for action definitions
           if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'library') {
-            actionTracker.addActions(attrValue, scheme, document, attr.valueRange);
+            actionTracker.addActions(attrValue, document, attr.valueRange);
           }
           // Check for action references
           if (scheme === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attr.name)) {
-            actionTracker.addActionsReference(attrValue, scheme, document, attr.valueRange);
+            actionTracker.addActionsReference(attrValue, document, attr.valueRange);
           }
 
           if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
@@ -2183,9 +2174,9 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        const element = xmlTracker.elementStartTagInPosition(document, position);
+        const element = xmlTracker.elementWithPosInStartTag(document, position);
         if (element) {
-          const attribute = xmlTracker.isInAttributeName(document, position);
+          const attribute = xmlTracker.attributeWithPosInName(document, position);
           if (attribute) {
               const hoverText = new vscode.MarkdownString();
               const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, attribute.element.name, attribute.element.hierarchy);
@@ -2198,7 +2189,7 @@ export function activate(context: vscode.ExtensionContext) {
                 hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`\n\n`);
               }
               return new vscode.Hover(hoverText, attribute.nameRange);
-          } else if (xmlTracker.elementNameInPosition(document, position)) {
+          } else if (xmlTracker.elementWithPosInName(document, position)) {
             const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
             const hoverText = new vscode.MarkdownString();
             if (elementInfo) {
@@ -2582,7 +2573,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // Get available actions and find similar ones
                 const actionData = actionTracker.documentActions.get(document);
                 if (actionData) {
-                  const availableActions = Array.from(actionData.actions.keys());
+                  const availableActions = Array.from(actionData.definitions.keys());
                   const similarActions = findSimilarItems(actionName, availableActions);
 
                   similarActions.forEach((similarAction) => {

@@ -87,7 +87,7 @@ export class XmlStructureTracker {
   // private lastParseTimestamps: WeakMap<vscode.TextDocument, number> = new WeakMap();
   private documentInfoMap: WeakMap<vscode.TextDocument, DocumentInfo> = new WeakMap();
 
-  prepareDocumentInfo(document: vscode.TextDocument): DocumentInfo  {
+  private prepareDocumentInfo(document: vscode.TextDocument): DocumentInfo  {
     let documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) {
       // If no document info exists, create a new one
@@ -102,7 +102,7 @@ export class XmlStructureTracker {
   }
 
   // New method to ensure a document is parsed only when needed
-  checkDocumentParsed(document: vscode.TextDocument): boolean {
+  public checkDocumentParsed(document: vscode.TextDocument): boolean {
     const lastModified = document.version;
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) {
@@ -116,7 +116,7 @@ export class XmlStructureTracker {
   }
 
   // Make this method return the parsed elements
-  parseDocument(document: vscode.TextDocument): XmlElement[] {
+  public parseDocument(document: vscode.TextDocument): XmlElement[] {
     let documentInfo = this.prepareDocumentInfo(document);
     if (document.version === documentInfo.lastParsed) {
       // If the document has not changed since last parse, return cached elements
@@ -273,11 +273,11 @@ export class XmlStructureTracker {
     }
   }
 
-  isInAttributeName(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
+  public attributeWithPosInName(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: XmlElement | undefined = this.elementStartTagInPosition(document, position);
+      const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -294,11 +294,11 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  isInAttributeValue(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
+  public attributeWithPosInValue(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
 
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: XmlElement | undefined = this.elementStartTagInPosition(document, position);
+      const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -315,7 +315,7 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  elementInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
+  public elementWithPosIn(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -325,7 +325,7 @@ export class XmlStructureTracker {
     return elements.length > 0 ? elements[0] : undefined;
   }
 
-  elementStartTagInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
+  public elementWithPosInStartTag(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -334,7 +334,7 @@ export class XmlStructureTracker {
     return rootElements.find((element) => element.startTagRange.contains(position));
   }
 
-  elementNameInPosition(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
+  public elementWithPosInName(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
@@ -343,18 +343,8 @@ export class XmlStructureTracker {
     return rootElements.find((element) => element.nameRange.contains(position));
   }
 
-  getOffsets(document: vscode.TextDocument): { index: number; shift: number }[]  {
+  public getOffsets(document: vscode.TextDocument): { index: number; shift: number }[]  {
     return this.documentInfoMap.get(document)?.offsets || [];
-  }
-
-  getElements(document: vscode.TextDocument): XmlElement[] {
-    return this.documentInfoMap.get(document)?.elements || [];
-  }
-
-  getParentElement(document: vscode.TextDocument, element: XmlElement): XmlElement | undefined {
-    if (element.parent === undefined) return undefined;
-
-    return element.parent;
   }
 
   /**
