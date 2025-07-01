@@ -484,6 +484,16 @@ type ScriptVariableAtPosition = {
   location: vscode.Location;
 };
 
+type ScriptVariableDefinition = {
+  name: string;
+  definition: vscode.Location;
+};
+
+type ScriptVariableReferences = {
+  name: string;
+  references: vscode.Location[];
+};
+
 class VariableTracker {
   // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
   documentVariables: ScriptVariablesPerDocument = new WeakMap();
@@ -534,47 +544,11 @@ class VariableTracker {
     }
   }
 
-  public getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
-    const scheme = getDocumentScriptType(document);
+  public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | undefined {
 
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
     if (!variablesTypes) return undefined;
-
-    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
-    // Check all variable types for this variable name
-    for (const typeMap of variablesTypes.values()) {
-      const variableData = typeMap.get(normalizedName);
-      if (variableData?.definition) {
-        return variableData.definition;
-      }
-    }
-
-    return undefined;
-  }
-
-  public getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
-    const scheme = getDocumentScriptType(document);
-
-    // Navigate through the map levels
-    const variablesTypes = this.documentVariables.get(document);
-    if (!variablesTypes) return [];
-
-    const typeMap = variablesTypes.get(type);
-    if (!typeMap) return [];
-
-    const normalizedName = name.startsWith('$') ? name.substring(1) : name;
-    const variableData = typeMap.get(normalizedName);
-    if (!variableData) return [];
-
-    return variableData.locations;
-  }
-
-  public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | null {
-
-    // Navigate through the map levels
-    const variablesTypes = this.documentVariables.get(document);
-    if (!variablesTypes) return null;
 
     // Check all variable types
     for (const [variableType, typeMap] of variablesTypes) {
@@ -596,8 +570,31 @@ class VariableTracker {
       }
     }
 
-    return null;
+    return undefined;
   }
+
+
+  public getVariableDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableDefinition | undefined {
+    const variable = this.getVariableAtPosition(document, position);
+    if (!variable) return undefined;
+
+    return { name: variable.variable.name, definition: variable.variable.definition };
+  }
+
+  public getVariableLocations(document: vscode.TextDocument, position: vscode.Position): ScriptVariableReferences | undefined {
+    const variable = this.getVariableAtPosition(document, position);
+    if (!variable) return undefined;
+
+    const references = [...variable.variable.locations];
+    if (variable.variable.definition) {
+      // Remove the definition from references if it exists
+      references.unshift(variable.variable.definition);
+    }
+
+    return { name: variable.variable.name, references: references };
+  }
+
+
 
   public updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
     const scheme = getDocumentScriptType(document);
@@ -682,6 +679,16 @@ type ScriptLabelAtPosition = {
 };
 type ScriptLabels = Map<string, ScriptLabelInfo>;
 
+type ScriptLabelDefinition = {
+  name: string;
+  definition: vscode.Location;
+};
+
+type ScriptLabelReferences = {
+  name: string;
+  references: vscode.Location[];
+};
+
 class LabelTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
   documentLabels: WeakMap<vscode.TextDocument, ScriptLabels> = new WeakMap();
@@ -732,10 +739,7 @@ class LabelTracker {
     }
   }
 
-  public getLabelAtPosition(
-    document: vscode.TextDocument,
-    position: vscode.Position
-  ): ScriptLabelAtPosition {
+  public getLabelAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptLabelAtPosition | undefined {
     const documentData = this.documentLabels.get(document);
     if (!documentData) {
       return undefined;
@@ -762,6 +766,31 @@ class LabelTracker {
     }
 
     return undefined;
+  }
+
+  public getLabelDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptLabelDefinition | undefined {
+
+    const label = this.getLabelAtPosition(document, position);
+    if (!label) {
+      return undefined;
+    }
+    return {
+      name: label.label.name,
+      definition: label.label.definition,
+    };
+  }
+
+  public getLabelReferences(document: vscode.TextDocument, position: vscode.Position): ScriptLabelReferences | undefined {
+    const label = this.getLabelAtPosition(document, position);
+    if (!label) {
+      return undefined;
+    }
+
+    const references = [...label.label.references];
+    if (label.label.definition) {
+      references.unshift(label.label.definition); // Include definition as a reference
+    }
+    return {name: label.label.name, references};
   }
 
   public getAllLabelsForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
@@ -831,6 +860,15 @@ class LabelTracker {
       markdownString.appendMarkdown(defined);
     }
     return markdownString;
+  }
+
+  public getLabelHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
+    const label = this.getLabelAtPosition(document, position);
+    if (!label) {
+      return undefined;
+    }
+    const markdownString = LabelTracker.getLabelDetails(label.label, 'full');
+    return new vscode.Hover(markdownString);
   }
 
   public clearLabelsForDocument(document: vscode.TextDocument): void {
@@ -2261,16 +2299,15 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           // Check for labels
-          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
-          if (labelAtPosition) {
-            const hoverText = LabelTracker.getLabelDetails(labelAtPosition.label, labelAtPosition.isDefinition ? 'definition' : 'reference');
-            return new vscode.Hover(hoverText, labelAtPosition.location.range);
+          const labelHover = labelTracker.getLabelHover(document, position);
+          if (labelHover) {
+            return labelHover;
           }
         }
 
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
 
-        if (variableAtPosition !== null) {
+        if (variableAtPosition) {
           logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
           // Generate hover text for the variable
           const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
@@ -2322,22 +2359,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // Check if we're on a variable
-    const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-    if (variableAtPosition !== null) {
-      // For AI scripts, try to find the definition first
-      if (scheme === aiScriptId) {
-        const definition = variableTracker.getVariableDefinition(variableAtPosition.variable.name, document);
-        if (definition) {
-          logger.debug(
-            `Definition found for variable: ${variableAtPosition.variable.name}: ${definition.range.start.line + 1}`
-          );
-          logger.debug(`Locations:`, variableAtPosition.variable.locations);
-          return definition;
-        }
-      }
-
-      // Fallback to first occurrence - skipped
-      return /* variableAtPosition.locations.length > 0 ? variableAtPosition.locations[0] : */ undefined;
+    const variableDefinition = variableTracker.getVariableDefinition(document, position);
+    if (variableDefinition) {
+      logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
+      return variableDefinition.definition;
     }
 
     if (scheme == aiScriptId) {
@@ -2357,17 +2382,10 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // Check if we're on a label
-      const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
-      if (labelAtPosition) {
-        logger.debug(`Definition found for label: ${labelAtPosition.label.name}`);
-
-        // If we're already at the definition, show references instead
-        // if (labelAtPosition.isDefinition) {
-        return labelAtPosition.label.definition; // Return first reference
-        // } else {
-        //   // If we're at a reference, show the definition
-        //   return labelTracker.getLabelDefinition(labelAtPosition.label.name, document);
-        // }
+      const labelDefinition = labelTracker.getLabelDefinition(document, position);
+      if (labelDefinition) {
+        logger.debug(`Definition found for label: ${labelDefinition.name}`);
+        return labelDefinition.definition;
       }
     }
 
@@ -2612,11 +2630,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Check if we're on a variable
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
-          logger.debug(`References found for variable: ${variableAtPosition.variable.name}`);
-          logger.debug(`Locations:`, variableAtPosition.variable.locations);
-          return variableAtPosition.variable.locations.length > 0 ? variableAtPosition.variable.locations : []; // Return all locations or an empty array
+        const variableReferences = variableTracker.getVariableLocations(document, position);
+        if (variableReferences) {
+          logger.debug(`References found for variable: ${variableReferences.name}`);
+          return variableReferences.references;
         }
         if (scheme == aiScriptId) {
           // Check if we're on an action
@@ -2635,17 +2652,10 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           // Check if we're on a label
-          const labelAtPosition = labelTracker.getLabelAtPosition(document, position);
-          if (labelAtPosition) {
-            logger.debug(`References found for label: ${labelAtPosition.label.name}`);
-
-            const references = [...labelAtPosition.label.references];
-
-            // Combine definition and references for complete list
-            if (labelAtPosition.label.definition) {
-              return [labelAtPosition.label.definition, ...references];
-            }
-            return references;
+          const labelReferences = labelTracker.getLabelReferences(document, position);
+          if (labelReferences) {
+            logger.debug(`References found for label: ${labelReferences.name}`);
+            return labelReferences.references;
           }
         }
         return [];
@@ -2661,13 +2671,13 @@ export function activate(context: vscode.ExtensionContext) {
           return undefined; // Skip if the document is not valid
         }
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition !== null) {
+        if (variableAtPosition) {
           const variableName = variableAtPosition.variable.name;
           const variableType = variableAtPosition.variable.type;
           const locations = variableAtPosition.variable.locations;
           if (variableAtPosition.variable.definition) {
             // If the variable has a definition, use its range for the rename
-            locations.push(variableAtPosition.variable.definition);
+            locations.unshift(variableAtPosition.variable.definition);
           }
 
           // Debug log: Print old name, new name, and locations
