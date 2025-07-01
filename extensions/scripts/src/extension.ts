@@ -467,6 +467,9 @@ class LocationDict implements vscode.DefinitionProvider {
 }
 
 type ScriptVariableInfo = {
+  name: string;
+  scheme: string;
+  type: string;
   definition?: vscode.Location;
   definitionPriority?: number;
   locations: vscode.Location[];
@@ -476,23 +479,19 @@ type ScriptVariablesMap = Map<string, ScriptVariableInfo>;
 type ScriptVariablesPerType = Map<string, ScriptVariablesMap>;
 type ScriptVariablesPerDocument = WeakMap<vscode.TextDocument, ScriptVariablesPerType>;
 
-type ScriptVariableDetails = {
-  name: string;
-  type: string;
+type ScriptVariableAtPosition = {
+  variable: ScriptVariableInfo;
   location: vscode.Location;
-  definition?: vscode.Location;
-  locations: vscode.Location[];
-  scriptType: string;
 };
 
 class VariableTracker {
   // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
   documentVariables: ScriptVariablesPerDocument = new WeakMap();
 
-  addVariable(
+  public addVariable(
     type: string,
     name: string,
-    scriptType: string,
+    scheme: string,
     document: vscode.TextDocument,
     range: vscode.Range,
     isDefinition: boolean = false,
@@ -514,7 +513,7 @@ class VariableTracker {
 
     // Get or create the variable name level
     if (!typeMap.has(normalizedName)) {
-      typeMap.set(normalizedName, { locations: [] });
+      typeMap.set(normalizedName, { name: normalizedName, scheme: scheme, type: type, locations: [] });
     }
     const variableData = typeMap.get(normalizedName)!;
 
@@ -535,7 +534,7 @@ class VariableTracker {
     }
   }
 
-  getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
+  public getVariableDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
@@ -554,7 +553,7 @@ class VariableTracker {
     return undefined;
   }
 
-  getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
+  public getVariableLocations(type: string, name: string, document: vscode.TextDocument): vscode.Location[] {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
@@ -571,8 +570,7 @@ class VariableTracker {
     return variableData.locations;
   }
 
-  getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableDetails | null {
-    const scheme = getDocumentScriptType(document);
+  public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | null {
 
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
@@ -584,23 +582,15 @@ class VariableTracker {
       for (const [variableName, variableData] of typeMap) {
         if (variableData.definition && variableData.definition.range.contains(position)) {
           return {
-            name: variableName,
-            type: variableType,
+            variable: variableData,
             location: variableData.definition,
-            definition: variableData.definition,
-            locations: variableData.locations,
-            scriptType: scheme,
           };
         }
         const variableLocation = variableData.locations.find((loc) => loc.range.contains(position));
         if (variableLocation) {
           return {
-            name: variableName,
-            type: variableType,
+            variable: variableData,
             location: variableLocation,
-            definition: variableData.definition,
-            locations: variableData.locations,
-            scriptType: scheme,
           };
         }
       }
@@ -609,7 +599,7 @@ class VariableTracker {
     return null;
   }
 
-  updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
+  public updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
     const scheme = getDocumentScriptType(document);
 
     // Navigate through the map levels
@@ -624,17 +614,18 @@ class VariableTracker {
 
     const variableData = typeMap.get(normalizedOldName);
     if (!variableData) return;
+    variableData.name = normalizedNewName; // Update the name in the variable data
 
     // Move the variable data to the new name
     typeMap.set(normalizedNewName, variableData);
     typeMap.delete(normalizedOldName);
   }
 
-  clearVariablesForDocument(document: vscode.TextDocument): void {
+  public clearVariablesForDocument(document: vscode.TextDocument): void {
     this.documentVariables.delete(document);
   }
 
-  getAllVariablesForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
+  public getAllVariablesForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
     const result: Map<string, vscode.MarkdownString> = new Map();
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
@@ -648,8 +639,7 @@ class VariableTracker {
         if (prefix === '' || variableName.startsWith(prefix)) {
           // Only add the item if it matches the prefix
           const totalLocations = variableData.locations.length;
-          const info = new vscode.MarkdownString(`${scriptNodes[scheme]?.info || 'Script'} ${variableTypes[variableType] || 'Variable'}: ${variableName}`);
-          info.appendMarkdown(`\n\nUsed ${totalLocations} time${totalLocations !== 1 ? 's' : ''}`);
+          const info = VariableTracker.getVariableDetails(variableData);
           result.set(variableName, info);
         }
       }
@@ -658,7 +648,20 @@ class VariableTracker {
     return result;
   }
 
-  dispose(): void {
+  public static getVariableDetails(variable: ScriptVariableInfo): vscode.MarkdownString {
+    const details = new vscode.MarkdownString();
+    details.appendMarkdown(
+      `**${scriptNodes[variable.scheme]?.info || 'Script'} ${variableTypes[variable.type] || 'Variable'}**: \`${variable.name}\`\n\n`
+    );
+
+    details.appendMarkdown(
+      `**Used**: ${variable.locations.length} time${variable.locations.length !== 1 ? 's' : ''}\n\n`
+    );
+    details.appendMarkdown('**Defined**: ' + (variable.definition ? `at line ${variable.definition.range.start.line + 1}` : 'definition not found'));
+    return details;
+  }
+
+  public dispose(): void {
     this.documentVariables = new WeakMap();
   }
 
@@ -2253,23 +2256,9 @@ export function activate(context: vscode.ExtensionContext) {
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
 
         if (variableAtPosition !== null) {
-          logger.debug(`Hovering over variable: ${variableAtPosition.name}`);
+          logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
           // Generate hover text for the variable
-          const hoverText = new vscode.MarkdownString();
-          hoverText.appendMarkdown(
-            `**${scriptNodes[variableAtPosition.scriptType]?.info || 'Script'} ${variableTypes[variableAtPosition.type] || 'Variable'}**: \`${variableAtPosition.name}\`\n\n`
-          );
-
-          hoverText.appendMarkdown(
-            `Used ${variableAtPosition.locations.length} time${variableAtPosition.locations.length !== 1 ? 's' : ''}\n\n`
-          );
-          const definition = variableTracker.getVariableDefinition(variableAtPosition.name, document);
-          if (definition) {
-            const definitionPosition = definition.range.start;
-            hoverText.appendMarkdown(`Defined at line ${definitionPosition.line + 1}`);
-          } else {
-            hoverText.appendMarkdown(`*Action definition not found*`);
-          }
+          const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
           return new vscode.Hover(hoverText, variableAtPosition.location.range); // Updated to use variableAtPosition[0].range
         }
 
@@ -2322,12 +2311,12 @@ export function activate(context: vscode.ExtensionContext) {
     if (variableAtPosition !== null) {
       // For AI scripts, try to find the definition first
       if (scheme === aiScriptId) {
-        const definition = variableTracker.getVariableDefinition(variableAtPosition.name, document);
+        const definition = variableTracker.getVariableDefinition(variableAtPosition.variable.name, document);
         if (definition) {
           logger.debug(
-            `Definition found for variable: ${variableAtPosition.name}: ${definition.range.start.line + 1}`
+            `Definition found for variable: ${variableAtPosition.variable.name}: ${definition.range.start.line + 1}`
           );
-          logger.debug(`Locations:`, variableAtPosition.locations);
+          logger.debug(`Locations:`, variableAtPosition.variable.locations);
           return definition;
         }
       }
@@ -2610,9 +2599,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Check if we're on a variable
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
-          logger.debug(`References found for variable: ${variableAtPosition.name}`);
-          logger.debug(`Locations:`, variableAtPosition.locations);
-          return variableAtPosition.locations.length > 0 ? variableAtPosition.locations : []; // Return all locations or an empty array
+          logger.debug(`References found for variable: ${variableAtPosition.variable.name}`);
+          logger.debug(`Locations:`, variableAtPosition.variable.locations);
+          return variableAtPosition.variable.locations.length > 0 ? variableAtPosition.variable.locations : []; // Return all locations or an empty array
         }
         if (scheme == aiScriptId) {
           // Check if we're on an action
@@ -2659,12 +2648,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
         if (variableAtPosition !== null) {
-          const variableName = variableAtPosition.name;
-          const variableType = variableAtPosition.type;
-          const locations = variableAtPosition.locations;
-          if (variableAtPosition.definition) {
+          const variableName = variableAtPosition.variable.name;
+          const variableType = variableAtPosition.variable.type;
+          const locations = variableAtPosition.variable.locations;
+          if (variableAtPosition.variable.definition) {
             // If the variable has a definition, use its range for the rename
-            locations.push(variableAtPosition.definition);
+            locations.push(variableAtPosition.variable.definition);
           }
 
           // Debug log: Print old name, new name, and locations
