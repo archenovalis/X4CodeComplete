@@ -22,12 +22,226 @@ class TypeEntry {
   }
 }
 
-export class CompletionDict {
-  typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
-  allProp: Map<string, string> = new Map<string, string>();
-  allPropItems: vscode.CompletionItem[] = [];
-  keywordItems: vscode.CompletionItem[] = [];
-  descriptions: Map<string, string> = new Map<string, string>();
+
+interface XPathResult {
+  $: { [key: string]: string };
+}
+
+interface ScriptProperty {
+  $: {
+    name: string;
+    result: string;
+    type?: string;
+  };
+}
+interface Keyword {
+  $: {
+    name: string;
+    type?: string;
+    pseudo?: string;
+    description?: string;
+  };
+  property?: [ScriptProperty];
+  import?: [
+    {
+      $: {
+        source: string;
+        select: string;
+      };
+      property: [
+        {
+          $: {
+            name: string;
+          };
+        },
+      ];
+    },
+  ];
+}
+
+interface Datatype {
+  $: {
+    name: string;
+    type?: string;
+    suffix?: string;
+  };
+  property?: [ScriptProperty];
+}
+
+export class ScriptProperties {
+  private librariesFolder: string;
+  private scriptPropertiesPath: string;
+  private keywords: Keyword[] = [];
+  private datatypes: Datatype[] = [];
+  private dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
+  private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
+  private allProp: Map<string, string> = new Map<string, string>();
+  private allPropItems: vscode.CompletionItem[] = [];
+  private keywordItems: vscode.CompletionItem[] = [];
+  private descriptions: Map<string, string> = new Map<string, string>();
+
+  constructor(librariesFolder: string) {
+    this.librariesFolder = librariesFolder;
+    this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
+    this.readScriptProperties(this.scriptPropertiesPath);
+  }
+
+  dispose(): void {
+    this.keywords = [];
+    this.datatypes = [];
+    this.dict.clear();
+    this.typeDict.clear();
+    this.allProp.clear();
+    this.allPropItems = [];
+    this.keywordItems = [];
+    this.descriptions.clear();
+  }
+
+
+
+
+  private readScriptProperties(filepath: string): void {
+    logger.info('Attempting to read scriptproperties.xml');
+    // Can't move on until we do this so use sync version
+    const rawData = fs.readFileSync(filepath).toString();
+    let parsedData : any;
+
+    xml2js.parseString(rawData, (err: any, result: any) => {
+      if (err !== null) {
+        vscode.window.showErrorMessage('Error during parsing of scriptproperties.xml:' + err);
+      }
+      parsedData = result;
+    });
+
+    if (parsedData !== undefined) {
+      // Process keywords and datatypes here, return the completed results
+      this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
+      this.datatypes = this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
+      this.addTypeLiteral('boolean', '==false');
+      logger.info('Parsed scriptproperties.xml');
+    }
+
+    this.makeKeywords();
+  }
+
+
+  private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
+    const name = prop.$.name;
+    logger.debug('\tProperty read: ', name);
+    this.addPropertyLocation(rawData, name, parent, parentType);
+    this.addProperty(parent, name, prop.$.type, prop.$.result);
+  }
+
+  private processKeyword(rawData: string, e: Keyword) {
+    const name = e.$.name;
+    this.addNonPropertyLocation(rawData, name, 'keyword');
+    this.addDescription(name, e.$.description);
+    logger.debug('Keyword read: ' + name);
+
+    if (e.import !== undefined) {
+      const imp = e.import[0];
+      const src = imp.$.source;
+      const select = imp.$.select;
+      const tgtName = imp.property[0].$.name;
+      this.processKeywordImport(name, src, select, tgtName);
+    } else if (e.property !== undefined) {
+      e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop));
+    }
+  }
+
+  private processKeywordImport(name: string, src: string, select: string, targetName: string) {
+    const srcPath = path.join(this.librariesFolder, src);
+    logger.info('Attempting to import: ' + src);
+    // Can't move on until we do this so use sync version
+    const rawData = fs.readFileSync(srcPath).toString();
+    let parsedData: any;
+    xml2js.parseString(rawData, function (err: any, result: any) {
+      if (err !== null) {
+        vscode.window.showErrorMessage('Error during parsing of ' + src + err);
+      }
+      parsedData = result;
+    });
+    if (parsedData !== undefined) {
+      const matches = xpath.find(parsedData, select + '/' + targetName);
+      matches.forEach((element: XPathResult) => {
+        this.addTypeLiteral(name, element.$[targetName.substring(1)]);
+      });
+    }
+  }
+
+
+
+  private processDatatype(rawData: any, e: Datatype) {
+    const name = e.$.name;
+    this.addNonPropertyLocation(rawData, name, 'datatype');
+    logger.debug('Datatype read: ' + name);
+    if (e.property === undefined) {
+      return;
+    }
+    this.addType(name, e.$.type);
+    e.property.forEach((prop) => this.processProperty(rawData, name, 'datatype', prop));
+  }
+
+  // Process all keywords in the XML
+  private processKeywords(rawData: string, keywords: any[]): Keyword[] {
+    const processedKeywords: Keyword[] = [];
+    keywords.forEach((e: Keyword) => {
+      this.processKeyword(rawData, e);
+      processedKeywords.push(e); // Add processed keyword to the array
+    });
+    return processedKeywords;
+  }
+
+  // Process all datatypes in the XML
+  private processDatatypes(rawData: string, datatypes: any[]): Datatype[] {
+    const processedDatatypes: Datatype[] = [];
+    datatypes.forEach((e: Datatype) => {
+      this. processDatatype(rawData, e);
+      processedDatatypes.push(e); // Add processed datatype to the array
+    });
+    return processedDatatypes;
+  }
+
+  addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
+    const range = new vscode.Range(start, end);
+    const uri = vscode.Uri.file(file);
+    this.dict.set(cleanStr(name), new vscode.Location(uri, range));
+  }
+
+  addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
+    // make sure we don't care about platform & still count right https://stackoverflow.com/a/8488787
+    const line = rawData.substring(0, rawIdx).split(/\r\n|\r|\n/).length - 1;
+    const startIdx = Math.max(rawData.lastIndexOf('\n', rawIdx), rawData.lastIndexOf('\r', rawIdx));
+    const start = new vscode.Position(line, rawIdx - startIdx);
+    const endIdx = rawData.indexOf('>', rawIdx) + 2;
+    const end = new vscode.Position(line, endIdx - rawIdx);
+    this.addLocation(name, this.scriptPropertiesPath, start, end);
+  }
+
+  addNonPropertyLocation(rawData: string, name: string, tagType: string): void {
+    const rawIdx = rawData.search('<' + tagType + ' name="' + escapeRegex(name) + '"[^>]*>');
+    this.addLocationForRegexMatch(rawData, rawIdx, name);
+  }
+
+  addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): void {
+    const re = new RegExp(
+      '(?:<' +
+        parentType +
+        ' name="' +
+        escapeRegex(parent) +
+        '"[^>]*>.*?)(<property name="' +
+        escapeRegex(name) +
+        '"[^>]*>)',
+      's'
+    );
+    const matches = rawData.match(re);
+    if (matches === null || matches.index === undefined) {
+      logger.info("strangely couldn't find property named:", name, 'parent:', parent);
+      return;
+    }
+    const rawIdx = matches.index + matches[0].indexOf(matches[1]);
+    this.addLocationForRegexMatch(rawData, rawIdx, parent + '.' + name);
+  }
 
   addType(key: string, supertype?: string): void {
     const k = cleanStr(key);
@@ -78,7 +292,7 @@ export class CompletionDict {
       return;
     } else if (type !== undefined) {
       this.allProp.set(shortProp, type);
-      const item = CompletionDict.createItem(shortProp, CompletionDict.getPropertyDescription(shortProp, type, details));
+      const item = ScriptProperties.createItem(shortProp, ScriptProperties.getPropertyDescription(shortProp, type, details));
       this.allPropItems.push(item);
     }
   }
@@ -134,7 +348,7 @@ export class CompletionDict {
       return;
     }
 
-    const item = CompletionDict.createItem(complete, info);
+    const item = ScriptProperties.createItem(complete, info);
 
     logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.documentation);
     items.set(complete, item);
@@ -151,7 +365,7 @@ export class CompletionDict {
     return result;
   }
 
-  buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
+  private buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
     // TODO handle better
     if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(typeName) > -1) {
       return;
@@ -173,13 +387,13 @@ export class CompletionDict {
 
     for (const prop of entry.properties.entries()) {
       if (prefix === '' || prop[0].startsWith(prefix)) {
-        CompletionDict.addItem(items, prop[0], CompletionDict.getPropertyDescription(prop[0], prop[1], entry.details.get(prop[0])));
+        ScriptProperties.addItem(items, prop[0], ScriptProperties.getPropertyDescription(prop[0], prop[1], entry.details.get(prop[0])));
       }
     }
     for (const literal of entry.literals.values()) {
       if (prefix === '' || literal.startsWith(prefix)) {
         // If the literal starts with the prefix, add it to the items
-        CompletionDict.addItem(items, literal);
+        ScriptProperties.addItem(items, literal);
       }
     }
     if (entry.supertype !== undefined) {
@@ -187,7 +401,8 @@ export class CompletionDict {
       this.buildType(typeName, entry.supertype, items, depth /*  + 1 */);
     }
   }
-  makeCompletionList(items: Map<string, vscode.CompletionItem>|vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
+
+  private makeCompletionList(items: Map<string, vscode.CompletionItem>|vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
     if (items instanceof Map) {
       items = Array.from(items.values());
     }
@@ -201,7 +416,7 @@ export class CompletionDict {
     return new vscode.CompletionList(items, isIncomplete);
   }
 
-  makeKeywords(): void {
+  private makeKeywords(): void {
     this.keywordItems = Array.from(this.typeDict.keys()).map((key) => {
       const item = new vscode.CompletionItem(key, vscode.CompletionItemKind.Keyword);
       if (this.descriptions.has(key)) {
@@ -231,330 +446,7 @@ export class CompletionDict {
     ];
   }
 
-  processText(textToProcess: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
-    const items = new Map<string, vscode.CompletionItem>();
-    const interesting = CompletionDict.findRelevantPortion(textToProcess);
-    if (interesting === null) {
-      logger.debug('no relevant portion detected');
-      return this.keywordItems;
-    }
-    let prevToken = interesting[0];
-    const newToken = interesting[1];
-    logger.debug('Previous token: ', interesting[0], ' New token: ', interesting[1]);
-    // If we have a previous token & it's in the typeDictionary or a property with type, only use that's entries
-    if (prevToken !== '') {
-      prevToken = this.typeDict.has(prevToken)
-        ? prevToken
-        : this.allProp.has(prevToken)
-          ? this.allProp.get(prevToken) || ''
-          : '';
-      if (prevToken === undefined || prevToken === '') {
-        logger.debug('Missing previous token!');
-        return this.makeCompletionList(newToken.length > 0
-          ? this.allPropItems.filter((item) => {
-              const label = typeof item.label === 'string' ? item.label : item.label.label;
-              return label.startsWith(newToken);
-            })
-          : this.allPropItems,
-            newToken
-          );
-      } else {
-        logger.debug(`Matching on type: ${prevToken}!`);
-        this.buildType(newToken, prevToken, items, 0);
-        return this.makeCompletionList(items, newToken);
-      }
-    }
-    // Ignore tokens where all we have is a short string and no previous data to go off of
-    if (prevToken === '' && newToken === '') {
-      logger.debug('Ignoring short token without context!');
-      return undefined;
-    }
-    // Now check for the special hard to complete ones
-    // if (prevToken.startsWith('{')) {
-    //   if (exceedinglyVerbose) {
-    //     logger.info('Matching bracketed type');
-    //   }
-    //   const token = prevToken.substring(1);
-
-    //   const entry = this.typeDict.get(token);
-    //   if (entry === undefined) {
-    //     if (exceedinglyVerbose) {
-    //       logger.info('Failed to match bracketed type');
-    //     }
-    //   } else {
-    //     entry.literals.forEach((value) => {
-    //       this.addItem(items, value + '}');
-    //     });
-    //   }
-    // }
-
-    logger.debug('Trying fallback');
-    // Otherwise fall back to looking at keys of the typeDictionary for the new string
-    for (const key of this.typeDict.keys()) {
-      if (!key.startsWith(newToken)) {
-        continue;
-      }
-      this.buildType('', key, items, 0);
-    }
-    return this.makeCompletionList(items);
-  }
-
-  dispose(): void {
-    this.typeDict.clear();
-    this.allProp.clear();
-    this.allPropItems = [];
-    this.keywordItems = [];
-    this.descriptions.clear();
-  }
-
-}
-
-
-interface XPathResult {
-  $: { [key: string]: string };
-}
-
-interface ScriptProperty {
-  $: {
-    name: string;
-    result: string;
-    type?: string;
-  };
-}
-interface Keyword {
-  $: {
-    name: string;
-    type?: string;
-    pseudo?: string;
-    description?: string;
-  };
-  property?: [ScriptProperty];
-  import?: [
-    {
-      $: {
-        source: string;
-        select: string;
-      };
-      property: [
-        {
-          $: {
-            name: string;
-          };
-        },
-      ];
-    },
-  ];
-}
-
-interface Datatype {
-  $: {
-    name: string;
-    type?: string;
-    suffix?: string;
-  };
-  property?: [ScriptProperty];
-}
-
-
-export class LocationDict {
-  dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
-  private scriptPropertiesPath: string;
-
-  constructor(scriptPropertiesPath: string) {
-    this.scriptPropertiesPath = scriptPropertiesPath;
-  }
-
-  addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
-    const range = new vscode.Range(start, end);
-    const uri = vscode.Uri.file(file);
-    this.dict.set(cleanStr(name), new vscode.Location(uri, range));
-  }
-
-  addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
-    // make sure we don't care about platform & still count right https://stackoverflow.com/a/8488787
-    const line = rawData.substring(0, rawIdx).split(/\r\n|\r|\n/).length - 1;
-    const startIdx = Math.max(rawData.lastIndexOf('\n', rawIdx), rawData.lastIndexOf('\r', rawIdx));
-    const start = new vscode.Position(line, rawIdx - startIdx);
-    const endIdx = rawData.indexOf('>', rawIdx) + 2;
-    const end = new vscode.Position(line, endIdx - rawIdx);
-    this.addLocation(name, this.scriptPropertiesPath, start, end);
-  }
-
-  addNonPropertyLocation(rawData: string, name: string, tagType: string): void {
-    const rawIdx = rawData.search('<' + tagType + ' name="' + escapeRegex(name) + '"[^>]*>');
-    this.addLocationForRegexMatch(rawData, rawIdx, name);
-  }
-
-  addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): void {
-    const re = new RegExp(
-      '(?:<' +
-        parentType +
-        ' name="' +
-        escapeRegex(parent) +
-        '"[^>]*>.*?)(<property name="' +
-        escapeRegex(name) +
-        '"[^>]*>)',
-      's'
-    );
-    const matches = rawData.match(re);
-    if (matches === null || matches.index === undefined) {
-      logger.info("strangely couldn't find property named:", name, 'parent:', parent);
-      return;
-    }
-    const rawIdx = matches.index + matches[0].indexOf(matches[1]);
-    this.addLocationForRegexMatch(rawData, rawIdx, parent + '.' + name);
-  }
-
-  provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
-    const schema = getDocumentScriptType(document);
-    if (schema == '') {
-      return undefined; // Skip if the document is not valid
-    }
-    const line = document.lineAt(position).text;
-    const start = line.lastIndexOf('"', position.character);
-    const end = line.indexOf('"', position.character);
-    let relevant = line.substring(start, end).trim().replace('"', '');
-    do {
-      if (this.dict.has(relevant)) {
-        return this.dict.get(relevant);
-      }
-      relevant = relevant.substring(relevant.indexOf('.') + 1);
-    } while (relevant.length > 0);
-    return undefined;
-  }
-
-  dispose(): void {
-    this.dict.clear();
-  }
-}
-
-export class ScriptProperties {
-  private scriptPropertiesPath: string;
-  private keywords: Keyword[] = [];
-  private datatypes: Datatype[] = [];
-  public completionDictionary: CompletionDict;
-  public definitionDictionary: LocationDict;
-
-  constructor(scriptPropertiesFolder: string) {
-    this.scriptPropertiesPath = scriptPropertiesFolder;
-    this.completionDictionary = new CompletionDict();
-    const scriptPropertiesPath = path.join(scriptPropertiesFolder, 'scriptproperties.xml');
-    this.definitionDictionary = new LocationDict(scriptPropertiesPath);
-    this.readScriptProperties(scriptPropertiesPath);
-  }
-
-  dispose(): void {
-    this.completionDictionary.dispose();
-    this.definitionDictionary.dispose();
-  }
-
-
-
-
-  private readScriptProperties(filepath: string): void {
-    logger.info('Attempting to read scriptproperties.xml');
-    // Can't move on until we do this so use sync version
-    const rawData = fs.readFileSync(filepath).toString();
-    let parsedData : any;
-
-    xml2js.parseString(rawData, (err: any, result: any) => {
-      if (err !== null) {
-        vscode.window.showErrorMessage('Error during parsing of scriptproperties.xml:' + err);
-      }
-      parsedData = result;
-    });
-
-    if (parsedData !== undefined) {
-      // Process keywords and datatypes here, return the completed results
-      this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
-      this.datatypes = this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
-      this.completionDictionary.addTypeLiteral('boolean', '==false');
-      logger.info('Parsed scriptproperties.xml');
-    }
-
-    this.completionDictionary.makeKeywords();
-  }
-
-
-  private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
-    const name = prop.$.name;
-    logger.debug('\tProperty read: ', name);
-    this.definitionDictionary.addPropertyLocation(rawData, name, parent, parentType);
-    this.completionDictionary.addProperty(parent, name, prop.$.type, prop.$.result);
-  }
-
-  private processKeyword(rawData: string, e: Keyword) {
-    const name = e.$.name;
-    this.definitionDictionary.addNonPropertyLocation(rawData, name, 'keyword');
-    this.completionDictionary.addDescription(name, e.$.description);
-    logger.debug('Keyword read: ' + name);
-
-    if (e.import !== undefined) {
-      const imp = e.import[0];
-      const src = imp.$.source;
-      const select = imp.$.select;
-      const tgtName = imp.property[0].$.name;
-      this.processKeywordImport(name, src, select, tgtName);
-    } else if (e.property !== undefined) {
-      e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop));
-    }
-  }
-
-  private processKeywordImport(name: string, src: string, select: string, targetName: string) {
-    const srcPath = path.join(this.scriptPropertiesPath, src);
-    logger.info('Attempting to import: ' + src);
-    // Can't move on until we do this so use sync version
-    const rawData = fs.readFileSync(srcPath).toString();
-    let parsedData: any;
-    xml2js.parseString(rawData, function (err: any, result: any) {
-      if (err !== null) {
-        vscode.window.showErrorMessage('Error during parsing of ' + src + err);
-      }
-      parsedData = result;
-    });
-    if (parsedData !== undefined) {
-      const matches = xpath.find(parsedData, select + '/' + targetName);
-      matches.forEach((element: XPathResult) => {
-        this.completionDictionary.addTypeLiteral(name, element.$[targetName.substring(1)]);
-      });
-    }
-  }
-
-
-
-  private processDatatype(rawData: any, e: Datatype) {
-    const name = e.$.name;
-    this.definitionDictionary.addNonPropertyLocation(rawData, name, 'datatype');
-    logger.debug('Datatype read: ' + name);
-    if (e.property === undefined) {
-      return;
-    }
-    this.completionDictionary.addType(name, e.$.type);
-    e.property.forEach((prop) => this.processProperty(rawData, name, 'datatype', prop));
-  }
-
-  // Process all keywords in the XML
-  private processKeywords(rawData: string, keywords: any[]): Keyword[] {
-    const processedKeywords: Keyword[] = [];
-    keywords.forEach((e: Keyword) => {
-      this.processKeyword(rawData, e);
-      processedKeywords.push(e); // Add processed keyword to the array
-    });
-    return processedKeywords;
-  }
-
-  // Process all datatypes in the XML
-  private processDatatypes(rawData: string, datatypes: any[]): Datatype[] {
-    const processedDatatypes: Datatype[] = [];
-    datatypes.forEach((e: Datatype) => {
-      this. processDatatype(rawData, e);
-      processedDatatypes.push(e); // Add processed datatype to the array
-    });
-    return processedDatatypes;
-  }
-
-
-  public generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
+  private generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
     // Ensure keyword is valid
     if (!keyword || !keyword.$) {
       return '';
@@ -634,13 +526,90 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-
   public processText(textToProcess: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
-    return this.completionDictionary.processText(textToProcess);
+    const items = new Map<string, vscode.CompletionItem>();
+    const interesting = ScriptProperties.findRelevantPortion(textToProcess);
+    if (interesting === null) {
+      logger.debug('no relevant portion detected');
+      return this.keywordItems;
+    }
+    let prevToken = interesting[0];
+    const newToken = interesting[1];
+    logger.debug('Previous token: ', interesting[0], ' New token: ', interesting[1]);
+    // If we have a previous token & it's in the typeDictionary or a property with type, only use that's entries
+    if (prevToken !== '') {
+      prevToken = this.typeDict.has(prevToken)
+        ? prevToken
+        : this.allProp.has(prevToken)
+          ? this.allProp.get(prevToken) || ''
+          : '';
+      if (prevToken === undefined || prevToken === '') {
+        logger.debug('Missing previous token!');
+        return this.makeCompletionList(newToken.length > 0
+          ? this.allPropItems.filter((item) => {
+              const label = typeof item.label === 'string' ? item.label : item.label.label;
+              return label.startsWith(newToken);
+            })
+          : this.allPropItems,
+            newToken
+          );
+      } else {
+        logger.debug(`Matching on type: ${prevToken}!`);
+        this.buildType(newToken, prevToken, items, 0);
+        return this.makeCompletionList(items, newToken);
+      }
+    }
+    // Ignore tokens where all we have is a short string and no previous data to go off of
+    if (prevToken === '' && newToken === '') {
+      logger.debug('Ignoring short token without context!');
+      return undefined;
+    }
+    // Now check for the special hard to complete ones
+    // if (prevToken.startsWith('{')) {
+    //   if (exceedinglyVerbose) {
+    //     logger.info('Matching bracketed type');
+    //   }
+    //   const token = prevToken.substring(1);
+
+    //   const entry = this.typeDict.get(token);
+    //   if (entry === undefined) {
+    //     if (exceedinglyVerbose) {
+    //       logger.info('Failed to match bracketed type');
+    //     }
+    //   } else {
+    //     entry.literals.forEach((value) => {
+    //       this.addItem(items, value + '}');
+    //     });
+    //   }
+    // }
+
+    logger.debug('Trying fallback');
+    // Otherwise fall back to looking at keys of the typeDictionary for the new string
+    for (const key of this.typeDict.keys()) {
+      if (!key.startsWith(newToken)) {
+        continue;
+      }
+      this.buildType('', key, items, 0);
+    }
+    return this.makeCompletionList(items);
   }
 
-  provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
-    return this.definitionDictionary.provideDefinition(document, position);
+  public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
+    const schema = getDocumentScriptType(document);
+    if (schema == '') {
+      return undefined; // Skip if the document is not valid
+    }
+    const line = document.lineAt(position).text;
+    const start = line.lastIndexOf('"', position.character);
+    const end = line.indexOf('"', position.character);
+    let relevant = line.substring(start, end).trim().replace('"', '');
+    do {
+      if (this.dict.has(relevant)) {
+        return this.dict.get(relevant);
+      }
+      relevant = relevant.substring(relevant.indexOf('.') + 1);
+    } while (relevant.length > 0);
+    return undefined;
   }
 
   private generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes: Datatype[]): string {

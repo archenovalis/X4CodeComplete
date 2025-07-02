@@ -8,7 +8,7 @@ import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureT
 import { logger, setLoggerLevel } from './logger/logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 import { ReferencedItemsTracker, findSimilarItems, checkReferencedItemAttributeType, ScriptReferencedCompletion } from './scripts/scriptReferencedItems';
-import { CompletionDict, LocationDict, ScriptProperties } from './scripts/scriptProperties';
+import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 
 // this method is called when your extension is activated
