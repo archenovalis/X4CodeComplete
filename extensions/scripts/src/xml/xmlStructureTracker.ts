@@ -16,6 +16,7 @@ export interface XmlElement {
 export interface XmlElementAttribute {
   name: string;
   element: XmlElement; // Reference to the element this attribute belongs to
+  range: vscode.Range; // Full range of the attribute including name and value
   nameRange: vscode.Range;
   valueRange: vscode.Range;
   quoteChar: string;
@@ -30,14 +31,23 @@ function patchUnclosedTags(text: string): {
   let patchedText = text;
   let delta = 0;
 
-  // Find potential open tags that are never closed
+  // First, patch unclosed attributes (missing closing quotes)
+  const attributePatches = patchUnclosedAttributes(patchedText);
+  patchedText = attributePatches.patchedText;
+  offsetMap.push(...attributePatches.offsetMap.map(offset => ({
+    index: offset.index + delta,
+    shift: offset.shift
+  })));
+  delta += attributePatches.offsetMap.reduce((sum, offset) => sum + offset.shift, 0);
+
+  // Then, patch unclosed tags
   const regex = /<([a-zA-Z_][\w\-.:]*)([^<]*)/g;
   let match;
 
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = regex.exec(patchedText)) !== null) {
     const tagStart = match.index;
     const tagContent = match[0];
-    const afterTag = text.slice(tagStart + tagContent.length, tagStart + tagContent.length + 500);
+    const afterTag = patchedText.slice(tagStart + tagContent.length, tagStart + tagContent.length + 500);
 
     // Skip if it already has a proper closing bracket `>` before any new tag starts
     const closingBracket = tagContent.indexOf('>');
@@ -52,11 +62,132 @@ function patchUnclosedTags(text: string): {
 
     if (nextClose === -1 || (nextAngle !== -1 && nextAngle < nextClose)) {
       // It's an unclosed tag. Patch with `/>` just before the next tag or end of match.
-      const insertAt = tagStart + tagContent.length + delta;
+      const insertAt = tagStart + tagContent.length;
       patchedText =
         patchedText.slice(0, insertAt) + '/>' + patchedText.slice(insertAt);
-      offsetMap.push({ index: insertAt, shift: 2 });
+      offsetMap.push({ index: insertAt - delta, shift: 2 });
       delta += 2;
+    }
+  }
+
+  return { patchedText, offsetMap };
+}
+
+function patchUnclosedAttributes(text: string): {
+  patchedText: string;
+  offsetMap: { index: number; shift: number }[];
+} {
+  const offsetMap: { index: number; shift: number }[] = [];
+  let patchedText = text;
+  let delta = 0;
+
+  // Regex to find attribute patterns: attribute="value or attribute='value
+  // This matches: word="anything or word='anything (without closing quote)
+  const attributeRegex = /([A-Za-z_][A-Za-z0-9_.-]+)\s*=\s*(["'])([^"']*?)(?=\s+[A-Za-z_][A-Za-z0-9_.-]+\s*=|\/>|>|<|$)/g;
+  let match;
+
+  // Keep track of processed positions to avoid infinite loops
+  const processedPositions = new Set<number>();
+
+  while ((match = attributeRegex.exec(patchedText)) !== null) {
+    const matchStart = match.index;
+
+    // Skip if we've already processed this position
+    if (processedPositions.has(matchStart)) {
+      continue;
+    }
+    processedPositions.add(matchStart);
+
+    const attributeName = match[1];
+    const openQuote = match[2]; // " or '
+    const attributeValue = match[3];
+    const fullMatch = match[0];
+
+    // Check if this attribute value is properly closed
+    const expectedCloseQuote = openQuote;
+    const valueStartIdx = matchStart + fullMatch.indexOf(openQuote) + 1;
+    const restOfText = patchedText.slice(valueStartIdx);
+
+    // Look for the closing quote, considering multiline values
+    let closeQuoteIdx = -1;
+    let searchIdx = 0;
+    let inQuotes = false;
+
+    for (let i = 0; i < restOfText.length; i++) {
+      const char = restOfText[i];
+      const twoChars = restOfText.slice(i, i + 2);
+
+      if (char === expectedCloseQuote && !inQuotes) {
+        closeQuoteIdx = i;
+        break;
+      }
+
+      // Handle nested quotes or escaped characters
+      if (char === '\\') {
+        i++; // Skip next character (escaped)
+        continue;
+      }
+
+      // Stop searching if we hit a new tag or attribute
+      if (char === '<' || ((char === '>' || twoChars === '/>') && !inQuotes)) {
+        break;
+      }
+
+      // Stop if we find what looks like a new attribute (word=)
+      if (i > 0 && /\s+[A-Za-z_][A-Za-z0-9_.-]+\s*=/.test(restOfText.slice(i))) {
+        break;
+      }
+    }
+
+    // If no closing quote found, we need to patch it
+    if (closeQuoteIdx === -1) {
+      // Find where to insert the closing quote
+      let insertPosition = valueStartIdx + attributeValue.length;
+
+      // Look ahead to find a good insertion point
+      const remainingText = patchedText.slice(insertPosition);
+
+      // Try to find the end of this attribute value by looking for:
+      // 1. Start of next attribute (whitespace + word + =)
+      // 2. End of tag (> or />)
+      // 3. Start of new tag (<)
+      const nextAttrMatch = remainingText.match(/\s+(\w+)\s*=/);
+      const nextTagEnd = remainingText.search(/\s*\/?>/);
+      const nextTagStart = remainingText.indexOf('<');
+
+      let endPosition = remainingText.length;
+
+      if (nextAttrMatch && nextAttrMatch.index !== undefined) {
+        endPosition = Math.min(endPosition, nextAttrMatch.index);
+      }
+      if (nextTagEnd !== -1) {
+        endPosition = Math.min(endPosition, nextTagEnd);
+      }
+      if (nextTagStart !== -1) {
+        endPosition = Math.min(endPosition, nextTagStart);
+      }
+
+      // Trim whitespace from the end
+      const valueToClose = remainingText.slice(0, endPosition);
+      const trimmedLength = valueToClose.length - valueToClose.trimEnd().length;
+      endPosition -= trimmedLength;
+
+      insertPosition += endPosition;
+
+      // Insert the missing closing quote
+      patchedText =
+        patchedText.slice(0, insertPosition) +
+        expectedCloseQuote +
+        patchedText.slice(insertPosition);
+
+      offsetMap.push({
+        index: insertPosition - delta,
+        shift: 1
+      });
+      delta += 1;
+
+      // Update regex lastIndex to account for the insertion
+      attributeRegex.lastIndex = insertPosition + 1;
     }
   }
 
@@ -124,11 +255,14 @@ export class XmlStructureTracker {
     }
     try {
       const text = document.getText();
-      const { patchedText, offsetMap } = patchUnclosedTags(text);
+      const patchedForAttributes = patchUnclosedTags(text);
+      const patchedForTags = patchUnclosedTags(patchedForAttributes.patchedText);
+      const offsetMap = patchedForAttributes.offsetMap.concat(patchedForTags.offsetMap);
+      const patchedText = patchedForTags.patchedText;
       documentInfo.offsets = offsetMap;
 
       // Create a non-strict parser to be more tolerant of errors
-      const parser = sax.parser(true);
+      const parser = sax.parser(false, {lowercase: true});
 
       const elements: XmlElement[] = [];
       const openElementStack: XmlElement[] = [];
@@ -179,33 +313,42 @@ export class XmlStructureTracker {
             for (const [attrName, attrValue] of Object.entries(node.attributes)) {
               try {
                 // Find attribute name position in raw text
-                const attrNameIndex = attributesText.indexOf(`${attrName}="${attrValue}"`);
+                let attrNameIndex = attributesText.indexOf(`${attrName}="${attrValue}"`);
+                let attributeText = `${attrName}="${attrValue}"`;
+                if (attrNameIndex === -1 && attrValue === '') {
+                  // Try to find without quotes
+                  attrNameIndex = attributesText.indexOf(`${attrName}="${attrValue}`);
+                  attributeText = `${attrName}="${attrValue}`;
+                }
                 if (attrNameIndex > 0) {
                   // Find attribute value and its quotes
-                  const equalsIndex = attributesText.indexOf('=', attrNameIndex + attrName.length);
-                  if (equalsIndex > 0 && equalsIndex < attributesText.length - 1) {
-                    const quoteChar = attributesText[equalsIndex + 1];
-                    if (quoteChar === '"' || quoteChar === "'") {
-                      const valueStartIndex = equalsIndex + 2; // Skip = and opening quote
-                      const valueEndIndex = attributesText.indexOf(quoteChar, valueStartIndex);
+                  const equalsIndex = attributeText.indexOf('=', attrName.length);
+                  if (equalsIndex > 0 && equalsIndex < attributeText.length - 1) {
+                    const quoteChar = attributeText[equalsIndex + 1];
+                    const valueStartIndex = equalsIndex + 2; // Skip = and opening quote
+                    let valueEndIndex = attributeText.indexOf(quoteChar, valueStartIndex);
+                    if (valueEndIndex === -1) {
+                      valueEndIndex = valueStartIndex + attrValue.length; // Fallback to end of value
+                    }
 
-                      if (valueEndIndex > 0) {
-                        const attrNameStart = document.positionAt(tagStartPos + attrNameIndex);
-                        const attrNameEnd = document.positionAt(tagStartPos + attrNameIndex + attrName.length);
-                        const valueStart = document.positionAt(tagStartPos + valueStartIndex);
-                        const valueEnd = document.positionAt(tagStartPos + valueEndIndex);
+                    if (valueEndIndex > 0) {
+                      const attrNameStart = document.positionAt(tagStartPos + attrNameIndex);
+                      const attrNameEnd = document.positionAt(tagStartPos + attrNameIndex + attrName.length);
+                      const valueStart = document.positionAt(tagStartPos + attrNameIndex + valueStartIndex);
+                      const valueEnd = document.positionAt(tagStartPos + attrNameIndex + valueEndIndex);
+                      const attrEnd = document.positionAt(tagStartPos + attrNameIndex + attributeText.length);
 
-                        const attribute: XmlElementAttribute = {
-                          name: attrName,
-                          element: newElement, // Reference to the element this attribute belongs to
-                          nameRange: new vscode.Range(attrNameStart, attrNameEnd),
-                          valueRange: new vscode.Range(valueStart, valueEnd),
-                          quoteChar: quoteChar,
-                          elementId: currentIndex,
-                        };
+                      const attribute: XmlElementAttribute = {
+                        name: attrName,
+                        element: newElement, // Reference to the element this attribute belongs to
+                        range: new vscode.Range(attrNameStart, attrEnd), // Include the closing quote in the range
+                        nameRange: new vscode.Range(attrNameStart, attrNameEnd),
+                        valueRange: new vscode.Range(valueStart, valueEnd),
+                        quoteChar: quoteChar,
+                        elementId: currentIndex,
+                      };
 
-                        newElement.attributes.push(attribute);
-                      }
+                      newElement.attributes.push(attribute);
                     }
                   }
                 }

@@ -837,12 +837,12 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
       }
       if (attribute === undefined) {
         if (checkOnly) {
-          return undefined; // Return empty list if only checking
+          return undefined; // Return undefined if only checking
         }
         if (characterAtPosition !== '=' && elementAttributes !== undefined) {
           return ScriptCompletion.attributeNameCompletion(element, elementAttributes);
         } else {
-          return ScriptCompletion.emptyCompletion;; // Skip if not in an attribute value
+          return ScriptCompletion.emptyCompletion; // Skip if not in an attribute value
         }
       }
       if (checkOnly) {
