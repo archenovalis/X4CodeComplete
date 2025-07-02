@@ -279,12 +279,12 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
 
   private xsdReference: XsdReference;
   private xmlTracker: XmlStructureTracker;
-  private scriptProperties: CompletionDict;
+  private scriptProperties: ScriptProperties;
   private labelTracker: ReferencedItemsTracker;
   private actionsTracker: ReferencedItemsTracker;
   private variablesTracker: VariableTracker;
 
-  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: CompletionDict, labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsTracker, variablesTracker: VariableTracker) {
+  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: ScriptProperties, labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsTracker, variablesTracker: VariableTracker) {
     this.xsdReference = xsdReference;
     this.xmlTracker = xmlStructureTracker;
     this.scriptProperties = scriptProperties;
@@ -990,7 +990,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Load script properties
   scriptProperties = new ScriptProperties( path.join(rootpath, '/libraries'));
   xsdReference = new XsdReference(path.join(rootpath, 'libraries'));
-  scriptCompletionProvider= new ScriptCompletion(xsdReference, xmlTracker, scriptProperties.completionDictionary, labelTracker, actionsTracker, variableTracker)
+  scriptCompletionProvider= new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, labelTracker, actionsTracker, variableTracker)
 
   const sel: vscode.DocumentSelector = { language: 'xml' };
 
@@ -1038,24 +1038,8 @@ export function activate(context: vscode.ExtensionContext) {
             return labelDefinition.definition;
           }
         }
-
         // Default handling for other definitions
-        const line = document.lineAt(position).text;
-        const start = line.lastIndexOf('"', position.character);
-        const end = line.indexOf('"', position.character);
-        let relevant = line.substring(start, end).trim().replace('"', '');
-        do {
-          if (scriptProperties.definitionDictionary.dict.has(relevant)) {
-            return scriptProperties.definitionDictionary.dict.get(relevant);
-          }
-          if (relevant.indexOf('.') !== -1) {
-            relevant = relevant.substring(relevant.indexOf('.') + 1);
-          } else {
-            break; // No more dots to process
-          }
-        } while (relevant.length > 0);
-
-        return undefined;
+        return scriptProperties.provideDefinition(document, position);
       }
     })
   );

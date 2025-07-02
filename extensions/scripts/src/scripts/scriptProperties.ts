@@ -406,8 +406,8 @@ export class LocationDict {
   }
 
   provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
-    const scheme = getDocumentScriptType(document);
-    if (scheme == '') {
+    const schema = getDocumentScriptType(document);
+    if (schema == '') {
       return undefined; // Skip if the document is not valid
     }
     const line = document.lineAt(position).text;
@@ -419,7 +419,7 @@ export class LocationDict {
         return this.dict.get(relevant);
       }
       relevant = relevant.substring(relevant.indexOf('.') + 1);
-    } while (relevant.indexOf('.') !== -1);
+    } while (relevant.length > 0);
     return undefined;
   }
 
@@ -634,7 +634,16 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-  public generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes: Datatype[]): string {
+
+  public processText(textToProcess: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+    return this.completionDictionary.processText(textToProcess);
+  }
+
+  provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
+    return this.definitionDictionary.provideDefinition(document, position);
+  }
+
+  private generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes: Datatype[]): string {
     let hoverText = '';
 
     // Find keywords that match the hoverWord either in their name or property names
