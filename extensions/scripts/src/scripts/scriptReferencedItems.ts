@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { logger } from './logger';
+import { logger } from '../logger/logger';
 
 export type ScriptReferencedItemInfo = {
   name: string;
@@ -97,7 +97,7 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
   ['resume#label', { type: 'label', attrType: 'reference' }],
   ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['action#name', { type: 'actions', attrType: 'definition' }],
+  ['actions#name', { type: 'actions', attrType: 'definition' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
 ]);
 

@@ -6,10 +6,10 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
 import * as path from 'path';
 import * as sax from 'sax';
-import { xmlTracker, XmlElement, XmlStructureTracker } from './xmlStructureTracker';
-import { logger, setLoggerLevel } from './logger';
+import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
+import { logger, setLoggerLevel } from './logger/logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
-import { ReferencedItemsTracker, findSimilarItems, checkReferencedItemAttributeType, ScriptReferencedCompletion } from './scriptReferencedItems';
+import { ReferencedItemsTracker, findSimilarItems, checkReferencedItemAttributeType, ScriptReferencedCompletion } from './scripts/scriptReferencedItems';
 import { get } from 'http';
 
 // this method is called when your extension is activated
