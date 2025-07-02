@@ -9,6 +9,7 @@ import * as sax from 'sax';
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xmlStructureTracker';
 import { logger, setLoggerLevel } from './logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
+import { ReferencedItemsTracker, findSimilarItems } from './scriptReferencedItems';
 import { get } from 'http';
 
 // this method is called when your extension is activated
@@ -665,350 +666,15 @@ class VariableTracker {
 }
 
 const variableTracker = new VariableTracker();
+const labelTracker = new ReferencedItemsTracker('label');
+const actionsTracker = new ReferencedItemsTracker('actions');
 
-type ScriptLabelInfo = {
-  name: string;
-  definition: vscode.Location;
-  references: vscode.Location[];
-};
-
-type ScriptLabelAtPosition = {
-  label: ScriptLabelInfo;
-  location: vscode.Location;
-  isDefinition: boolean;
-};
-type ScriptLabels = Map<string, ScriptLabelInfo>;
-
-type ScriptLabelDefinition = {
-  name: string;
-  definition: vscode.Location;
-};
-
-type ScriptLabelReferences = {
-  name: string;
-  references: vscode.Location[];
-};
-
-class LabelTracker {
-  // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
-  documentLabels: WeakMap<vscode.TextDocument, ScriptLabels> = new WeakMap();
-
-  public addLabelDefinition(name: string, document: vscode.TextDocument, range: vscode.Range): void {
-    // Get or create the label map for the document
-    if (!this.documentLabels.has(document)) {
-      this.documentLabels.set(document, new Map<string, ScriptLabelInfo>());
-    }
-    const labelsData = this.documentLabels.get(document);
-
-    if (!labelsData.has(name)) {
-      // Create a new label info object if it doesn't exist
-      labelsData.set(name, {
-        name: name,
-        definition: new vscode.Location(document.uri, range),
-        references: [],
-      });
-    } else {
-      // If it exists, update the definition location if it's not already set
-      const existingLabel = labelsData.get(name)!;
-      if (!existingLabel.definition || existingLabel.definition.range.isEmpty) {
-        existingLabel.definition = new vscode.Location(document.uri, range);
-      }
-    }
-  }
-
-  public addLabelReference(name: string, document: vscode.TextDocument, range: vscode.Range): void {
-    // Get or create the label map for the document
-    if (!this.documentLabels.has(document)) {
-      this.documentLabels.set(document, new Map<string, ScriptLabelInfo>());
-    }
-    const labelsData = this.documentLabels.get(document);
-
-    if (!labelsData.has(name)) {
-      // Create a new label info object if it doesn't exist
-      labelsData.set(name, {
-        name: name,
-        definition: undefined,
-        references: [new vscode.Location(document.uri, range)],
-      });
-    } else {
-      // If it exists, update the definition location if it's not already set
-      const existingLabel = labelsData.get(name)!;
-      if (!existingLabel.references.some((ref) => ref.range.isEqual(range))) {
-        existingLabel.references.push(new vscode.Location(document.uri, range));
-      }
-    }
-  }
-
-  public getLabelAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptLabelAtPosition | undefined {
-    const documentData = this.documentLabels.get(document);
-    if (!documentData) {
-      return undefined;
-    }
-
-    for (const [labelName, labelData] of documentData.entries()) {
-      // Check if position is at a label definition
-      if (labelData.definition && labelData.definition.range.contains(position)) {
-        return {
-          label: labelData,
-          location: labelData.definition,
-          isDefinition: true,
-        };
-      }
-      // Check if position is at a label reference
-      const referenceLocation = labelData.references.find((loc) => loc.range.contains(position));
-      if (referenceLocation) {
-        return {
-          label: labelData,
-          location: referenceLocation,
-          isDefinition: false,
-        };
-      }
-    }
-
-    return undefined;
-  }
-
-  public getLabelDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptLabelDefinition | undefined {
-
-    const label = this.getLabelAtPosition(document, position);
-    if (!label) {
-      return undefined;
-    }
-    return {
-      name: label.label.name,
-      definition: label.label.definition,
-    };
-  }
-
-  public getLabelReferences(document: vscode.TextDocument, position: vscode.Position): ScriptLabelReferences | undefined {
-    const label = this.getLabelAtPosition(document, position);
-    if (!label) {
-      return undefined;
-    }
-
-    const references = [...label.label.references];
-    if (label.label.definition) {
-      references.unshift(label.label.definition); // Include definition as a reference
-    }
-    return {name: label.label.name, references};
-  }
-
-  public getAllLabelsForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
-    const result: Map<string, vscode.MarkdownString> = new Map();
-    const documentData = this.documentLabels.get(document);
-    if (!documentData) {
-      return result;
-    }
-    // Process all labels
-    for (const [labelName, labelData] of documentData.entries()) {
-      if (labelData.definition && (prefix === '' || labelName.startsWith(prefix))) {
-      // Only add the item if it matches the prefix
-        result.set(labelName, LabelTracker.getLabelDetails(labelData, 'full'));
-      }
-    }
-
-    return result;
-  }
-
-  public validateLabels(document: vscode.TextDocument): vscode.Diagnostic[] {
-    const diagnostics: vscode.Diagnostic[] = [];
-    const documentData = this.documentLabels.get(document);
-    if (!documentData) {
-      return diagnostics;
-    }
-
-    for (const [labelName, labelData] of documentData.entries()) {
-      // Check if the label is invalid (has no definition or references)
-      if (!labelData.definition) {
-        labelData.references.forEach((reference) => {
-          const diagnostic = new vscode.Diagnostic(
-            reference.range,
-            `Label '${labelName}' is not defined`,
-            vscode.DiagnosticSeverity.Error
-          );
-          diagnostic.code = 'undefined-label';
-          diagnostic.source = 'X4CodeComplete';
-          diagnostics.push(diagnostic);
-        });
-      } else if (labelData.references.length === 0) {
-        const diagnostic = new vscode.Diagnostic(
-          labelData.definition.range,
-          `Label '${labelName}' is not used`,
-          vscode.DiagnosticSeverity.Warning
-        );
-        diagnostic.code = 'unused-label';
-        diagnostic.source = 'X4CodeComplete';
-        diagnostics.push(diagnostic);
-      }
-    }
-    return diagnostics;
-  }
-
-  public static getLabelDetails(label: ScriptLabelInfo, detailsType: 'full' | 'definition' | 'reference'): vscode.MarkdownString {
-    const markdownString = new vscode.MarkdownString();
-    const defined = `**Defined**: ${label.definition ? `at line ${label.definition.range.start.line + 1}` : 'not found'}`;
-    const referenced = `**Referenced**: ${label.references.length} time${label.references.length !== 1 ? 's' : ''}`;
-    if (detailsType === 'full') {
-      markdownString.appendMarkdown(`**Label**: \`${label.name}\`\n\n`);
-      markdownString.appendMarkdown(defined + '\n\n');
-      markdownString.appendMarkdown(referenced);
-    } else if (detailsType === 'definition') {
-      markdownString.appendMarkdown(`**Label Definition**: \`${label.name}\`\n\n`);
-      markdownString.appendMarkdown(referenced);
-    } else {
-      markdownString.appendMarkdown(`**Label Reference**: \`${label.name}\`\n\n`);
-      markdownString.appendMarkdown(defined);
-    }
-    return markdownString;
-  }
-
-  public getLabelHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
-    const label = this.getLabelAtPosition(document, position);
-    if (!label) {
-      return undefined;
-    }
-    const markdownString = LabelTracker.getLabelDetails(label.label, 'full');
-    return new vscode.Hover(markdownString);
-  }
-
-  public clearLabelsForDocument(document: vscode.TextDocument): void {
-    this.documentLabels.delete(document);
-  }
-
-  public dispose(): void {
-    this.documentLabels = new WeakMap();
-  }
-}
-
-const labelTracker = new LabelTracker();
-
-type ActionsLocal = {
-  definitions: Map<string, vscode.Location>;
-  references: Map<string, vscode.Location[]>;
-}
 
 type ExternalPositions = Map<string, number>;
 type ExternalActions = Map<string, ExternalPositions>;
 // ActionTracker class for tracking AIScript actions
-class ActionsTracker {
-  // Map to store actions per document: Map<DocumentURI, Map<ActionName, vscode.Location>>
-  documentActions: WeakMap<vscode.TextDocument, ActionsLocal> = new Map();
 
-  addActions(name: string, document: vscode.TextDocument, range: vscode.Range): void {
-    // Get or create the action map for the document
-    if (!this.documentActions.has(document)) {
-      this.documentActions.set(document, {
-        definitions: new Map(),
-        references: new Map(),
-      });
-    }
-    const actionData = this.documentActions.get(document)!;
 
-    // Add the action definition location
-    actionData.definitions.set(name, new vscode.Location(document.uri, range));
-
-    // Initialize references map if not exists
-    if (!actionData.references.has(name)) {
-      actionData.references.set(name, []);
-    }
-  }
-
-  addActionsReference(name: string, document: vscode.TextDocument, range: vscode.Range): void {
-    // Get or create the action map for the document
-    if (!this.documentActions.has(document)) {
-      this.documentActions.set(document, {
-        definitions: new Map(),
-        references: new Map(),
-      });
-    }
-    const actionData = this.documentActions.get(document)!;
-
-    // Add the reference location
-    if (!actionData.references.has(name)) {
-      actionData.references.set(name, []);
-    }
-    actionData.references.get(name)!.push(new vscode.Location(document.uri, range));
-  }
-
-  getActionsDefinition(name: string, document: vscode.TextDocument): vscode.Location | undefined {
-    const documentData = this.documentActions.get(document);
-    if (!documentData) {
-      return undefined;
-    }
-    return documentData.definitions.get(name);
-  }
-
-  getActionsReferences(name: string, document: vscode.TextDocument): vscode.Location[] {
-    const documentData = this.documentActions.get(document);
-    if (!documentData || !documentData.references.has(name)) {
-      return [];
-    }
-    return documentData.references.get(name) || [];
-  }
-
-  getActionsAtPosition(
-    document: vscode.TextDocument,
-    position: vscode.Position
-  ): { name: string; location: vscode.Location; isDefinition: boolean } | null {
-    const documentData = this.documentActions.get(document);
-    if (!documentData) {
-      return null;
-    }
-
-    // Check if position is at an action definition
-    for (const [actionName, location] of documentData.definitions.entries()) {
-      if (location.range.contains(position)) {
-        return {
-          name: actionName,
-          location: location,
-          isDefinition: true,
-        };
-      }
-    }
-
-    // Check if position is at an action reference
-    for (const [actionName, locations] of documentData.references.entries()) {
-      const referenceLocation = locations.find((loc) => loc.range.contains(position));
-      if (referenceLocation) {
-        return {
-          name: actionName,
-          location: referenceLocation,
-          isDefinition: false,
-        };
-      }
-    }
-
-    return null;
-  }
-
-  getAllActionsForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
-    const result: Map<string, vscode.MarkdownString> = new Map();
-    const documentData = this.documentActions.get(document);
-    if (!documentData) {
-      return result;
-    }
-    const schema = getDocumentScriptType(document);
-    // Process all actions
-    for (const [name, location] of documentData.definitions.entries()) {
-      if (prefix === '' || name.startsWith(prefix)) {
-        // Only add the item if it matches the prefix
-        result.set(name, new vscode.MarkdownString(`AI Script Action in ${scriptNodes[schema]?.info || 'Script'}`));
-      }
-    }
-
-    return result;
-  }
-
-  clearActionsForDocument(document: vscode.TextDocument): void {
-    this.documentActions.delete(document);
-  }
-
-  dispose(): void {
-    this.documentActions = new WeakMap();
-  }
-}
-
-const actionTracker = new ActionsTracker();
 
 class ScriptCompletion implements vscode.CompletionItemProvider {
 
@@ -1025,11 +691,11 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
   private xsdReference: XsdReference;
   private xmlTracker: XmlStructureTracker;
   private scriptProperties: CompletionDict;
-  private labelTracker: LabelTracker;
-  private actionsTracker: ActionsTracker;
+  private labelTracker: ReferencedItemsTracker;
+  private actionsTracker: ReferencedItemsTracker;
   private variablesTracker: VariableTracker;
 
-  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: CompletionDict, labelTracker: LabelTracker, actionsTracker: ActionsTracker, variablesTracker: VariableTracker) {
+  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: CompletionDict, labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsTracker, variablesTracker: VariableTracker) {
     this.xsdReference = xsdReference;
     this.xmlTracker = xmlStructureTracker;
     this.scriptProperties = scriptProperties;
@@ -1220,7 +886,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
         }
-        const labelCompletion = this.labelTracker.getAllLabelsForDocumentMap(document, prefix);
+        const labelCompletion = this.labelTracker.getAllItemsForDocumentMap(document, prefix);
         if (labelCompletion.size > 0) {
           for (const [labelName, info] of labelCompletion.entries()) {
             ScriptCompletion.addItem(items, 'label', labelName, info, attribute.valueRange);
@@ -1235,7 +901,7 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
         }
-        const actionCompletion = this.actionsTracker.getAllActionsForDocumentMap(document, prefix);
+        const actionCompletion = this.actionsTracker.getAllItemsForDocumentMap(document, prefix);
         if (actionCompletion.size > 0) {
           for (const [actionName, info] of actionCompletion.entries()) {
             ScriptCompletion.addItem(items, 'actions', actionName, info, attribute.valueRange);
@@ -1367,36 +1033,12 @@ function getDocumentScriptType(document: vscode.TextDocument): string {
 }
 
 function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
-  const scheme = getDocumentScriptType(document);
-  if (scheme !== aiScriptId) {
-    return []; // Only validate AI scripts
-  }
-
-  const actionData = actionTracker.documentActions.get(document);
 
   const diagnostics: vscode.Diagnostic[] = [];
 
-  diagnostics.push(...labelTracker.validateLabels(document));
+  diagnostics.push(...labelTracker.validateItems(document));
+  diagnostics.push(...actionsTracker.validateItems(document));
 
-  // Validate action references
-  if (actionData) {
-    for (const [actionName, references] of actionData.references.entries()) {
-      const hasDefinition = actionData.definitions.has(actionName);
-
-      if (!hasDefinition) {
-        references.forEach((reference) => {
-          const diagnostic = new vscode.Diagnostic(
-            reference.range,
-            `Action '${actionName}' is not defined`,
-            vscode.DiagnosticSeverity.Error
-          );
-          diagnostic.code = 'undefined-action';
-          diagnostic.source = 'X4CodeComplete';
-          diagnostics.push(diagnostic);
-        });
-      }
-    }
-  }
   return diagnostics;
 }
 
@@ -1433,8 +1075,8 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
   // Clear existing data for this document
   variableTracker.clearVariablesForDocument(document);
-  labelTracker.clearLabelsForDocument(document);
-  actionTracker.clearActionsForDocument(document);
+  labelTracker.clearItemsForDocument(document);
+  actionsTracker.clearItemsForDocument(document);
 
   // Use the XML structure to find labels, actions, and variables more efficiently
   const text = document.getText();
@@ -1515,19 +1157,19 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
 
           // Check for label definitions
           if (scheme === aiScriptId && element.name === 'label' && attr.name === 'name') {
-            labelTracker.addLabelDefinition(attrValue, document, attr.valueRange);
+            labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
           }
           // Check for label references
           if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
-            labelTracker.addLabelReference(attrValue, document, attr.valueRange);
+            labelTracker.addItemReference(attrValue, document, attr.valueRange);
           }
           // Check for action definitions
           if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'library') {
-            actionTracker.addActions(attrValue, document, attr.valueRange);
+            actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
           }
           // Check for action references
           if (scheme === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attr.name)) {
-            actionTracker.addActionsReference(attrValue, document, attr.valueRange);
+            actionsTracker.addItemReference(attrValue, document, attr.valueRange);
           }
 
           if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
@@ -2155,7 +1797,7 @@ export function activate(context: vscode.ExtensionContext) {
     ['mdscript', path.join(rootpath, 'libraries/md.xsd')],
   ]);
   xsdReference = new XsdReference(path.join(rootpath, 'libraries'));
-  scriptCompletionProvider= new ScriptCompletion(xsdReference, xmlTracker, completionProvider, labelTracker, actionTracker, variableTracker)
+  scriptCompletionProvider= new ScriptCompletion(xsdReference, xmlTracker, completionProvider, labelTracker, actionsTracker, variableTracker)
   // Load language files and wait for completion
   loadLanguageFiles(rootpath, extensionsFolder)
     .then(() => {
@@ -2276,30 +1918,12 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (scheme == aiScriptId) {
           // Check for actions (only in AI scripts)
-          const actionAtPosition = actionTracker.getActionsAtPosition(document, position);
-          if (actionAtPosition !== null) {
-            const hoverText = new vscode.MarkdownString();
-            const references = actionTracker.getActionsReferences(actionAtPosition.name, document);
-
-            if (actionAtPosition.isDefinition) {
-              hoverText.appendMarkdown(`**AI Script Action Definition**: \`${actionAtPosition.name}\`\n\n`);
-              hoverText.appendMarkdown(`Referenced ${references.length} time${references.length !== 1 ? 's' : ''}`);
-            } else {
-              hoverText.appendMarkdown(`**AI Script Action Reference**: \`${actionAtPosition.name}\`\n\n`);
-              const definition = actionTracker.getActionsDefinition(actionAtPosition.name, document);
-              if (definition) {
-                const definitionPosition = definition.range.start;
-                hoverText.appendMarkdown(`Defined at line ${definitionPosition.line + 1}`);
-              } else {
-                hoverText.appendMarkdown(`*Action definition not found*`);
-              }
-            }
-
-            return new vscode.Hover(hoverText, actionAtPosition.location.range);
+          const actionsHover = actionsTracker.getItemHover(document, position);
+          if (actionsHover) {
+            return actionsHover;
           }
-
           // Check for labels
-          const labelHover = labelTracker.getLabelHover(document, position);
+          const labelHover = labelTracker.getItemHover(document, position);
           if (labelHover) {
             return labelHover;
           }
@@ -2367,22 +1991,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (scheme == aiScriptId) {
       // Check if we're on an action (only in AI scripts)
-      const actionAtPosition = actionTracker.getActionsAtPosition(document, position);
-      if (actionAtPosition !== null) {
-        logger.debug(`Definition found for action: ${actionAtPosition.name}`);
-
-        // If we're already at the definition, show references instead
-        if (actionAtPosition.isDefinition) {
-          const refs = actionTracker.getActionsReferences(actionAtPosition.name, document);
-          return refs.length > 0 ? refs[0] : undefined; // Return first reference if available
-        } else {
-          // If we're at a reference, show the definition
-          return actionTracker.getActionsDefinition(actionAtPosition.name, document);
-        }
+      const actionsDefinition = actionsTracker.getItemDefinition(document, position);
+      if (actionsDefinition) {
+        logger.debug(`Definition found for action: ${actionsDefinition.name}`);
+        return actionsDefinition.definition;
       }
 
       // Check if we're on a label
-      const labelDefinition = labelTracker.getLabelDefinition(document, position);
+      const labelDefinition = labelTracker.getItemDefinition(document, position);
       if (labelDefinition) {
         logger.debug(`Definition found for label: ${labelDefinition.name}`);
         return labelDefinition.definition;
@@ -2534,24 +2150,18 @@ export function activate(context: vscode.ExtensionContext) {
               // Quick fix to create label definition
               const labelName = diagnostic.message.match(/'(.+)'/)?.[1];
               if (labelName) {
-                // Get available labels and find similar ones
-                const documentData = labelTracker.documentLabels.get(document);
-                if (documentData) {
-                  const availableLabels = Array.from(documentData.keys());
-                  const similarLabels = findSimilarItems(labelName, availableLabels);
-
-                  similarLabels.forEach((similarLabel) => {
-                    const replaceAction = new vscode.CodeAction(
-                      `Replace with existing label '${similarLabel}'`,
-                      vscode.CodeActionKind.QuickFix
-                    );
-                    replaceAction.edit = new vscode.WorkspaceEdit();
-                    replaceAction.edit.replace(document.uri, diagnostic.range, similarLabel);
-                    replaceAction.diagnostics = [diagnostic];
-                    replaceAction.isPreferred = similarLabels.indexOf(similarLabel) === 0; // Mark most similar as preferred
-                    actions.push(replaceAction);
-                  });
-                }
+                const similarLabels = labelTracker.getSimilarItems(document, labelName);
+                similarLabels.forEach((similarLabel) => {
+                  const replaceAction = new vscode.CodeAction(
+                    `Replace with existing label '${similarLabel}'`,
+                    vscode.CodeActionKind.QuickFix
+                  );
+                  replaceAction.edit = new vscode.WorkspaceEdit();
+                  replaceAction.edit.replace(document.uri, diagnostic.range, similarLabel);
+                  replaceAction.diagnostics = [diagnostic];
+                  replaceAction.isPreferred = similarLabels.indexOf(similarLabel) === 0; // Mark most similar as preferred
+                  actions.push(replaceAction);
+                });
               }
             } else if (diagnostic.code === 'undefined-action') {
               // Quick fix to create action definition
@@ -2592,24 +2202,19 @@ export function activate(context: vscode.ExtensionContext) {
                 createAction.diagnostics = [diagnostic];
                 actions.push(createAction);
 
-                // Get available actions and find similar ones
-                const actionData = actionTracker.documentActions.get(document);
-                if (actionData) {
-                  const availableActions = Array.from(actionData.definitions.keys());
-                  const similarActions = findSimilarItems(actionName, availableActions);
+                const similarActions = actionsTracker.getSimilarItems(document, actionName);
 
-                  similarActions.forEach((similarAction) => {
-                    const replaceAction = new vscode.CodeAction(
-                      `Replace with existing action '${similarAction}'`,
-                      vscode.CodeActionKind.QuickFix
-                    );
-                    replaceAction.edit = new vscode.WorkspaceEdit();
-                    replaceAction.edit.replace(document.uri, diagnostic.range, similarAction);
-                    replaceAction.diagnostics = [diagnostic];
-                    replaceAction.isPreferred = similarActions.indexOf(similarAction) === 0; // Mark most similar as preferred
-                    actions.push(replaceAction);
-                  });
-                }
+                similarActions.forEach((similarAction) => {
+                  const replaceAction = new vscode.CodeAction(
+                    `Replace with existing action '${similarAction}'`,
+                    vscode.CodeActionKind.QuickFix
+                  );
+                  replaceAction.edit = new vscode.WorkspaceEdit();
+                  replaceAction.edit.replace(document.uri, diagnostic.range, similarAction);
+                  replaceAction.diagnostics = [diagnostic];
+                  replaceAction.isPreferred = similarActions.indexOf(similarAction) === 0; // Mark most similar as preferred
+                  actions.push(replaceAction);
+                });
               }
             }
           }
@@ -2637,22 +2242,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
         if (scheme == aiScriptId) {
           // Check if we're on an action
-          const actionAtPosition = actionTracker.getActionsAtPosition(document, position);
-          if (actionAtPosition !== null) {
-            logger.debug(`References found for action: ${actionAtPosition.name}`);
-
-            const references = actionTracker.getActionsReferences(actionAtPosition.name, document);
-            const definition = actionTracker.getActionsDefinition(actionAtPosition.name, document);
-
-            // Combine definition and references for complete list
-            if (definition) {
-              return [definition, ...references];
-            }
-            return references;
+          const actionsReferences = actionsTracker.getItemReferences(document, position);
+          if (actionsReferences) {
+            logger.debug(`References found for action: ${actionsReferences.name}`);
+            return actionsReferences.references;
           }
 
           // Check if we're on a label
-          const labelReferences = labelTracker.getLabelReferences(document, position);
+          const labelReferences = labelTracker.getItemReferences(document, position);
           if (labelReferences) {
             logger.debug(`References found for label: ${labelReferences.name}`);
             return labelReferences.references;
@@ -2734,10 +2331,10 @@ export function deactivate() {
       labelTracker.dispose();
     }
 
-    if (actionTracker) {
+    if (actionsTracker) {
       // Clear all document-specific data
       // Note: WeakMap will be garbage collected automatically
-      actionTracker.dispose();
+      actionsTracker.dispose();
     }
 
     // Clear XML tracker data
@@ -2784,61 +2381,4 @@ export function deactivate() {
   } catch (error) {
     logger.error('Error during extension deactivation:', error);
   }
-}
-
-// Helper function to calculate string similarity (Levenshtein distance based)
-function calculateSimilarity(str1: string, str2: string): number {
-  const longer = str1.length > str2.length ? str1 : str2;
-  const shorter = str1.length > str2.length ? str2 : str1;
-
-  if (longer.length === 0) {
-    return 1.0;
-  }
-
-  const editDistance = levenshteinDistance(longer, shorter);
-  return (longer.length - editDistance) / longer.length;
-}
-
-function levenshteinDistance(str1: string, str2: string): number {
-  const matrix = Array(str2.length + 1)
-    .fill(null)
-    .map(() => Array(str1.length + 1).fill(null));
-
-  for (let i = 0; i <= str1.length; i++) {
-    matrix[0][i] = i;
-  }
-
-  for (let j = 0; j <= str2.length; j++) {
-    matrix[j][0] = j;
-  }
-
-  for (let j = 1; j <= str2.length; j++) {
-    for (let i = 1; i <= str1.length; i++) {
-      if (str1[i - 1] === str2[j - 1]) {
-        matrix[j][i] = matrix[j - 1][i - 1];
-      } else {
-        matrix[j][i] = Math.min(
-          matrix[j - 1][i] + 1, // deletion
-          matrix[j][i - 1] + 1, // insertion
-          matrix[j - 1][i - 1] + 1 // substitution
-        );
-      }
-    }
-  }
-
-  return matrix[str2.length][str1.length];
-}
-
-// Helper function to find similar items
-function findSimilarItems(targetName: string, availableItems: string[], maxSuggestions: number = 5): string[] {
-  const similarities = availableItems.map((item) => ({
-    name: item,
-    similarity: calculateSimilarity(targetName.toLowerCase(), item.toLowerCase()),
-  }));
-
-  return similarities
-    .filter((item) => item.similarity > 0.3) // Only include items with > 30% similarity
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, maxSuggestions)
-    .map((item) => item.name);
 }
