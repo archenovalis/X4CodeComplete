@@ -25,6 +25,16 @@ export type ScriptReferencedItemsReferences = {
   references: vscode.Location[];
 };
 
+export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
+
+export type ScriptReferencedItemsDetectionItem = {
+  type: 'label' | 'actions';
+  attrType: 'definition' | 'reference';
+};
+
+type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
+
+
 // Helper function to calculate string similarity (Levenshtein distance based)
 function calculateSimilarity(str1: string, str2: string): number {
   const longer = str1.length > str2.length ? str1 : str2;
@@ -80,6 +90,26 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, maxSuggestions)
     .map((item) => item.name);
+}
+
+const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
+  ['label#name', { type: 'label', attrType: 'definition' }],
+  ['resume#label', { type: 'label', attrType: 'reference' }],
+  ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
+  ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
+  ['action#name', { type: 'actions', attrType: 'definition' }],
+  ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
+]);
+
+
+
+export function checkReferencedItemAttributeType(elementName, attributeName): ScriptReferencedItemsDetectionItem | undefined {
+  let key = `${elementName}#${attributeName}`;
+  if (scriptReferencedItemsDetectionMap.has(key)) {
+    const item = scriptReferencedItemsDetectionMap.get(key);
+    return item ? item : undefined;
+  }
+  return undefined;
 }
 
 export class ReferencedItemsTracker {
@@ -194,8 +224,8 @@ export class ReferencedItemsTracker {
     return {name: item.item.name, references};
   }
 
-  public getAllItemsForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
-    const result: Map<string, vscode.MarkdownString> = new Map();
+  public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
+    const result: ScriptReferencedCompletion = new Map();
     const documentData = this.documentReferencedItems.get(document);
     if (!documentData) {
       return result;

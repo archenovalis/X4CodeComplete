@@ -9,7 +9,7 @@ import * as sax from 'sax';
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xmlStructureTracker';
 import { logger, setLoggerLevel } from './logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
-import { ReferencedItemsTracker, findSimilarItems } from './scriptReferencedItems';
+import { ReferencedItemsTracker, findSimilarItems, checkReferencedItemAttributeType, ScriptReferencedCompletion } from './scriptReferencedItems';
 import { get } from 'http';
 
 // this method is called when your extension is activated
@@ -69,17 +69,6 @@ const scriptTypesToSchema = {
   [mdScriptId]: 'md',
 };
 
-// Map of elements and their attributes that can contain label references
-const labelElementAttributeMap: { [element: string]: string[] } = {
-  resume: ['label'],
-  run_interrupt_script: ['resume'],
-  abort_called_scripts: ['resume'],
-};
-
-// Map of elements and their attributes that can contain action references
-const actionsElementAttributeMap: { [element: string]: string[] } = {
-  include_interrupt_actions: ['ref'],
-};
 
 // Add settings validation function
 function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
@@ -880,35 +869,33 @@ class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       }
+      const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attribute.name);
+      let valueCompletion: ScriptReferencedCompletion = new Map();
       // Check if we're in a label or action context
-      if (schema === aiScriptId && labelElementAttributeMap[element.name]?.includes(attribute.name)) {
+      if (referencedItemAttributeDetected) {
         let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
         }
-        const labelCompletion = this.labelTracker.getAllItemsForDocumentMap(document, prefix);
-        if (labelCompletion.size > 0) {
-          for (const [labelName, info] of labelCompletion.entries()) {
-            ScriptCompletion.addItem(items, 'label', labelName, info, attribute.valueRange);
+
+        switch (referencedItemAttributeDetected.type) {
+          case 'label':
+            logger.debug(`Completion requested in label attribute: ${element.name}.${attribute.name}`);
+            valueCompletion = this.labelTracker.getAllItemsForCompletion(document, prefix);
+            break;
+          case 'actions':
+            logger.debug(`Completion requested in actions attribute: ${element.name}.${attribute.name}`);
+            valueCompletion = this.actionsTracker.getAllItemsForCompletion(document, prefix);
+            break;
+        }
+
+        if (valueCompletion.size > 0) {
+          for (const [value, info] of valueCompletion.entries()) {
+            ScriptCompletion.addItem(items, referencedItemAttributeDetected.type, value, info, attribute.valueRange);
           }
           return ScriptCompletion.makeCompletionList(items, prefix);
         }
-        return ScriptCompletion.emptyCompletion;; // Skip if no labels found
-      }
-      // Check if we're in an action context
-      if (schema === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attribute.name)) {
-        let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
-        if (prefix === '' && attributeValue !== '') {
-          prefix = attributeValue; // If the prefix is empty, use the current attribute value
-        }
-        const actionCompletion = this.actionsTracker.getAllItemsForDocumentMap(document, prefix);
-        if (actionCompletion.size > 0) {
-          for (const [actionName, info] of actionCompletion.entries()) {
-            ScriptCompletion.addItem(items, 'actions', actionName, info, attribute.valueRange);
-          }
-          return ScriptCompletion.makeCompletionList(items, prefix);
-        }
-        return ScriptCompletion.emptyCompletion; // Skip if no actions found
+        return ScriptCompletion.emptyCompletion; // Skip if no items found
       }
 
       const documentLine = document.lineAt(position);
@@ -1155,21 +1142,30 @@ function trackScriptDocument(document: vscode.TextDocument, update: boolean = fa
             document.offsetAt(attr.valueRange.end)
           );
 
-          // Check for label definitions
-          if (scheme === aiScriptId && element.name === 'label' && attr.name === 'name') {
-            labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
-          }
-          // Check for label references
-          if (scheme === aiScriptId && labelElementAttributeMap[element.name]?.includes(attr.name)) {
-            labelTracker.addItemReference(attrValue, document, attr.valueRange);
-          }
-          // Check for action definitions
-          if (scheme === aiScriptId && element.name === 'actions' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'library') {
-            actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
-          }
-          // Check for action references
-          if (scheme === aiScriptId && actionsElementAttributeMap[element.name]?.includes(attr.name)) {
-            actionsTracker.addItemReference(attrValue, document, attr.valueRange);
+          const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
+          if (referencedItemAttributeDetected) {
+            switch (referencedItemAttributeDetected.type) {
+              case 'label':
+                switch (referencedItemAttributeDetected.attrType) {
+                  case 'definition':
+                    labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
+                    break;
+                  case 'reference':
+                    labelTracker.addItemReference(attrValue, document, attr.valueRange);
+                    break;
+                }
+                break;
+              case 'actions':
+                switch (referencedItemAttributeDetected.attrType) {
+                  case 'definition':
+                    actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
+                    break;
+                  case 'reference':
+                    actionsTracker.addItemReference(attrValue, document, attr.valueRange);
+                    break;
+                }
+                break;
+            }
           }
 
           if (scheme === aiScriptId && element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
