@@ -12,7 +12,7 @@ import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
-import { findLanguageText, languageDataClearAll, loadLanguageFiles } from './languageFiles/languageFiles';
+import { LanguageFileProcessor } from './languageFiles/languageFiles';
 
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
@@ -22,6 +22,7 @@ let extensionsFolder: string;
 let forcedCompletion: boolean = false;
 let xsdReference: XsdReference;
 let scriptProperties: ScriptProperties;
+let languageProcessor : LanguageFileProcessor;
 
 
 
@@ -318,8 +319,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Create diagnostic collection
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
+  languageProcessor = new LanguageFileProcessor();
  // Load language files and wait for completion
-  loadLanguageFiles(rootpath, extensionsFolder)
+  languageProcessor.loadLanguageFiles(rootpath, extensionsFolder)
     .then(() => {
       logger.info('Language files loaded successfully.');
       // Proceed with the rest of the activation logic
@@ -397,49 +399,9 @@ export function activate(context: vscode.ExtensionContext) {
           return undefined; // Skip if the document is not valid
         }
 
-        const tPattern =
-          /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
-        // matches:
-        // {1015,7} or {1015, 7}
-        // readtext.{1015}.{7}
-        // page="1015" line="7"
-
-        const range = document.getWordRangeAtPosition(position, tPattern);
-        if (range) {
-          const text = document.getText(range);
-          const matches = tPattern.exec(text);
-          tPattern.lastIndex = 0; // Reset regex state
-
-          if (matches && matches.length >= 3) {
-            let pageId: string | undefined;
-            let textId: string | undefined;
-            if (matches[1] && matches[2]) {
-              // {1015,7} or {1015, 7}
-              pageId = matches[1];
-              textId = matches[2];
-            } else if (matches[3] && matches[4]) {
-              // readtext.{1015}.{7}
-              pageId = matches[3];
-              textId = matches[4];
-            } else if (matches[5] && matches[6]) {
-              // page="1015" line="7"
-              pageId = matches[5];
-              textId = matches[6];
-            }
-
-            if (pageId && textId) {
-              logger.debug(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
-              const languageText = findLanguageText(pageId, textId);
-              if (languageText) {
-                const hoverText = new vscode.MarkdownString();
-                hoverText.appendMarkdown('```plaintext\n');
-                hoverText.appendMarkdown(languageText);
-                hoverText.appendMarkdown('\n```');
-                return new vscode.Hover(hoverText, range);
-              }
-            }
-            return undefined;
-          }
+        const languageConstructsHover = languageProcessor.provideHover(document, position);
+        if (languageConstructsHover) {
+          return languageConstructsHover; // Return hover for language constructs
         }
 
         const element = xmlTracker.elementWithPosInStartTag(document, position);
@@ -590,7 +552,7 @@ export function activate(context: vscode.ExtensionContext) {
           event.affectsConfiguration('x4CodeComplete.reloadLanguageData')
         ) {
           logger.info('Reloading language files due to configuration changes...');
-          loadLanguageFiles(rootpath, extensionsFolder)
+          languageProcessor.loadLanguageFiles(rootpath, extensionsFolder)
             .then(() => {
               logger.info('Language files reloaded successfully.');
             })
@@ -829,7 +791,10 @@ export function deactivate() {
     }
 
 
-    languageDataClearAll();
+    if (languageProcessor) {
+      // Clear language processor data
+      languageProcessor.dispose();
+    }
 
     // Clear scripts metadata
     if (scriptsMetadata) {
