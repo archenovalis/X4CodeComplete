@@ -38,7 +38,6 @@ type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetect
 type ScriptItemExternalDefinition = {
   name: string;
   definition: vscode.Location;
-  references: vscode.Location[];
 }
 
 // Helper function to calculate string similarity (Levenshtein distance based)
@@ -349,9 +348,13 @@ export class ReferencedItemsTracker {
 }
 
 export class ReferencedItemsWithExternalTracker extends ReferencedItemsTracker {
-  protected externalDefinitions: Map<string, ScriptReferencedItemInfo> = new Map();
+  protected externalDefinitions: Map<string, ScriptItemExternalDefinition> = new Map();
   constructor(itemType: string) {
     super(itemType);
+  }
+
+  public static collectExternalDefinitions() {
+
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
