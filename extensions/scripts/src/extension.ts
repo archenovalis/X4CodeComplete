@@ -1,5 +1,17 @@
 /**
  * X4CodeComplete VS Code Extension
+ * 1. Imports and Dependencies
+ * 2. Type Definitions and Constants
+ * 3. Global Variables and Configuration
+ * 4. Tracker Instances
+ * 5. Utility Functions (Extension-specific)
+ * 6. Extension Activation
+ * 7. Language Provider Registrations
+ * 8. Document Event Handlers
+ * 9. Extension Startup Handler
+ * 10. Configuration Change Handler
+ * 11. Advanced Language Providers
+ * 12. Extension Deactivation
  *
  * This extension provides intelligent code completion, diagnostics, and navigation
  * for X4: Foundations script files (AI Scripts and Mission Director Scripts).
@@ -35,6 +47,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 
+// Configuration imports
+import {X4CodeCompleteConfig, X4ConfigurationManager, ConfigChangeCallbacks} from './extension/configuration';
+
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
 import { logger, setLoggerLevel } from './logger/logger';
@@ -53,40 +68,13 @@ import { ScriptDocumentTracker} from './scripts/scriptDocumentTracker';
 // 2. TYPE DEFINITIONS AND CONSTANTS
 // ================================================================================================
 
-/** Extension configuration interface */
-interface X4CodeCompleteConfig {
-  /** Path to unpacked X4 game files */
-  unpackedFileLocation: string;
-  /** Path to extensions folder */
-  extensionsFolder: string;
-  /** Enable debug logging */
-  debug: boolean;
-  /** Force completion suggestions */
-  forcedCompletion: boolean;
-  /** Language number for language files (default: '44' for English) */
-  languageNumber: string;
-  /** Limit language output to prevent performance issues */
-  limitLanguageOutput: boolean;
-  /** Flag to trigger reloading of language data */
-  reloadLanguageData: boolean;
-}
-
-/** Type definitions for external action tracking (future use) */
-type ExternalPositions = Map<string, number>;
-type ExternalActions = Map<string, ExternalPositions>;
-
-/** Configuration constants */
-const EXTENSION_NAME = 'X4CodeComplete';
-const REQUIRED_SETTINGS = ['unpackedFileLocation', 'extensionsFolder'] as const;
-const CONFIG_SECTION = 'x4CodeComplete';
 
 // ================================================================================================
 // 3. GLOBAL VARIABLES AND CONFIGURATION
 // ================================================================================================
 
 /** Extension configuration and state variables */
-let isDebugEnabled = false;
-let extensionConfig: X4CodeCompleteConfig;
+let configManager: X4ConfigurationManager;
 
 /** Core service instances */
 let xsdReference: XsdReference;
@@ -106,66 +94,14 @@ const labelTracker = new ReferencedItemsTracker('label');
 const actionsTracker = new ReferencedItemsWithExternalTracker('actions');
 
 // ================================================================================================
-// 5. UTILITY FUNCTIONS
+// 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
 // ================================================================================================
 
 /**
- * Loads configuration from VS Code settings
- * @param config - The VS Code workspace configuration
- * @returns The extension configuration object
+ * Note: Configuration-related utility functions have been moved to ./configuration.ts
+ * This section is reserved for extension-specific utility functions that don't fit
+ * into other modules.
  */
-function loadExtensionConfig(config: vscode.WorkspaceConfiguration): X4CodeCompleteConfig {
-  return {
-    unpackedFileLocation: config.get('unpackedFileLocation') || '',
-    extensionsFolder: config.get('extensionsFolder') || '',
-    debug: config.get('debug') || false,
-    forcedCompletion: config.get('forcedCompletion') || false,
-    languageNumber: config.get('languageNumber') || '44',
-    limitLanguageOutput: config.get('limitLanguageOutput') || false,
-    reloadLanguageData: config.get('reloadLanguageData') || false
-  };
-}
-
-/**
- * Creates a default configuration object
- * @returns Default configuration with safe fallback values
- */
-function createDefaultConfig(): X4CodeCompleteConfig {
-  return {
-    unpackedFileLocation: '',
-    extensionsFolder: '',
-    debug: false,
-    forcedCompletion: false,
-    languageNumber: '44',
-    limitLanguageOutput: false,
-    reloadLanguageData: false
-  };
-}
-
-/**
- * Validates that all required extension settings are configured
- * @param config - The extension configuration object
- * @returns true if all required settings are present, false otherwise
- */
-function validateSettings(config: X4CodeCompleteConfig): boolean {
-  let isValid = true;
-  REQUIRED_SETTINGS.forEach((setting) => {
-    if (!config[setting]) {
-      vscode.window.showErrorMessage(`Missing required setting: ${setting}. Please update your VSCode settings.`);
-      isValid = false;
-    }
-  });
-
-  return isValid;
-}
-
-/**
- * Gets the libraries path from configuration
- * @returns Full path to the libraries directory
- */
-function getLibrariesPath(): string {
-  return path.join(extensionConfig.unpackedFileLocation, 'libraries');
-}
 
 
 const codeCompleteStartupDone = new vscode.EventEmitter<void>();
@@ -182,17 +118,45 @@ export const onCodeCompleteStartupProcessed = codeCompleteStartupDone.event;
  * @param context - VS Code extension context
  */
 export function activate(context: vscode.ExtensionContext) {
-  // Load and validate configuration
-  let config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  extensionConfig = loadExtensionConfig(config);
+  // Initialize configuration manager with callbacks
+  const configCallbacks: ConfigChangeCallbacks = {
+    onDebugChanged: (isDebugEnabled: boolean) => {
+      if (isDebugEnabled) {
+        setLoggerLevel('debug');
+      } else {
+        setLoggerLevel('info');
+      }
+      logger.info(`Debug logging ${isDebugEnabled ? 'enabled' : 'disabled'}`);
+    },
 
-  if (!validateSettings(extensionConfig)) {
+    onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
+      logger.info('Reloading language files due to configuration changes...');
+      await languageProcessor.loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
+        .then(() => {
+          logger.info('Language files reloaded successfully.');
+        })
+        .catch((error) => {
+          logger.error('Failed to reload language files:', error);
+        });
+    },
+
+    onResetReloadFlag: async () => {
+      await vscode.workspace
+        .getConfiguration()
+        .update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
+      logger.debug('Reload language data flag reset to false');
+    }
+  };
+
+  // Initialize configuration manager
+  configManager = new X4ConfigurationManager(configCallbacks);
+
+  if (!configManager.validateSettings()) {
     return;
   }
 
   // Configure logging based on debug setting
-  if (extensionConfig.debug) {
-    isDebugEnabled = true;
+  if (configManager.config.debug) {
     setLoggerLevel('debug');
   } else {
     setLoggerLevel('info');
@@ -205,7 +169,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize language processor and load language files
   languageProcessor = new LanguageFileProcessor();
-  languageProcessor.loadLanguageFiles(extensionConfig.unpackedFileLocation, extensionConfig.extensionsFolder)
+  languageProcessor.loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
     .then(() => {
       logger.info('Language files loaded successfully.');
     })
@@ -215,8 +179,8 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
   // Initialize script analysis services
-  scriptProperties = new ScriptProperties(path.join(getLibrariesPath(), '/'));
-  xsdReference = new XsdReference(getLibrariesPath());
+  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
+  xsdReference = new XsdReference(configManager.librariesPath);
   scriptCompletionProvider = new ScriptCompletion(
     xsdReference,
     xmlTracker,
@@ -436,7 +400,7 @@ export function activate(context: vscode.ExtensionContext) {
          scriptDocumentTracker.trackScriptDocument(event.document, true, cursorPos);
 
           // Check if we're in a specialized completion context and trigger suggestions if needed
-          if (extensionConfig.forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
+          if (configManager.config.forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
             logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
             vscode.commands.executeCommand('editor.action.triggerSuggest');
           }
@@ -511,50 +475,13 @@ export function activate(context: vscode.ExtensionContext) {
   // ================================================================================================
 
   // React to configuration changes and reload settings/data as needed
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration(CONFIG_SECTION)) {
-        logger.info('Configuration changed. Reloading settings...');
-        config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-        extensionConfig = loadExtensionConfig(config);
+  const configChangeDisposable = configManager.registerConfigurationChangeListener();
+  context.subscriptions.push(configChangeDisposable);
 
-        // Update debug logging level if changed
-        if (extensionConfig.debug !== isDebugEnabled) {
-          isDebugEnabled = extensionConfig.debug;
-          if (isDebugEnabled) {
-            setLoggerLevel('debug');
-          } else {
-            setLoggerLevel('info');
-          }
-        }
-
-        // Reload language files if relevant paths or settings have changed
-        if (
-          event.affectsConfiguration('x4CodeComplete.unpackedFileLocation') ||
-          event.affectsConfiguration('x4CodeComplete.extensionsFolder') ||
-          event.affectsConfiguration('x4CodeComplete.languageNumber') ||
-          event.affectsConfiguration('x4CodeComplete.limitLanguageOutput') ||
-          event.affectsConfiguration('x4CodeComplete.reloadLanguageData')
-        ) {
-          logger.info('Reloading language files due to configuration changes...');
-          languageProcessor.loadLanguageFiles(extensionConfig.unpackedFileLocation, extensionConfig.extensionsFolder)
-            .then(() => {
-              logger.info('Language files reloaded successfully.');
-            })
-            .catch((error) => {
-              logger.info('Failed to reload language files:', error);
-            });
-
-          // Reset the reloadLanguageData flag to false after processing
-          if (event.affectsConfiguration('x4CodeComplete.reloadLanguageData')) {
-            vscode.workspace
-              .getConfiguration()
-              .update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
-          }
-        }
-      }
-    })
-  );
+  // // Update local references when configuration changes
+  // context.subscriptions.push(
+  //   vscode.workspace.onDidChangeConfiguration(configManager.handleConfigurationChange)
+  // );
 
   // ================================================================================================
   // 11. ADVANCED LANGUAGE PROVIDERS (CODE ACTIONS, REFERENCES, RENAME)
@@ -822,6 +749,16 @@ export function deactivate() {
     }
 
     // ================================================================================================
+    // CONFIGURATION MANAGER CLEANUP
+    // ================================================================================================
+
+    // Clear configuration manager
+    if (configManager) {
+      configManager.dispose();
+      logger.debug('Configuration manager disposed');
+    }
+
+    // ================================================================================================
     // METADATA AND GLOBAL STATE CLEANUP
     // ================================================================================================
 
@@ -832,10 +769,8 @@ export function deactivate() {
     }
 
     // Reset global configuration flags
-    isDebugEnabled = false;
-    extensionConfig = createDefaultConfig();
     logger.debug('Global configuration flags reset');
-
+    configManager.dispose();
     logger.info('Extension deactivated successfully');
   } catch (error) {
     logger.error('Error during extension deactivation:', error);
