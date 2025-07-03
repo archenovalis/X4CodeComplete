@@ -23,21 +23,20 @@ export interface XmlElementAttribute {
   elementId: number;
 }
 
+type OffsetItem = { index: number; shift: number, type?: 'element' | 'attribute' };
+
 function patchUnclosedTags(text: string): {
   patchedText: string;
-  offsetMap: { index: number; shift: number }[];
+  offsetMap: OffsetItem[];
 } {
-  const offsetMap: { index: number; shift: number }[] = [];
+  const offsetMap: OffsetItem[] = [];
   let patchedText = text;
   let delta = 0;
 
   // First, patch unclosed attributes (missing closing quotes)
   const attributePatches = patchUnclosedAttributes(patchedText);
   patchedText = attributePatches.patchedText;
-  offsetMap.push(...attributePatches.offsetMap.map(offset => ({
-    index: offset.index + delta,
-    shift: offset.shift
-  })));
+  offsetMap.push(...attributePatches.offsetMap);
   delta += attributePatches.offsetMap.reduce((sum, offset) => sum + offset.shift, 0);
 
   // Then, patch unclosed tags
@@ -65,7 +64,8 @@ function patchUnclosedTags(text: string): {
       const insertAt = tagStart + tagContent.length;
       patchedText =
         patchedText.slice(0, insertAt) + '/>' + patchedText.slice(insertAt);
-      offsetMap.push({ index: insertAt - delta, shift: 2 });
+      const attributeDelta = revertOffset(insertAt, attributePatches.offsetMap) - insertAt;
+      offsetMap.push({ index: insertAt - delta + attributeDelta, shift: 2, type: 'element' });
       delta += 2;
     }
   }
@@ -75,15 +75,15 @@ function patchUnclosedTags(text: string): {
 
 function patchUnclosedAttributes(text: string): {
   patchedText: string;
-  offsetMap: { index: number; shift: number }[];
+  offsetMap: OffsetItem[];
 } {
-  const offsetMap: { index: number; shift: number }[] = [];
+  const offsetMap: OffsetItem[] = [];
   let patchedText = text;
   let delta = 0;
 
   // Regex to find attribute patterns: attribute="value or attribute='value
   // This matches: word="anything or word='anything (without closing quote)
-  const attributeRegex = /([A-Za-z_][A-Za-z0-9_.-]+)\s*=\s*(["'])([^"']*?)(?=\s+[A-Za-z_][A-Za-z0-9_.-]+\s*=|\/>|>|<|$)/g;
+  const attributeRegex = /([A-Za-z_][A-Za-z0-9_.-]+)\s*=\s*(["])([^"]*?)(?=\s+[A-Za-z_][A-Za-z0-9_.-]+\s*=\s*["]|\/>|>|<|$)/g;
   let match;
 
   // Keep track of processed positions to avoid infinite loops
@@ -151,7 +151,7 @@ function patchUnclosedAttributes(text: string): {
       // 1. Start of next attribute (whitespace + word + =)
       // 2. End of tag (> or />)
       // 3. Start of new tag (<)
-      const nextAttrMatch = remainingText.match(/\s+(\w+)\s*=/);
+      const nextAttrMatch = remainingText.match(/\s+[A-Za-z_][A-Za-z0-9_.-]+\s*=\s*["]/);
       const nextTagEnd = remainingText.search(/\s*\/?>/);
       const nextTagStart = remainingText.indexOf('<');
 
@@ -182,7 +182,8 @@ function patchUnclosedAttributes(text: string): {
 
       offsetMap.push({
         index: insertPosition - delta,
-        shift: 1
+        shift: 1,
+        type: 'attribute',
       });
       delta += 1;
 
@@ -195,7 +196,7 @@ function patchUnclosedAttributes(text: string): {
 }
 
 
-function revertOffset(patchedOffset: number, offsetMap: { index: number; shift: number }[]): number {
+function revertOffset(patchedOffset: number, offsetMap: OffsetItem[]): number {
   let realOffset = patchedOffset;
   for (const { index, shift } of offsetMap) {
     if (patchedOffset >= index) {
@@ -205,11 +206,12 @@ function revertOffset(patchedOffset: number, offsetMap: { index: number; shift: 
   return realOffset;
 }
 
-type OffsetItem = { index: number; shift: number };
+type Offsets =  OffsetItem[];
+
 type DocumentInfo = {
   elements: XmlElement[];
   lastParsed: number;
-  offsets: OffsetItem[];
+  offsets: Offsets;
 };
 
 export class XmlStructureTracker {
@@ -225,7 +227,7 @@ export class XmlStructureTracker {
       documentInfo = {
         elements: [],
         lastParsed: 0,
-        offsets: [],
+        offsets:  [],
       };
       this.documentInfoMap.set(document, documentInfo);
     }
@@ -255,10 +257,7 @@ export class XmlStructureTracker {
     }
     try {
       const text = document.getText();
-      const patchedForAttributes = patchUnclosedTags(text);
-      const patchedForTags = patchUnclosedTags(patchedForAttributes.patchedText);
-      const offsetMap = patchedForAttributes.offsetMap.concat(patchedForTags.offsetMap);
-      const patchedText = patchedForTags.patchedText;
+      const {patchedText, offsetMap} = patchUnclosedTags(text);
       documentInfo.offsets = offsetMap;
 
       // Create a non-strict parser to be more tolerant of errors
@@ -486,8 +485,8 @@ export class XmlStructureTracker {
     return rootElements.find((element) => element.nameRange.contains(position));
   }
 
-  public getOffsets(document: vscode.TextDocument): { index: number; shift: number }[]  {
-    return this.documentInfoMap.get(document)?.offsets || [];
+  public getOffsets(document: vscode.TextDocument): Offsets | undefined {
+    return this.documentInfoMap.get(document)?.offsets;
   }
 
   /**

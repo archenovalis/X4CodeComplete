@@ -1,0 +1,318 @@
+import * as vscode from 'vscode';
+import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
+import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
+import { VariableTracker } from './scriptVariables';
+import { ReferencedItemsTracker, ReferencedItemsWithExternalTracker, checkReferencedItemAttributeType } from './scriptReferencedItems';
+import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scriptsMetadata';
+
+/** Regular expressions and constants for pattern matching */
+const VARIABLE_PATTERN = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+const TABLE_KEY_PATTERN = /table\[/;
+
+export class ScriptDocumentTracker {
+  private xmlTracker: XmlStructureTracker;
+  private xsdReference: XsdReference;
+  private variableTracker: VariableTracker;
+  private labelTracker: ReferencedItemsTracker;
+  private actionsTracker: ReferencedItemsWithExternalTracker;
+  private diagnosticCollection: vscode.DiagnosticCollection;
+
+  constructor(xmlTracker: XmlStructureTracker, xsdReference: XsdReference, variableTracker: VariableTracker,
+    labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsWithExternalTracker,
+    diagnosticCollection: vscode.DiagnosticCollection) {
+    this.xmlTracker = xmlTracker;
+    this.xsdReference = xsdReference;
+    this.variableTracker = variableTracker;
+    this.labelTracker = labelTracker;
+    this.actionsTracker = actionsTracker;
+    this.diagnosticCollection = diagnosticCollection;
+  }
+
+
+  /**
+   * Validates script references (labels and actions) in a document
+   * @param document - The text document to validate
+   * @returns Array of diagnostic issues found
+   */
+  private validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
+    const diagnostics: vscode.Diagnostic[] = [];
+
+    // Validate labels and actions using their respective trackers
+    diagnostics.push(...this.labelTracker.validateItems(document));
+    diagnostics.push(...this.actionsTracker.validateItems(document));
+
+    return diagnostics;
+  }
+
+  /**
+   * Main function to track and analyze script documents
+   * Performs XML parsing, element validation, variable tracking, and diagnostic generation
+   *
+   * @param document - The text document to track
+   * @param update - Whether this is an update to existing tracking data
+   * @param position - Optional cursor position for context-aware analysis
+   */
+  public trackScriptDocument(document: vscode.TextDocument, update: boolean = false, position?: vscode.Position): void {
+    // Get the script schema type (aiscript, mdscript, etc.)
+    const schema = getDocumentScriptType(document);
+    if (schema === '') {
+      return; // Skip processing if the document is not a valid script type
+    }
+
+    const diagnostics: vscode.Diagnostic[] = [];
+
+    // Check if document is already parsed to avoid redundant work
+    const isXMLParsed = this.xmlTracker.checkDocumentParsed(document);
+    if (isXMLParsed && !update) {
+      logger.warn(`Document ${document.uri.toString()} is already parsed.`);
+      return;
+    }
+
+    // Get types that represent lvalue expressions for variable priority detection
+    const lValueTypes = ['lvalueexpression', ...this.xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
+
+    // Parse XML structure and handle any offset issues from unclosed tags
+    const xmlElements: XmlElement[] = this.xmlTracker.parseDocument(document);
+    const offsets = this.xmlTracker.getOffsets(document);
+
+    // Create diagnostics for unclosed XML tags
+    for (const offset of offsets) {
+      if (offset.type === 'element') {
+        const documentLine = document.lineAt(document.positionAt(offset.index).line);
+        const tagStart = documentLine.text.lastIndexOf('<', offset.index);
+        if( tagStart !== -1 ) {
+          const diagnostic = new vscode.Diagnostic(
+            new vscode.Range(
+              documentLine.range.start.translate(0, tagStart),
+              documentLine.range.end
+            ),
+            'Unclosed XML tag',
+            vscode.DiagnosticSeverity.Warning
+          );
+          diagnostics.push(diagnostic);
+        }
+      } else if (offset.type === 'attribute') {
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(
+            document.positionAt(offset.index),
+            document.positionAt(offset.index)
+          ),
+          'Error in attribute',
+          vscode.DiagnosticSeverity.Warning
+        );
+        diagnostics.push(diagnostic);
+      }
+    }
+
+    // Clear existing tracking data for this document before reprocessing
+    this.variableTracker.clearVariablesForDocument(document);
+    this.labelTracker.clearItemsForDocument(document);
+    this.actionsTracker.clearItemsForDocument(document);
+
+    const text = document.getText();
+
+    /**
+     * Process each XML element for validation and tracking
+     * This function handles:
+     * - Element validation against XSD schema
+     * - Attribute validation and processing
+     * - Variable detection and tracking
+     * - Label and action reference tracking
+     */
+    const processElement = (element: XmlElement) => {
+      const parentName = element.parent?.name || '';
+
+      // Validate element against XSD schema
+      const elementDefinition = this.xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+      if (elementDefinition === undefined) {
+        const diagnostic = new vscode.Diagnostic(
+          element.range,
+          `Unknown element '${element.name}' in script type '${schema}'`,
+          vscode.DiagnosticSeverity.Error
+        );
+        diagnostic.code = 'unknown-element';
+        diagnostic.source = 'X4CodeComplete';
+        diagnostics.push(diagnostic);
+      } else {
+        // Get valid attributes for this element from schema
+        const schemaAttributes = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
+        const attributes = element.attributes
+          .map((attr) => attr.name)
+          .filter((name) => !(name.startsWith('xmlns:') || name.startsWith('xsi:') || name === 'xmlns'));
+
+        // Validate attribute names against schema
+        const nameValidation = XsdReference.validateAttributeNames(schemaAttributes, attributes);
+
+        // Report unknown attributes
+        if (nameValidation.wrongAttributes.length > 0) {
+          nameValidation.wrongAttributes.forEach((attr) => {
+            const diagnostic = new vscode.Diagnostic(
+              element.range,
+              `Unknown attribute '${attr}' in element '${element.name}'`,
+              vscode.DiagnosticSeverity.Error
+            );
+            diagnostic.code = 'unknown-attribute';
+            diagnostic.source = 'X4CodeComplete';
+            diagnostics.push(diagnostic);
+          });
+        }
+
+        // Process each attribute for validation and tracking
+        element.attributes.forEach((attr) => {
+          // Check for missing required attributes
+          if (nameValidation.missingRequiredAttributes.includes(attr.name)) {
+            const diagnostic = new vscode.Diagnostic(
+              attr.nameRange,
+              `Missing required attribute '${attr.name}' in element '${element.name}'`,
+              vscode.DiagnosticSeverity.Error
+            );
+            diagnostic.code = 'missing-required-attribute';
+            diagnostic.source = 'X4CodeComplete';
+            diagnostics.push(diagnostic);
+          } else {
+            const attrDefinition = schemaAttributes.find((a) => a.name === attr.name);
+            const attributeValue = text.substring(
+              document.offsetAt(attr.valueRange.start),
+              document.offsetAt(attr.valueRange.end)
+            );
+
+            // Validate attribute values (skip XML namespace attributes)
+            if (!(attr.name.startsWith('xmlns:') || attr.name.startsWith('xsi:') || attr.name === 'xmlns')) {
+              const valueValidation = XsdReference.validateAttributeValueAgainstRules(
+                schemaAttributes,
+                attr.name,
+                attributeValue
+              );
+              if (!valueValidation.isValid) {
+                const diagnostic = new vscode.Diagnostic(
+                  attr.valueRange,
+                  `Invalid value '${attributeValue}' for attribute '${attr.name}' in element '${element.name}'`,
+                  vscode.DiagnosticSeverity.Error
+                );
+                diagnostic.code = 'invalid-attribute-value';
+                diagnostic.source = 'X4CodeComplete';
+                diagnostics.push(diagnostic);
+              }
+            }
+
+            // Extract attribute value for further processing
+            const attrValue = text.substring(
+              document.offsetAt(attr.valueRange.start),
+              document.offsetAt(attr.valueRange.end)
+            );
+
+            // Check if this attribute contains label or action references
+            const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
+            if (referencedItemAttributeDetected) {
+              switch (referencedItemAttributeDetected.type) {
+                case 'label':
+                  switch (referencedItemAttributeDetected.attrType) {
+                    case 'definition':
+                      this.labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
+                      break;
+                    case 'reference':
+                      this.labelTracker.addItemReference(attrValue, document, attr.valueRange);
+                      break;
+                  }
+                  break;
+                case 'actions':
+                  switch (referencedItemAttributeDetected.attrType) {
+                    case 'definition':
+                      this.actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
+                      break;
+                    case 'reference':
+                      this.actionsTracker.addItemReference(attrValue, document, attr.valueRange);
+                      break;
+                  }
+                  break;
+              }
+            }
+
+            // Special handling for parameter definitions in AI scripts
+            if (schema === aiScriptId && element.name === 'param' && attr.name === 'name' &&
+                element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
+              this.variableTracker.addVariable(
+                'normal',
+                attrValue,
+                schema,
+                document,
+                new vscode.Range(attr.valueRange.start, attr.valueRange.end),
+                true, // isDefinition
+                0
+              );
+            }
+
+            // Process variables within attribute values
+            const tableIsFound = TABLE_KEY_PATTERN.test(attrValue);
+            let match: RegExpExecArray | null;
+            const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+            let priority = -1;
+
+            // Determine variable definition priority based on script section
+            const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
+            if (schema === aiScriptId && isLValueAttribute) {
+              if (element.hierarchy.includes('library')) {
+                priority = 10;
+              } else if (element.hierarchy.includes('init')) {
+                priority = 20;
+              } else if (element.hierarchy.includes('patch')) {
+                priority = 30;
+              } else if (element.hierarchy.includes('attention')) {
+                priority = 40;
+              }
+            }
+
+            // Find and track all variables in the attribute value
+            while ((match = variablePattern.exec(attrValue)) !== null) {
+              const variableName = match[1];
+              const variableStartOffset = document.offsetAt(attr.valueRange.start) + match.index;
+              const variableEndOffset = variableStartOffset + match[0].length;
+
+              const start = document.positionAt(variableStartOffset);
+              const end = document.positionAt(variableEndOffset);
+
+              // Determine variable type (normal or table key)
+              const variableType = tableIsFound ? 'tableKey' : 'normal';
+              const variableRange = new vscode.Range(start, end);
+
+              // Skip if this is the position being edited (to avoid self-reference)
+              if (!(position && variableRange.contains(position))) {
+                if (end.isEqual(attr.valueRange.end) && priority >= 0) {
+                  // This is a variable definition
+                  this.variableTracker.addVariable(
+                    variableType,
+                    variableName,
+                    schema,
+                    document,
+                    new vscode.Range(start, end),
+                    true, // isDefinition
+                    priority
+                  );
+                } else {
+                  // This is a variable reference
+                  this.variableTracker.addVariable(
+                    variableType,
+                    variableName,
+                    schema,
+                    document,
+                    new vscode.Range(start, end)
+                  );
+                }
+              }
+            }
+          }
+        });
+      }
+    };
+
+    // Process all XML elements in the document
+    xmlElements.forEach(processElement);
+
+    // Validate all references after processing is complete
+    diagnostics.push(...this.validateReferences(document));
+
+    // Update diagnostics for the document
+    this.diagnosticCollection.set(document.uri, diagnostics);
+    logger.info(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
+  }
+}

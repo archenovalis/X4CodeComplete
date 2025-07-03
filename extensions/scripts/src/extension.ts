@@ -18,10 +18,10 @@
  * 3. Global Variables and Configuration
  * 4. Tracker Instances
  * 5. Utility Functions
- * 6. Document Validation and Tracking
- * 7. Extension Activation
- * 8. Language Provider Registrations
- * 9. Document Event Handlers
+ * 6. Extension Activation
+ * 7. Language Provider Registrations
+ * 8. Document Event Handlers
+ * 9. Extension Startup Handler
  * 10. Configuration Change Handler
  * 11. Advanced Language Providers
  * 12. Extension Deactivation
@@ -41,25 +41,18 @@ import { logger, setLoggerLevel } from './logger/logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // Script-specific functionality imports
-import { ReferencedItemsTracker, findSimilarItems, checkReferencedItemAttributeType, ScriptReferencedCompletion } from './scripts/scriptReferencedItems';
+import { ReferencedItemsTracker, ReferencedItemsWithExternalTracker } from './scripts/scriptReferencedItems';
 import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
+import { ScriptDocumentTracker} from './scripts/scriptDocumentTracker';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
 // ================================================================================================
-
-/** Type definitions for external action tracking (future use) */
-type ExternalPositions = Map<string, number>;
-type ExternalActions = Map<string, ExternalPositions>;
-
-/** Regular expressions and constants for pattern matching */
-const VARIABLE_PATTERN = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
-const TABLE_KEY_PATTERN = /table\[/;
-
+``
 /** Configuration constants */
 const EXTENSION_NAME = 'X4CodeComplete';
 const REQUIRED_SETTINGS = ['unpackedFileLocation', 'extensionsFolder'] as const;
@@ -79,6 +72,7 @@ let xsdReference: XsdReference;
 let scriptProperties: ScriptProperties;
 let languageProcessor: LanguageFileProcessor;
 let scriptCompletionProvider: ScriptCompletion;
+let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
 
 // ================================================================================================
@@ -88,7 +82,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 /** Global tracker instances for document analysis */
 const variableTracker = new VariableTracker();
 const labelTracker = new ReferencedItemsTracker('label');
-const actionsTracker = new ReferencedItemsTracker('actions');
+const actionsTracker = new ReferencedItemsWithExternalTracker('actions');
 
 // ================================================================================================
 // 5. UTILITY FUNCTIONS
@@ -111,285 +105,12 @@ function validateSettings(config: vscode.WorkspaceConfiguration): boolean {
   return isValid;
 }
 
-// ================================================================================================
-// 6. DOCUMENT VALIDATION AND TRACKING
-// ================================================================================================
 
-/**
- * Validates script references (labels and actions) in a document
- * @param document - The text document to validate
- * @returns Array of diagnostic issues found
- */
-function validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
-  const diagnostics: vscode.Diagnostic[] = [];
-
-  // Validate labels and actions using their respective trackers
-  diagnostics.push(...labelTracker.validateItems(document));
-  diagnostics.push(...actionsTracker.validateItems(document));
-
-  return diagnostics;
-}
-
-/**
- * Main function to track and analyze script documents
- * Performs XML parsing, element validation, variable tracking, and diagnostic generation
- *
- * @param document - The text document to track
- * @param update - Whether this is an update to existing tracking data
- * @param position - Optional cursor position for context-aware analysis
- */
-function trackScriptDocument(document: vscode.TextDocument, update: boolean = false, position?: vscode.Position): void {
-  // Get the script schema type (aiscript, mdscript, etc.)
-  const schema = getDocumentScriptType(document);
-  if (schema === '') {
-    return; // Skip processing if the document is not a valid script type
-  }
-
-  const diagnostics: vscode.Diagnostic[] = [];
-
-  // Check if document is already parsed to avoid redundant work
-  const isXMLParsed = xmlTracker.checkDocumentParsed(document);
-  if (isXMLParsed && !update) {
-    logger.warn(`Document ${document.uri.toString()} is already parsed.`);
-    return;
-  }
-
-  // Get types that represent lvalue expressions for variable priority detection
-  const lValueTypes = ['lvalueexpression', ...xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
-
-  // Parse XML structure and handle any offset issues from unclosed tags
-  const xmlElements: XmlElement[] = xmlTracker.parseDocument(document);
-  const offsets = xmlTracker.getOffsets(document);
-
-  // Create diagnostics for unclosed XML tags
-  for (const offset of offsets) {
-    const documentLine = document.lineAt(document.positionAt(offset.index).line - 1);
-    const tagStart = documentLine.text.lastIndexOf('<', offset.index);
-    const diagnostic = new vscode.Diagnostic(
-      new vscode.Range(
-        documentLine.range.start.translate(0, tagStart),
-        documentLine.range.end
-      ),
-      'Unclosed XML tag',
-      vscode.DiagnosticSeverity.Warning
-    );
-    diagnostics.push(diagnostic);
-  }
-
-  // Clear existing tracking data for this document before reprocessing
-  variableTracker.clearVariablesForDocument(document);
-  labelTracker.clearItemsForDocument(document);
-  actionsTracker.clearItemsForDocument(document);
-
-  const text = document.getText();
-
-  /**
-   * Process each XML element for validation and tracking
-   * This function handles:
-   * - Element validation against XSD schema
-   * - Attribute validation and processing
-   * - Variable detection and tracking
-   * - Label and action reference tracking
-   */
-  const processElement = (element: XmlElement) => {
-    const parentName = element.parent?.name || '';
-
-    // Validate element against XSD schema
-    const elementDefinition = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
-    if (elementDefinition === undefined) {
-      const diagnostic = new vscode.Diagnostic(
-        element.range,
-        `Unknown element '${element.name}' in script type '${schema}'`,
-        vscode.DiagnosticSeverity.Error
-      );
-      diagnostic.code = 'unknown-element';
-      diagnostic.source = 'X4CodeComplete';
-      diagnostics.push(diagnostic);
-    } else {
-      // Get valid attributes for this element from schema
-      const schemaAttributes = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
-      const attributes = element.attributes
-        .map((attr) => attr.name)
-        .filter((name) => !(name.startsWith('xmlns:') || name.startsWith('xsi:') || name === 'xmlns'));
-
-      // Validate attribute names against schema
-      const nameValidation = XsdReference.validateAttributeNames(schemaAttributes, attributes);
-
-      // Report unknown attributes
-      if (nameValidation.wrongAttributes.length > 0) {
-        nameValidation.wrongAttributes.forEach((attr) => {
-          const diagnostic = new vscode.Diagnostic(
-            element.range,
-            `Unknown attribute '${attr}' in element '${element.name}'`,
-            vscode.DiagnosticSeverity.Error
-          );
-          diagnostic.code = 'unknown-attribute';
-          diagnostic.source = 'X4CodeComplete';
-          diagnostics.push(diagnostic);
-        });
-      }
-
-      // Process each attribute for validation and tracking
-      element.attributes.forEach((attr) => {
-        // Check for missing required attributes
-        if (nameValidation.missingRequiredAttributes.includes(attr.name)) {
-          const diagnostic = new vscode.Diagnostic(
-            attr.nameRange,
-            `Missing required attribute '${attr.name}' in element '${element.name}'`,
-            vscode.DiagnosticSeverity.Error
-          );
-          diagnostic.code = 'missing-required-attribute';
-          diagnostic.source = 'X4CodeComplete';
-          diagnostics.push(diagnostic);
-        } else {
-          const attrDefinition = schemaAttributes.find((a) => a.name === attr.name);
-          const attributeValue = text.substring(
-            document.offsetAt(attr.valueRange.start),
-            document.offsetAt(attr.valueRange.end)
-          );
-
-          // Validate attribute values (skip XML namespace attributes)
-          if (!(attr.name.startsWith('xmlns:') || attr.name.startsWith('xsi:') || attr.name === 'xmlns')) {
-            const valueValidation = XsdReference.validateAttributeValueAgainstRules(
-              schemaAttributes,
-              attr.name,
-              attributeValue
-            );
-            if (!valueValidation.isValid) {
-              const diagnostic = new vscode.Diagnostic(
-                attr.valueRange,
-                `Invalid value '${attributeValue}' for attribute '${attr.name}' in element '${element.name}'`,
-                vscode.DiagnosticSeverity.Error
-              );
-              diagnostic.code = 'invalid-attribute-value';
-              diagnostic.source = 'X4CodeComplete';
-              diagnostics.push(diagnostic);
-            }
-          }
-
-          // Extract attribute value for further processing
-          const attrValue = text.substring(
-            document.offsetAt(attr.valueRange.start),
-            document.offsetAt(attr.valueRange.end)
-          );
-
-          // Check if this attribute contains label or action references
-          const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
-          if (referencedItemAttributeDetected) {
-            switch (referencedItemAttributeDetected.type) {
-              case 'label':
-                switch (referencedItemAttributeDetected.attrType) {
-                  case 'definition':
-                    labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
-                    break;
-                  case 'reference':
-                    labelTracker.addItemReference(attrValue, document, attr.valueRange);
-                    break;
-                }
-                break;
-              case 'actions':
-                switch (referencedItemAttributeDetected.attrType) {
-                  case 'definition':
-                    actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
-                    break;
-                  case 'reference':
-                    actionsTracker.addItemReference(attrValue, document, attr.valueRange);
-                    break;
-                }
-                break;
-            }
-          }
-
-          // Special handling for parameter definitions in AI scripts
-          if (schema === aiScriptId && element.name === 'param' && attr.name === 'name' &&
-              element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
-            variableTracker.addVariable(
-              'normal',
-              attrValue,
-              schema,
-              document,
-              new vscode.Range(attr.valueRange.start, attr.valueRange.end),
-              true, // isDefinition
-              0
-            );
-          }
-
-          // Process variables within attribute values
-          const tableIsFound = TABLE_KEY_PATTERN.test(attrValue);
-          let match: RegExpExecArray | null;
-          const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
-          let priority = -1;
-
-          // Determine variable definition priority based on script section
-          const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
-          if (schema === aiScriptId && isLValueAttribute) {
-            if (element.hierarchy.includes('library')) {
-              priority = 10;
-            } else if (element.hierarchy.includes('init')) {
-              priority = 20;
-            } else if (element.hierarchy.includes('patch')) {
-              priority = 30;
-            } else if (element.hierarchy.includes('attention')) {
-              priority = 40;
-            }
-          }
-
-          // Find and track all variables in the attribute value
-          while ((match = variablePattern.exec(attrValue)) !== null) {
-            const variableName = match[1];
-            const variableStartOffset = document.offsetAt(attr.valueRange.start) + match.index;
-            const variableEndOffset = variableStartOffset + match[0].length;
-
-            const start = document.positionAt(variableStartOffset);
-            const end = document.positionAt(variableEndOffset);
-
-            // Determine variable type (normal or table key)
-            const variableType = tableIsFound ? 'tableKey' : 'normal';
-            const variableRange = new vscode.Range(start, end);
-
-            // Skip if this is the position being edited (to avoid self-reference)
-            if (!(position && variableRange.contains(position))) {
-              if (end.isEqual(attr.valueRange.end) && priority >= 0) {
-                // This is a variable definition
-                variableTracker.addVariable(
-                  variableType,
-                  variableName,
-                  schema,
-                  document,
-                  new vscode.Range(start, end),
-                  true, // isDefinition
-                  priority
-                );
-              } else {
-                // This is a variable reference
-                variableTracker.addVariable(
-                  variableType,
-                  variableName,
-                  schema,
-                  document,
-                  new vscode.Range(start, end)
-                );
-              }
-            }
-          }
-        }
-      });
-    }
-  };
-
-  // Process all XML elements in the document
-  xmlElements.forEach(processElement);
-
-  // Validate all references after processing is complete
-  diagnostics.push(...validateReferences(document));
-
-  // Update diagnostics for the document
-  diagnosticCollection.set(document.uri, diagnostics);
-  logger.info(`Document ${document.uri.toString()} tracked.`);
-}
+const codeCompleteStartupDone = new vscode.EventEmitter<void>();
+export const onCodeCompleteStartupProcessed = codeCompleteStartupDone.event;
 
 // ================================================================================================
-// 7. EXTENSION ACTIVATION
+// 6. EXTENSION ACTIVATION
 // ================================================================================================
 
 /**
@@ -446,8 +167,16 @@ export function activate(context: vscode.ExtensionContext) {
     variableTracker
   );
 
+  scriptDocumentTracker = new ScriptDocumentTracker(
+    xmlTracker,
+    xsdReference,
+    variableTracker,
+    labelTracker,
+    actionsTracker,
+    diagnosticCollection,
+  );
   // ================================================================================================
-  // 8. LANGUAGE PROVIDER REGISTRATIONS
+  // 7. LANGUAGE PROVIDER REGISTRATIONS
   // ================================================================================================
 
   // Register language providers
@@ -591,28 +320,33 @@ export function activate(context: vscode.ExtensionContext) {
         return scriptProperties.provideHover(document, position);
       },
     })
+
+
   );
 
   // ================================================================================================
-  // 9. DOCUMENT EVENT HANDLERS
+  // 8. DOCUMENT EVENT HANDLERS
   // ================================================================================================
 
   logger.info('XSD schemas loaded successfully.');
-
-  // Initialize by parsing the currently active document
-  if (vscode.window.activeTextEditor) {
-    const document = vscode.window.activeTextEditor.document;
-    if (scriptsMetadataSet(document)) {
-      trackScriptDocument(document);
-    }
-  }
 
   // Listen for editor changes to parse documents as they become active
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor && scriptsMetadataSet(editor.document)) {
-        trackScriptDocument(editor.document);
+       scriptDocumentTracker.trackScriptDocument(editor.document, true);
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeVisibleTextEditors((editors) => {
+      // editors.forEach((editor) => {
+      //   if (scriptsMetadataSet(editor.document)) {
+      //    scriptDocumentTracker.trackScriptDocument(editor.document);
+      //   }
+      // });
+      logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
     })
   );
 
@@ -620,11 +354,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
       if (scriptsMetadataSet(document)) {
-        // Only parse if this is the active document
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
-          trackScriptDocument(document);
-        }
+        // // Only parse if this is the active document
+        // const activeEditor = vscode.window.activeTextEditor;
+        // if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
+         scriptDocumentTracker.trackScriptDocument(document);
+      //   }
       }
     })
   );
@@ -640,7 +374,7 @@ export function activate(context: vscode.ExtensionContext) {
           const cursorPos = activeEditor.selection.active;
 
           // Update the document structure on change
-          trackScriptDocument(event.document, true, cursorPos);
+         scriptDocumentTracker.trackScriptDocument(event.document, true, cursorPos);
 
           // Check if we're in a specialized completion context and trigger suggestions if needed
           if (forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
@@ -656,7 +390,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (scriptsMetadataSet(document, true)) {
-        trackScriptDocument(document, true);
+       scriptDocumentTracker.trackScriptDocument(document, true);
       }
     })
   );
@@ -665,8 +399,48 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((document) => {
       diagnosticCollection.delete(document.uri);
+      actionsTracker.clearItemsForDocument(document);
+      labelTracker.clearItemsForDocument(document);
       logger.debug(`Removed cached data for document: ${document.uri.toString()}`);
     })
+  );
+
+
+  // ================================================================================================
+  // 9. EXTENSION STARTUP HANDLER
+  // ================================================================================================
+
+  onCodeCompleteStartupProcessed(() => {
+    logger.info(`Doing post-startup work now`);
+    const documentsUris: vscode.Uri[] = [];
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input && (tab.input as any).uri) {
+          const uri = (tab.input as any).uri as vscode.Uri;
+          logger.info(`Tab found on startup: ${uri.toString()}`);
+          documentsUris.push(uri);
+        }
+      }
+    }
+    const openDocument = () => {
+      const uri = documentsUris.shift();
+      if (uri) {
+        vscode.workspace.openTextDocument(uri).then((doc) => {
+          openDocument();
+        });
+      } else {
+        // Initialize by parsing the currently active document
+        vscode.workspace.textDocuments.forEach(doc => {
+          logger.info('Document found on startup:', doc.uri.toString());
+         scriptDocumentTracker.trackScriptDocument(doc, true);
+        });
+      }
+    };
+    openDocument();
+  });
+
+  context.subscriptions.push(
+    codeCompleteStartupDone
   );
 
   // ================================================================================================
@@ -909,6 +683,12 @@ export function activate(context: vscode.ExtensionContext) {
       },
     })
   );
+
+
+
+  codeCompleteStartupDone.fire();
+
+  logger.info('X4CodeComplete extension activated successfully.');
 }
 
 // ================================================================================================

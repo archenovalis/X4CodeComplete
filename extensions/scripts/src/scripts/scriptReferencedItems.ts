@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
+import path from 'path';
 
 export type ScriptReferencedItemInfo = {
   name: string;
@@ -34,6 +35,11 @@ export type ScriptReferencedItemsDetectionItem = {
 
 type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
 
+type ScriptItemExternalDefinition = {
+  name: string;
+  definition: vscode.Location;
+  references: vscode.Location[];
+}
 
 // Helper function to calculate string similarity (Levenshtein distance based)
 function calculateSimilarity(str1: string, str2: string): number {
@@ -114,9 +120,9 @@ export function checkReferencedItemAttributeType(elementName, attributeName): Sc
 
 export class ReferencedItemsTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
-  private documentReferencedItems: WeakMap<vscode.TextDocument, ScriptReferencedItems> = new WeakMap();
-  private itemType: string;
-  private itemTypeCapitalized: string;
+  protected documentReferencedItems: Map<vscode.TextDocument, ScriptReferencedItems> = new Map();
+  protected itemType: string;
+  protected itemTypeCapitalized: string;
 
   constructor(itemType: string) {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
@@ -199,6 +205,11 @@ export class ReferencedItemsTracker {
     return undefined;
   }
 
+
+  protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+    return item.definition;
+  }
+
   public getItemDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptReferencedItemsDefinition | undefined {
 
     const item = this.getItemAtPosition(document, position);
@@ -207,8 +218,12 @@ export class ReferencedItemsTracker {
     }
     return {
       name: item.item.name,
-      definition: item.item.definition,
+      definition: this.getDefinition(document, item.item)
     };
+  }
+
+  protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
+    return item.references;
   }
 
   public getItemReferences(document: vscode.TextDocument, position: vscode.Position): ScriptReferencedItemsReferences | undefined {
@@ -217,9 +232,10 @@ export class ReferencedItemsTracker {
       return undefined;
     }
 
-    const references = [...item.item.references];
-    if (item.item.definition) {
-      references.unshift(item.item.definition); // Include definition as a reference
+    const references = [...this.getReferences(document, item.item)];
+    const definition = this.getDefinition(document, item.item);
+    if (definition) {
+      references.unshift(definition); // Include definition as a reference
     }
     return {name: item.item.name, references};
   }
@@ -234,7 +250,7 @@ export class ReferencedItemsTracker {
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
       // Only add the item if it matches the prefix
-        result.set(itemName, this.getItemDetails(itemData, 'full'));
+        result.set(itemName, this.getItemDetails(document, itemData, 'full'));
       }
     }
 
@@ -250,7 +266,8 @@ export class ReferencedItemsTracker {
 
     for (const [itemName, itemData] of documentData.entries()) {
       // Check if the item is invalid (has no definition or references)
-      if (!itemData.definition) {
+      const definition = this.getDefinition(document, itemData);
+      if (!definition) {
         itemData.references.forEach((reference) => {
             const diagnostic = new vscode.Diagnostic(
             reference.range,
@@ -261,7 +278,9 @@ export class ReferencedItemsTracker {
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
         });
-      } else if (itemData.references.length === 0) {
+      }
+      const references = this.getReferences(document, itemData);
+      if (references.length === 0) {
         const diagnostic = new vscode.Diagnostic(
           itemData.definition.range,
           `${this.itemTypeCapitalized} '${itemName}' is not used`,
@@ -275,10 +294,15 @@ export class ReferencedItemsTracker {
     return diagnostics;
   }
 
-  public getItemDetails(item: ScriptReferencedItemInfo, detailsType: 'full' | 'definition' | 'reference'): vscode.MarkdownString {
+  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo): string {
+    return `**Defined**: ${item.definition ? `at line ${item.definition.range.start.line + 1}` : '*No definition found!*'}`;
+  }
+
+  public getItemDetails(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: 'full' | 'definition' | 'reference'): vscode.MarkdownString {
     const markdownString = new vscode.MarkdownString();
-    const defined = `**Defined**: ${item.definition ? `at line ${item.definition.range.start.line + 1}` : '*No definition found!*'}`;
-    const referenced = `**Referenced**: ${item.references.length} time${item.references.length !== 1 ? 's' : ''}`;
+    const defined = this.definitionToMarkdown(document, item);
+    const references = this.getReferences(document, item);
+    const referenced = `**Referenced**: ${references.length} time${references.length !== 1 ? 's' : ''}`;
     if (detailsType === 'full') {
       markdownString.appendMarkdown(`**${this.itemTypeCapitalized}**: \`${item.name}\`\n\n`);
       markdownString.appendMarkdown(defined + '\n\n');
@@ -298,7 +322,7 @@ export class ReferencedItemsTracker {
     if (!item) {
       return undefined;
     }
-    const markdownString = this.getItemDetails(item.item, 'full');
+    const markdownString = this.getItemDetails(document, item.item, 'full');
     return new vscode.Hover(markdownString);
   }
 
@@ -320,6 +344,39 @@ export class ReferencedItemsTracker {
   }
 
   public dispose(): void {
-    this.documentReferencedItems = new WeakMap();
+    this.documentReferencedItems.clear();
+  }
+}
+
+export class ReferencedItemsWithExternalTracker extends ReferencedItemsTracker {
+  protected externalDefinitions: Map<string, ScriptReferencedItemInfo> = new Map();
+  constructor(itemType: string) {
+    super(itemType);
+  }
+
+  protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+    if (item.definition) {
+      return super.getDefinition(document, item);
+    } else {
+      const definitions  = Array.from(this.documentReferencedItems.values());
+      const externalDefinition =  definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
+      if (externalDefinition && externalDefinition.length > 0) {
+        return externalDefinition[0].get(item.name)?.definition;
+      }
+    }
+    return undefined;
+  }
+
+  protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
+    return Array.from(this.documentReferencedItems.values()).flatMap(itemMap => itemMap.get(item.name)?.references || []);
+  }
+
+  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo): string {
+    const definition = this.getDefinition(document, item);
+    if (definition === undefined || definition.uri.toString() === document.uri.toString()) {
+      return super.definitionToMarkdown(document, item);
+    } else {
+      return `**Defined**: at line ${definition.range.start.line + 1} in *${path.basename(definition.uri.fsPath)}*`;
+    }
   }
 }
