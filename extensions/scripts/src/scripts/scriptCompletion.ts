@@ -285,7 +285,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
             position.translate(0, -textToProcessBefore.length + lastDollarIndex + 1),
             position.translate(0, suffixLength)
           );
-        const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, prefix);
+        const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, position, prefix);
           for (const [variableName, info] of variableCompletion.entries()) {
             ScriptCompletion.addItem(items, 'variable', variableName, info, variableRange);
           }

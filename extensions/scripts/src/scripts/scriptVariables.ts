@@ -163,20 +163,22 @@ export class VariableTracker {
     this.documentVariables.delete(document);
   }
 
-  public getAllVariablesForDocumentMap(document: vscode.TextDocument, prefix: string = ''): Map<string, vscode.MarkdownString> {
+  public getAllVariablesForDocumentMap(document: vscode.TextDocument, position: vscode.Position, prefix: string = ''): Map<string, vscode.MarkdownString> {
     const result: Map<string, vscode.MarkdownString> = new Map();
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
     if (!variablesTypes) return result;
 
-    const scheme = getDocumentScriptType(document);
     // Process all variable types
     for (const [variableType, typeMap] of variablesTypes) {
       // Process all variables
       for (const [variableName, variableData] of typeMap) {
         if (prefix === '' || variableName.startsWith(prefix)) {
           // Only add the item if it matches the prefix
-          const totalLocations = variableData.locations.length;
+          if (prefix !== '' && variableData.definition === undefined && variableData.locations.length === 1 &&
+            variableData.locations[0].range.contains(position)) {
+            continue;
+          }
           const info = VariableTracker.getVariableDetails(variableData);
           result.set(variableName, info);
         }
