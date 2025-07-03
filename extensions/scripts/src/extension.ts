@@ -469,8 +469,8 @@ export function activate(context: vscode.ExtensionContext) {
        * Handles variables, actions, labels, and script properties
        */
       provideDefinition: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Definition | undefined> => {
-        const scheme = getDocumentScriptType(document);
-        if (scheme === '') {
+        const schema = getDocumentScriptType(document);
+        if (schema === '') {
           return undefined;
         }
 
@@ -482,7 +482,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // AI script specific features
-        if (scheme === aiScriptId) {
+        if (schema === aiScriptId) {
           // Check for action definitions
           const actionsDefinition = actionsTracker.getItemDefinition(document, position);
           if (actionsDefinition) {
@@ -833,8 +833,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(xmlSelector, {
       provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
-        const scheme = getDocumentScriptType(document);
-        if (scheme == '') {
+        const schema = getDocumentScriptType(document);
+        if (schema == '') {
           return undefined;
         }
 
@@ -844,7 +844,7 @@ export function activate(context: vscode.ExtensionContext) {
           logger.debug(`References found for variable: ${variableReferences.name}`);
           return variableReferences.references;
         }
-        if (scheme == aiScriptId) {
+        if (schema == aiScriptId) {
           // Check if we're on an action
           const actionsReferences = actionsTracker.getItemReferences(document, position);
           if (actionsReferences) {
@@ -868,8 +868,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerRenameProvider(xmlSelector, {
       provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
-        const scheme = getDocumentScriptType(document);
-        if (scheme == '') {
+        const schema = getDocumentScriptType(document);
+        if (schema == '') {
           return undefined; // Skip if the document is not valid
         }
         const variableAtPosition = variableTracker.getVariableAtPosition(document, position);

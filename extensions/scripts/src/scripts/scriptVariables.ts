@@ -42,7 +42,7 @@ export class VariableTracker {
   public addVariable(
     type: string,
     name: string,
-    scheme: string,
+    schema: string,
     document: vscode.TextDocument,
     range: vscode.Range,
     isDefinition: boolean = false,
@@ -64,7 +64,7 @@ export class VariableTracker {
 
     // Get or create the variable name level
     if (!typeMap.has(normalizedName)) {
-      typeMap.set(normalizedName, { name: normalizedName, schema: scheme, type: type, locations: [] });
+      typeMap.set(normalizedName, { name: normalizedName, schema: schema, type: type, locations: [] });
     }
     const variableData = typeMap.get(normalizedName)!;
 
@@ -138,8 +138,6 @@ export class VariableTracker {
 
 
   public updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
-    const scheme = getDocumentScriptType(document);
-
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
     if (!variablesTypes) return;

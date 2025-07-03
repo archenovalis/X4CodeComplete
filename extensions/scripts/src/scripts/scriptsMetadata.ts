@@ -3,7 +3,7 @@ import { logger } from '../logger/logger';
 import * as sax from 'sax';
 
 type ScriptMetadata = {
-  scheme: string;
+  schema: string;
 }
 type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
 
@@ -17,8 +17,8 @@ export function scriptsMetadataSet(document: vscode.TextDocument, reSet: boolean
     } else {
       logger.debug(`Setting script metadata for document: ${document.uri.toString()}`);
     }
-    const scheme = getDocumentScriptType(document);
-    if (scheme) {
+    const schema = getDocumentScriptType(document);
+    if (schema) {
       return scriptsMetadata.get(document);
     }
   }
@@ -57,8 +57,8 @@ export function getDocumentScriptType(document: vscode.TextDocument): string {
   }
 
   const scriptMetaData = scriptsMetadata.get(document)!;
-  if (scriptMetaData && scriptMetaData.scheme) {
-    languageSubId = scriptMetaData.scheme;
+  if (scriptMetaData && scriptMetaData.schema) {
+    languageSubId = scriptMetaData.schema;
     logger.debug(`Document ${document.uri.toString()} recognized as script type: ${languageSubId}`);
     return languageSubId; // Return the cached type if available
   }
@@ -83,9 +83,9 @@ export function getDocumentScriptType(document: vscode.TextDocument): string {
   if (languageSubId) {
     // Cache the languageSubId for future use
     if (!scriptsMetadata.has(document)) {
-      scriptsMetadata.set(document, { scheme: languageSubId });
+      scriptsMetadata.set(document, { schema: languageSubId });
     } else {
-        scriptMetaData.scheme = languageSubId;
+        scriptMetaData.schema = languageSubId;
     }
     logger.debug(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
   }
