@@ -56,7 +56,7 @@ import { logger, setLoggerLevel } from './logger/logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // Script-specific functionality imports
-import { ReferencedItemsTracker, ReferencedItemsWithExternalTracker } from './scripts/scriptReferencedItems';
+import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker } from './scripts/scriptReferencedItems';
 import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
@@ -91,7 +91,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 /** Global tracker instances for document analysis */
 const variableTracker = new VariableTracker();
 const labelTracker = new ReferencedItemsTracker('label');
-const actionsTracker = new ReferencedItemsWithExternalTracker('actions');
+const actionsTracker = new ReferencedItemsWithExternalDefinitionsTracker('actions');
 
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
@@ -434,6 +434,7 @@ export function activate(context: vscode.ExtensionContext) {
   // ================================================================================================
 
   onCodeCompleteStartupProcessed(() => {
+    ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
     logger.info(`Doing post-startup work now`);
     const documentsUris: vscode.Uri[] = [];
     for (const group of vscode.window.tabGroups.all) {

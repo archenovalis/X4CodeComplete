@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
+import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
+import { log } from 'console';
+const fs = require('fs');
 
 export type ScriptReferencedItemInfo = {
   name: string;
@@ -31,15 +34,25 @@ export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 export type ScriptReferencedItemsDetectionItem = {
   type: 'label' | 'actions';
   attrType: 'definition' | 'reference';
+  schema?: string; // Optional schema for actions
+  filePrefix?: string; // Optional prefix for external definitions
 };
 
 type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
+
+type ReferencedItemsWithExternalTrackerMap = Map<string, ReferencedItemsWithExternalDefinitionsTracker>;
 
 type ScriptItemExternalDefinition = {
   name: string;
   definition: vscode.Location;
 }
 
+type externalTrackerInfo = {
+  elementName: string;
+  attributeName: string;
+  filePrefix: string; // Optional prefix for external definitions
+  tracker: ReferencedItemsWithExternalDefinitionsTracker;
+};
 // Helper function to calculate string similarity (Levenshtein distance based)
 function calculateSimilarity(str1: string, str2: string): number {
   const longer = str1.length > str2.length ? str1 : str2;
@@ -102,7 +115,7 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
   ['resume#label', { type: 'label', attrType: 'reference' }],
   ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition' }],
+  ['actions#name', { type: 'actions', attrType: 'definition', filePrefix: 'lib.', schema: 'aiscripts' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
 ]);
 
@@ -347,14 +360,110 @@ export class ReferencedItemsTracker {
   }
 }
 
-export class ReferencedItemsWithExternalTracker extends ReferencedItemsTracker {
+export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
   protected externalDefinitions: Map<string, ScriptItemExternalDefinition> = new Map();
   constructor(itemType: string) {
     super(itemType);
+    ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
   }
 
-  public static collectExternalDefinitions() {
+  private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
+  private static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker): void {
+    const itemInfo = Array.from(scriptReferencedItemsDetectionMap.keys()).find(key => scriptReferencedItemsDetectionMap.get(key)?.type === itemType && scriptReferencedItemsDetectionMap.get(key)?.attrType === 'definition');
+    if (!itemInfo) {
+      logger.warn(`No item info found for item type: ${itemType}`);
+      return
+    }
+    const [elementName, attributeName] = itemInfo.split('#');
+    const filePrefix = scriptReferencedItemsDetectionMap.get(itemInfo)?.filePrefix || '';
+    const schema = scriptReferencedItemsDetectionMap.get(itemInfo)?.schema || '';
+    if (schema) {
+      if (!this.trackersWithExternalDefinitions.has(schema)) {
+        this.trackersWithExternalDefinitions.set(schema, []);
+      }
+      this.trackersWithExternalDefinitions.get(schema)?.push({
+        elementName,
+        attributeName,
+        filePrefix,
+        tracker
+      });
+    }
+  }
+
+  public static collectExternalDefinitions(config: X4CodeCompleteConfig) {
+    const folders : string[] = [];
+    const mainFolders: string[] = [];
+    // if (config.extensionsFolder) {
+    //   mainFolders.push(config.extensionsFolder);
+    // }
+    if (config.unpackedFileLocation) {
+      mainFolders.push(config.unpackedFileLocation);
+    }
+    logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
+    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+      logger.debug(`Tracker for ${schema} has ${trackersInfo.length} trackers`);
+      for (const mainFolder of mainFolders) {
+        // Find and push any aiscripts subfolders, including indirect (up to 2 levels deep)
+        if (fs.existsSync(mainFolder)) {
+          const firstLevel = fs.readdirSync(mainFolder, { withFileTypes: true });
+          for (const entry of firstLevel) {
+            if (entry.isDirectory()) {
+              const firstLevelPath = path.join(mainFolder, entry.name);
+              if (entry.name.toLowerCase() === schema.toLowerCase()) {
+                folders.push(firstLevelPath);
+              } else {
+                // Check second level
+                const secondLevel = fs.readdirSync(firstLevelPath, { withFileTypes: true });
+                for (const subEntry of secondLevel) {
+                  if (subEntry.isDirectory() && subEntry.name.toLowerCase() === schema.toLowerCase()) {
+                    folders.push(path.join(firstLevelPath, subEntry.name));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      logger.debug(`Collecting external definitions for ${folders.length} folders`);
+      for (const folder of folders) {
+        if (fs.existsSync(folder) && fs.statSync(folder).isDirectory()) {
+          logger.debug(`Processing folder: ${folder}`);
+          const files = fs.readdirSync(folder, { withFileTypes: true })
+            .filter((item) => item.isFile() && item.name.endsWith('.xml'))
+            .map((item) => path.join(folder, item.name));
+          for (const file of files) {
+            logger.debug(`Processing file: ${file}`);
+            const fileName = path.basename(file, '.xml');
+            let fileContent: string = '';
+            for (const trackerInfo of trackersInfo) {
+              if (!trackerInfo.filePrefix || fileName.startsWith(trackerInfo.filePrefix)) {
+                logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}`);
+                if (!fileContent && fs.existsSync(file)) {
+                  fileContent = fs.readFileSync(file, 'utf8');
+                }
+                const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
+                let match;
+                while ((match = regex.exec(fileContent)) !== null) {
+                  const value = match[1];
+                  const valueIndex = match.index + match[0].indexOf(`"${value}"`);
+                  logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}, value: ${value}`);
+                  const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
+                  const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
+                  trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, file);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  }
+
+  public addExternalDefinition(value: string, line: number, position: number, length: number, fileName: string): void {
+    const definition = new vscode.Location(vscode.Uri.file(fileName), new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length)));
+    this.externalDefinitions.set(value, { name: value, definition });
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
@@ -362,9 +471,13 @@ export class ReferencedItemsWithExternalTracker extends ReferencedItemsTracker {
       return super.getDefinition(document, item);
     } else {
       const definitions  = Array.from(this.documentReferencedItems.values());
-      const externalDefinition =  definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
-      if (externalDefinition && externalDefinition.length > 0) {
-        return externalDefinition[0].get(item.name)?.definition;
+      const externalDefinitions =  definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
+      if (externalDefinitions && externalDefinitions.length > 0) {
+        return externalDefinitions[0].get(item.name)?.definition;
+      }
+      const externalDefinition = this.externalDefinitions.get(item.name);
+      if (externalDefinition) {
+        return externalDefinition.definition;
       }
     }
     return undefined;

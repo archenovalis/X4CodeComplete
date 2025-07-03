@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker } from './scriptVariables';
-import { ReferencedItemsTracker, ReferencedItemsWithExternalTracker, checkReferencedItemAttributeType } from './scriptReferencedItems';
+import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, checkReferencedItemAttributeType } from './scriptReferencedItems';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scriptsMetadata';
 
 /** Regular expressions and constants for pattern matching */
@@ -14,11 +14,11 @@ export class ScriptDocumentTracker {
   private xsdReference: XsdReference;
   private variableTracker: VariableTracker;
   private labelTracker: ReferencedItemsTracker;
-  private actionsTracker: ReferencedItemsWithExternalTracker;
+  private actionsTracker: ReferencedItemsWithExternalDefinitionsTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
   constructor(xmlTracker: XmlStructureTracker, xsdReference: XsdReference, variableTracker: VariableTracker,
-    labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsWithExternalTracker,
+    labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsWithExternalDefinitionsTracker,
     diagnosticCollection: vscode.DiagnosticCollection) {
     this.xmlTracker = xmlTracker;
     this.xsdReference = xsdReference;
