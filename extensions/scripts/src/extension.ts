@@ -417,8 +417,10 @@ export function activate(context: vscode.ExtensionContext) {
       for (const tab of group.tabs) {
         if (tab.input && (tab.input as any).uri) {
           const uri = (tab.input as any).uri as vscode.Uri;
-          logger.info(`Tab found on startup: ${uri.toString()}`);
-          documentsUris.push(uri);
+          if (uri.fsPath.endsWith('.xml') && uri.scheme === 'file') {
+            logger.debug(`Tab found on startup: ${uri.toString()}`);
+            documentsUris.push(uri);
+          }
         }
       }
     }
@@ -431,8 +433,10 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         // Initialize by parsing the currently active document
         vscode.workspace.textDocuments.forEach(doc => {
-          logger.info('Document found on startup:', doc.uri.toString());
-         scriptDocumentTracker.trackScriptDocument(doc, true);
+          logger.debug(`Document found on startup: ${doc.uri.toString()}`);
+          if (doc.languageId === 'xml') {
+            scriptDocumentTracker.trackScriptDocument(doc, true);
+          }
         });
       }
     };

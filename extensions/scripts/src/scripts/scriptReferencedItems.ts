@@ -376,7 +376,7 @@ export class ReferencedItemsWithExternalTracker extends ReferencedItemsTracker {
     if (definition === undefined || definition.uri.toString() === document.uri.toString()) {
       return super.definitionToMarkdown(document, item);
     } else {
-      return `**Defined**: at line ${definition.range.start.line + 1} in *${path.basename(definition.uri.fsPath)}*`;
+      return `**Defined**: at line ${definition.range.start.line + 1} in \`${path.basename(definition.uri.fsPath)}\``;
     }
   }
 }
