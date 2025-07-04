@@ -354,11 +354,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((document) => {
       if (scriptsMetadataSet(document)) {
-        // // Only parse if this is the active document
-        // const activeEditor = vscode.window.activeTextEditor;
-        // if (activeEditor && activeEditor.document.uri.toString() === document.uri.toString()) {
-         scriptDocumentTracker.trackScriptDocument(document);
-      //   }
+        scriptDocumentTracker.trackScriptDocument(document, true);
       }
     })
   );
