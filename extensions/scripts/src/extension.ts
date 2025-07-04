@@ -179,25 +179,12 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
   // Initialize script analysis services
+
   scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
   xsdReference = new XsdReference(configManager.librariesPath);
-  scriptCompletionProvider = new ScriptCompletion(
-    xsdReference,
-    xmlTracker,
-    scriptProperties,
-    labelTracker,
-    actionsTracker,
-    variableTracker
-  );
+  scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
+  scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
 
-  scriptDocumentTracker = new ScriptDocumentTracker(
-    xmlTracker,
-    xsdReference,
-    variableTracker,
-    labelTracker,
-    actionsTracker,
-    diagnosticCollection,
-  );
   // ================================================================================================
   // 7. LANGUAGE PROVIDER REGISTRATIONS
   // ================================================================================================

@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
+import { XsdReference } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker } from './scriptVariables';
-import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, checkReferencedItemAttributeType } from './scriptReferencedItems';
-import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scriptsMetadata';
+import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
+import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId } from './scriptsMetadata';
+import { log } from 'console';
 
 /** Regular expressions and constants for pattern matching */
 const VARIABLE_PATTERN = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
@@ -13,18 +14,13 @@ export class ScriptDocumentTracker {
   private xmlTracker: XmlStructureTracker;
   private xsdReference: XsdReference;
   private variableTracker: VariableTracker;
-  private labelTracker: ReferencedItemsTracker;
-  private actionsTracker: ReferencedItemsWithExternalDefinitionsTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
   constructor(xmlTracker: XmlStructureTracker, xsdReference: XsdReference, variableTracker: VariableTracker,
-    labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsWithExternalDefinitionsTracker,
     diagnosticCollection: vscode.DiagnosticCollection) {
     this.xmlTracker = xmlTracker;
     this.xsdReference = xsdReference;
     this.variableTracker = variableTracker;
-    this.labelTracker = labelTracker;
-    this.actionsTracker = actionsTracker;
     this.diagnosticCollection = diagnosticCollection;
   }
 
@@ -37,9 +33,9 @@ export class ScriptDocumentTracker {
   private validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
     const diagnostics: vscode.Diagnostic[] = [];
 
-    // Validate labels and actions using their respective trackers
-    diagnostics.push(...this.labelTracker.validateItems(document));
-    diagnostics.push(...this.actionsTracker.validateItems(document));
+    scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+      diagnostics.push(...trackerInfo.tracker.validateItems(document));
+    });
 
     return diagnostics;
   }
@@ -106,8 +102,9 @@ export class ScriptDocumentTracker {
 
     // Clear existing tracking data for this document before reprocessing
     this.variableTracker.clearVariablesForDocument(document);
-    this.labelTracker.clearItemsForDocument(document);
-    this.actionsTracker.clearItemsForDocument(document);
+    scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+      trackerInfo.tracker.clearItemsForDocument(document);
+    });
 
     const text = document.getText();
 
@@ -204,27 +201,21 @@ export class ScriptDocumentTracker {
             // Check if this attribute contains label or action references
             const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
             if (referencedItemAttributeDetected) {
-              switch (referencedItemAttributeDetected.type) {
-                case 'label':
+              if (scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)) {
+                const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
+                if (trackerInfo) {
+                  logger.debug(`Tracking referenced item: ${referencedItemAttributeDetected.type} - ${attrValue} in ${document.uri.toString()}`);
                   switch (referencedItemAttributeDetected.attrType) {
                     case 'definition':
-                      this.labelTracker.addItemDefinition(attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemDefinition(attrValue, document, attr.valueRange);
                       break;
                     case 'reference':
-                      this.labelTracker.addItemReference(attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemReference(attrValue, document, attr.valueRange);
                       break;
                   }
-                  break;
-                case 'actions':
-                  switch (referencedItemAttributeDetected.attrType) {
-                    case 'definition':
-                      this.actionsTracker.addItemDefinition(attrValue, document, attr.valueRange);
-                      break;
-                    case 'reference':
-                      this.actionsTracker.addItemReference(attrValue, document, attr.valueRange);
-                      break;
-                  }
-                  break;
+                } else {
+                  logger.warn(`No tracker found for referenced item type: ${referencedItemAttributeDetected.type}`);
+                }
               }
             }
 

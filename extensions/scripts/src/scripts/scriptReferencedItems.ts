@@ -5,13 +5,13 @@ import path from 'path';
 import { log } from 'console';
 const fs = require('fs');
 
-export type ScriptReferencedItemInfo = {
+export interface ScriptReferencedItemInfo {
   name: string;
   definition: vscode.Location;
   references: vscode.Location[];
 };
 
-export type ScriptReferencedItemAtPosition = {
+export interface ScriptReferencedItemAtPosition {
   item: ScriptReferencedItemInfo;
   location: vscode.Location;
   isDefinition: boolean;
@@ -19,19 +19,19 @@ export type ScriptReferencedItemAtPosition = {
 
 export type ScriptReferencedItems = Map<string, ScriptReferencedItemInfo>;
 
-export type ScriptReferencedItemsDefinition = {
+export interface ScriptReferencedItemsDefinition {
   name: string;
   definition: vscode.Location;
 };
 
-export type ScriptReferencedItemsReferences = {
+export interface ScriptReferencedItemsReferences {
   name: string;
   references: vscode.Location[];
 };
 
 export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 
-export type ScriptReferencedItemsDetectionItem = {
+export interface ScriptReferencedItemsDetectionItem {
   type: 'label' | 'actions';
   attrType: 'definition' | 'reference';
   schema?: string; // Optional schema for actions
@@ -40,19 +40,39 @@ export type ScriptReferencedItemsDetectionItem = {
 
 type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
 
-type ReferencedItemsWithExternalTrackerMap = Map<string, ReferencedItemsWithExternalDefinitionsTracker>;
 
-type ScriptItemExternalDefinition = {
+interface ScriptItemExternalDefinition {
   name: string;
   definition: vscode.Location;
 }
 
-type externalTrackerInfo = {
+interface externalTrackerInfo {
   elementName: string;
   attributeName: string;
   filePrefix: string; // Optional prefix for external definitions
   tracker: ReferencedItemsWithExternalDefinitionsTracker;
 };
+
+interface ScriptReferencedItemsRegistryItem {
+  type: string;
+  tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker;
+}
+
+type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
+
+
+const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
+  ['label#name', { type: 'label', attrType: 'definition' }],
+  ['resume#label', { type: 'label', attrType: 'reference' }],
+  ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
+  ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
+  ['actions#name', { type: 'actions', attrType: 'definition', filePrefix: 'lib.', schema: 'aiscripts' }],
+  ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
+]);
+
+export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();
+
+
 // Helper function to calculate string similarity (Levenshtein distance based)
 function calculateSimilarity(str1: string, str2: string): number {
   const longer = str1.length > str2.length ? str1 : str2;
@@ -110,16 +130,6 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
     .map((item) => item.name);
 }
 
-const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
-  ['label#name', { type: 'label', attrType: 'definition' }],
-  ['resume#label', { type: 'label', attrType: 'reference' }],
-  ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
-  ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition', filePrefix: 'lib.', schema: 'aiscripts' }],
-  ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
-]);
-
-
 
 export function checkReferencedItemAttributeType(elementName, attributeName): ScriptReferencedItemsDetectionItem | undefined {
   let key = `${elementName}#${attributeName}`;
@@ -129,6 +139,7 @@ export function checkReferencedItemAttributeType(elementName, attributeName): Sc
   }
   return undefined;
 }
+
 
 export class ReferencedItemsTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
@@ -140,6 +151,16 @@ export class ReferencedItemsTracker {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
     this.itemType = itemType;
     this.itemTypeCapitalized = this.itemType.charAt(0).toUpperCase() + this.itemType.slice(1);
+    // Register this tracker in the global registry
+    this.registerTracker();
+  }
+
+  protected registerTracker(): void {
+    scriptReferencedItemsRegistry.set(this.itemType, {
+      type: this.itemType,
+      tracker: this,
+    });
+    logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
   public addItemDefinition(name: string, document: vscode.TextDocument, range: vscode.Range): void {
@@ -362,10 +383,6 @@ export class ReferencedItemsTracker {
 
 export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
   protected externalDefinitions: Map<string, ScriptItemExternalDefinition> = new Map();
-  constructor(itemType: string) {
-    super(itemType);
-    ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
-  }
 
   private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
@@ -459,6 +476,19 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       }
     }
 
+  }
+
+  constructor(itemType: string) {
+    super(itemType);
+    ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
+  }
+
+  protected registerTracker(): void {
+    scriptReferencedItemsRegistry.set(this.itemType, {
+      type: this.itemType,
+      tracker: this,
+    });
+    logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
   public addExternalDefinition(value: string, line: number, position: number, length: number, fileName: string): void {

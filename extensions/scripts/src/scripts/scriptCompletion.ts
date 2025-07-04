@@ -3,8 +3,9 @@ import { XsdReference, EnhancedAttributeInfo } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { ScriptProperties } from './scriptProperties';
-import { ReferencedItemsTracker, ScriptReferencedCompletion, checkReferencedItemAttributeType } from './scriptReferencedItems';
+import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
+import { log } from 'console';
 
 
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
@@ -24,16 +25,12 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
   private xsdReference: XsdReference;
   private xmlTracker: XmlStructureTracker;
   private scriptProperties: ScriptProperties;
-  private labelTracker: ReferencedItemsTracker;
-  private actionsTracker: ReferencedItemsTracker;
   private variablesTracker: VariableTracker;
 
-  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: ScriptProperties, labelTracker: ReferencedItemsTracker, actionsTracker: ReferencedItemsTracker, variablesTracker: VariableTracker) {
+  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: ScriptProperties, variablesTracker: VariableTracker) {
     this.xsdReference = xsdReference;
     this.xmlTracker = xmlStructureTracker;
     this.scriptProperties = scriptProperties;
-    this.labelTracker = labelTracker;
-    this.actionsTracker = actionsTracker;
     this.variablesTracker = variablesTracker;
   }
 
@@ -221,16 +218,14 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
         }
-
-        switch (referencedItemAttributeDetected.type) {
-          case 'label':
-            logger.debug(`Completion requested in label attribute: ${element.name}.${attribute.name}`);
-            valueCompletion = this.labelTracker.getAllItemsForCompletion(document, prefix);
-            break;
-          case 'actions':
-            logger.debug(`Completion requested in actions attribute: ${element.name}.${attribute.name}`);
-            valueCompletion = this.actionsTracker.getAllItemsForCompletion(document, prefix);
-            break;
+        if (scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)) {
+          logger.debug(`Completion requested in referenced item attribute: ${element.name}.${attribute.name} of type ${referencedItemAttributeDetected.type}`);
+          const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
+          if (trackerInfo) {
+            valueCompletion = trackerInfo.tracker.getAllItemsForCompletion(document, prefix);
+          } else {
+            logger.warn(`No tracker found for referenced item type: ${referencedItemAttributeDetected.type}`);
+          }
         }
 
         if (valueCompletion.size > 0) {
