@@ -331,15 +331,17 @@ export class ReferencedItemsTracker {
     return `**Defined**: ${item.definition ? `at line ${item.definition.range.start.line + 1}` : '*No definition found!*'}`;
   }
 
-  public getItemDetails(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: 'full' | 'definition' | 'reference'): vscode.MarkdownString {
+  public getItemDetails(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: 'full' | 'external' | 'definition' | 'reference'): vscode.MarkdownString {
     const markdownString = new vscode.MarkdownString();
     const defined = this.definitionToMarkdown(document, item);
     const references = this.getReferences(document, item);
     const referenced = `**Referenced**: ${references.length} time${references.length !== 1 ? 's' : ''}`;
-    if (detailsType === 'full') {
+    if (detailsType === 'full' || detailsType === 'external') {
       markdownString.appendMarkdown(`**${this.itemTypeCapitalized}**: \`${item.name}\`\n\n`);
       markdownString.appendMarkdown(defined + '\n\n');
-      markdownString.appendMarkdown(referenced);
+      if (detailsType === 'full') {
+        markdownString.appendMarkdown(referenced);
+      }
     } else if (detailsType === 'definition') {
       markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Definition**: \`${item.name}\`\n\n`);
       markdownString.appendMarkdown(referenced);
@@ -515,6 +517,42 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
 
   protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
     return Array.from(this.documentReferencedItems.values()).flatMap(itemMap => itemMap.get(item.name)?.references || []);
+  }
+
+  public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
+    const result: ScriptReferencedCompletion = new Map();
+    const documentData = this.documentReferencedItems.get(document);
+    if (!documentData) {
+      return result;
+    }
+
+    // Process all labels
+    for (const [itemName, itemData] of documentData.entries()) {
+      if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
+      // Only add the item if it matches the prefix
+        result.set(itemName, this.getItemDetails(document, itemData, 'full'));
+      }
+    }
+    const documentFolder = path.dirname(document.uri.fsPath);
+    // Process all labels
+    for (const [itemName, itemData] of documentData.entries()) {
+      if (itemData.definition && (prefix === '' || itemName.startsWith(prefix)) && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
+      // Only add the item if it matches the prefix
+      if (!result.has(itemName)) {
+          result.set(itemName, this.getItemDetails(document, itemData, 'external'));
+        }
+      }
+    }
+    for (const [itemName, externalDefinition] of this.externalDefinitions.entries()) {
+      if (externalDefinition.definition && (prefix === '' || itemName.startsWith(prefix))) {
+        // Only add the item if it matches the prefix
+        if (!result.has(itemName)) {
+          result.set(itemName, this.getItemDetails(document, { name: itemName, definition: externalDefinition.definition, references: [] }, 'external'));
+        }
+      }
+    }
+
+    return result;
   }
 
   protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo): string {
