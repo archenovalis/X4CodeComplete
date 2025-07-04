@@ -32,7 +32,7 @@ export interface ScriptReferencedItemsReferences {
 export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 
 export interface ScriptReferencedItemsDetectionItem {
-  type: 'label' | 'actions';
+  type: 'label' | 'actions' | 'handler';
   attrType: 'definition' | 'reference';
   schema?: string; // Optional schema for actions
   filePrefix?: string; // Optional prefix for external definitions
@@ -69,6 +69,8 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
   ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.', schema: 'aiscripts' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
+  ['handler#name', { type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.', schema: 'aiscripts' }],
+  ['handler#ref', { type: 'handler', attrType: 'reference' }],
 ]);
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();

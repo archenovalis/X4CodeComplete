@@ -56,7 +56,7 @@ import { logger, setLoggerLevel } from './logger/logger';
 import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // Script-specific functionality imports
-import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker } from './scripts/scriptReferencedItems';
+import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
@@ -92,6 +92,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 const variableTracker = new VariableTracker();
 const labelTracker = new ReferencedItemsTracker('label');
 const actionsTracker = new ReferencedItemsWithExternalDefinitionsTracker('actions');
+const handlerTracker = new ReferencedItemsWithExternalDefinitionsTracker('handler');
 
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
@@ -222,19 +223,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         // AI script specific features
         if (schema === aiScriptId) {
-          // Check for action definitions
-          const actionsDefinition = actionsTracker.getItemDefinition(document, position);
-          if (actionsDefinition) {
-            logger.debug(`Definition found for action: ${actionsDefinition.name}`);
-            return actionsDefinition.definition;
+
+          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+            const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
+            if (itemDefinition) {
+              logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
+              return itemDefinition.definition;
+            }
           }
 
-          // Check for label definitions
-          const labelDefinition = labelTracker.getItemDefinition(document, position);
-          if (labelDefinition) {
-            logger.debug(`Definition found for label: ${labelDefinition.name}`);
-            return labelDefinition.definition;
-          }
         }
 
         // Fallback to script properties
@@ -305,16 +302,12 @@ export function activate(context: vscode.ExtensionContext) {
 
         // AI script specific hover information
         if (schema === aiScriptId) {
-          // Check for action hover
-          const actionsHover = actionsTracker.getItemHover(document, position);
-          if (actionsHover) {
-            return actionsHover;
-          }
-
-          // Check for label hover
-          const labelHover = labelTracker.getItemHover(document, position);
-          if (labelHover) {
-            return labelHover;
+          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+            // Check for action definitions
+            const itemHover = trackerInfo.tracker.getItemHover(document, position);
+            if (itemHover) {
+              return itemHover;
+            }
           }
         }
 
@@ -409,8 +402,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((document) => {
       diagnosticCollection.delete(document.uri);
-      actionsTracker.clearItemsForDocument(document);
-      labelTracker.clearItemsForDocument(document);
+      scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+        trackerInfo.tracker.clearItemsForDocument(document);
+      });
       logger.debug(`Removed cached data for document: ${document.uri.toString()}`);
     })
   );
@@ -592,18 +586,12 @@ export function activate(context: vscode.ExtensionContext) {
           return variableReferences.references;
         }
         if (schema == aiScriptId) {
-          // Check if we're on an action
-          const actionsReferences = actionsTracker.getItemReferences(document, position);
-          if (actionsReferences) {
-            logger.debug(`References found for action: ${actionsReferences.name}`);
-            return actionsReferences.references;
-          }
-
-          // Check if we're on a label
-          const labelReferences = labelTracker.getItemReferences(document, position);
-          if (labelReferences) {
-            logger.debug(`References found for label: ${labelReferences.name}`);
-            return labelReferences.references;
+          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+            const itemReferences = trackerInfo.tracker.getItemReferences(document, position);
+            if (itemReferences) {
+              logger.debug(`References found for ${itemType}: ${itemReferences.name}`);
+              return itemReferences.references;
+            }
           }
         }
         return [];
@@ -702,16 +690,11 @@ export function deactivate() {
       logger.debug('Label tracker disposed');
     }
 
-    // Clear action tracking data
-    if (actionsTracker) {
-      actionsTracker.dispose();
-      logger.debug('Actions tracker disposed');
-    }
-
-    // Clear XML structure tracking data
-    if (xmlTracker) {
-      xmlTracker.dispose();
-      logger.debug('XML tracker disposed');
+    for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+      if (trackerInfo.tracker) {
+        trackerInfo.tracker.dispose();
+        logger.debug(`Tracker for ${itemType} disposed`);
+      }
     }
 
     // ================================================================================================
