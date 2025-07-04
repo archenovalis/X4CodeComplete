@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
-import * as sax from 'sax';
 
 type ScriptMetadata = {
   schema: string;
 }
 type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
+
+const SCRIPT_REGEX = /^\s*<\?xml[^>]*\?>\s*(?:<!--[\s\S]*?-->\s*)*<(mdscript|aiscript)[^>]*?\s+xsi:noNamespaceSchemaLocation="[^"]*?(aiscripts|md).xsd"/mi;
 
 export let scriptsMetadata: ScriptsMetadata = new WeakMap();
 
@@ -32,20 +33,9 @@ export function scriptsMetadataClearAll(): void {
 
 export const aiScriptId = 'aiscripts';
 export const mdScriptId = 'md';
-export const scriptNodes = {
-  'aiscript': {
-    id: aiScriptId,
-    info: 'AI Scripts',
-  },
-  'mdscript': {
-    id: mdScriptId,
-    info: 'Mission Director Scripts',
-  }
-};
-const scriptNodesNames = Object.keys(scriptNodes);
-const scriptTypesToSchema = {
-  [aiScriptId]: 'aiscripts',
-  [mdScriptId]: 'md',
+export const scriptIdDescription = {
+  'aiscripts': 'AI Script',
+  'md': 'Mission Director Script',
 };
 
 export function getDocumentScriptType(document: vscode.TextDocument): string {
@@ -64,22 +54,16 @@ export function getDocumentScriptType(document: vscode.TextDocument): string {
   }
 
   const text = document.getText();
-  const parser = sax.parser(true); // Use strict mode for validation
-
-  parser.onopentag = (node) => {
-    // Check if the root element is <aiscript> or <mdscript>
-    if (scriptNodesNames.includes(node.name)) {
-      languageSubId = scriptNodes[node.name].id;
-    }
-    parser.close(); // Stop parsing as soon as the root element is identified
-  };
-
-  try {
-    parser.write(text).close();
-  } catch {
-    // Will not react, as we have only one possibility to get a true
+  if (!SCRIPT_REGEX.test(text)) {
+    logger.debug(`Document ${document.uri.toString()} does not match script regex.`);
+    return languageSubId; // Skip if the document does not match the script regex
   }
-
+  const match = SCRIPT_REGEX.exec(text);
+  if (!match || match.length < 3) {
+    logger.debug(`Document ${document.uri.toString()} does not contain valid script type.`);
+    return languageSubId; // Skip if the document does not contain a valid script type
+  }
+  languageSubId = match[2].toLowerCase();
   if (languageSubId) {
     // Cache the languageSubId for future use
     if (!scriptsMetadata.has(document)) {

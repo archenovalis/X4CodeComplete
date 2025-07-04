@@ -58,7 +58,7 @@ import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidation
 // Script-specific functionality imports
 import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { ScriptProperties } from './scripts/scriptProperties';
-import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptNodes, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
+import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
@@ -401,11 +401,24 @@ export function activate(context: vscode.ExtensionContext) {
   // Clean up cached data when documents are closed
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((document) => {
-      diagnosticCollection.delete(document.uri);
-      scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-        trackerInfo.tracker.clearItemsForDocument(document);
-      });
-      logger.debug(`Removed cached data for document: ${document.uri.toString()}`);
+      const uri = document.uri;
+
+      const stillOpenInTab = vscode.window.tabGroups.all
+        .flatMap(group => group.tabs)
+        .some(tab => {
+          const input = tab.input as any;
+          return input?.uri?.toString() === uri.toString();
+        });
+
+      if (!stillOpenInTab) {
+        diagnosticCollection.delete(uri);
+        scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+          trackerInfo.tracker.clearItemsForDocument(document);
+        });
+        logger.debug(`Removed cached data for document: ${uri.toString()}`);
+      } else {
+        logger.debug(`Skipped removing diagnostics for: ${uri.toString()} (still open in a tab)`);
+      }
     })
   );
 

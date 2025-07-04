@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getDocumentScriptType, scriptNodes} from './scriptsMetadata';
+import { getDocumentScriptType, scriptIdDescription} from './scriptsMetadata';
 
 export type ScriptVariableInfo = {
   name: string;
@@ -189,7 +189,7 @@ export class VariableTracker {
   public static getVariableDetails(variable: ScriptVariableInfo): vscode.MarkdownString {
     const details = new vscode.MarkdownString();
     details.appendMarkdown(
-      `**${scriptNodes[variable.schema]?.info || 'Script'} ${variableTypes[variable.type] || 'Variable'}**: \`${variable.name}\`` + '\n\n'
+      `**${scriptIdDescription[variable.schema] || 'Script'} ${variableTypes[variable.type] || 'Variable'}**: \`${variable.name}\`` + '\n\n'
     );
 
     details.appendMarkdown(
