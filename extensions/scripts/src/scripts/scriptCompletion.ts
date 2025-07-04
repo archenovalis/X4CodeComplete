@@ -213,7 +213,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attribute.name);
       let valueCompletion: ScriptReferencedCompletion = new Map();
       // Check if we're in a label or action context
-      if (referencedItemAttributeDetected) {
+      if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion) {
         let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value

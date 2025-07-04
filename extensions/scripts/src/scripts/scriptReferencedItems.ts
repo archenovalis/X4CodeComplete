@@ -36,6 +36,7 @@ export interface ScriptReferencedItemsDetectionItem {
   attrType: 'definition' | 'reference';
   schema?: string; // Optional schema for actions
   filePrefix?: string; // Optional prefix for external definitions
+  noCompletion?: boolean; // Optional flag to disable completion for this item
 };
 
 type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
@@ -62,11 +63,11 @@ type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryIt
 
 
 const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
-  ['label#name', { type: 'label', attrType: 'definition' }],
+  ['label#name', { type: 'label', attrType: 'definition', noCompletion: true }],
   ['resume#label', { type: 'label', attrType: 'reference' }],
   ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition', filePrefix: 'lib.', schema: 'aiscripts' }],
+  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.', schema: 'aiscripts' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
 ]);
 
