@@ -72,10 +72,53 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     }
     return new vscode.CompletionList(Array.from(items.values()), isIncomplete);
   }
+  private static movePositionLeft(position: vscode.Position, document: vscode.TextDocument): vscode.Position | undefined {
+    if (position.character > 0) {
+      // Move left within the same line
+      return position.translate(0, -1);
+    } else if (position.line > 0) {
+      // Move to the end of the previous line
+      const prevLine = position.line - 1;
+      const prevLineLength = document.lineAt(prevLine).text.length;
+      return new vscode.Position(prevLine, prevLineLength);
+    } else {
+      // At beginning of document, can't move left
+      return undefined;
+    }
+  }
 
-  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: XmlElement, parentName: string, parentHierarchy: string[], range?: vscode.Range): vscode.CompletionList {
+  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: XmlElement, parent: XmlElement | undefined, range?: vscode.Range): vscode.CompletionList {
     const items: CompletionsMap = new Map();
-    const possibleElements = this.xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy);
+    const parentName = parent ? parent.name : '';
+    const parentHierarchy = parent ? parent.hierarchy : [];
+    let currentElement: XmlElement | undefined = element || parent;
+    let previousElement: XmlElement | undefined = undefined;
+    if (currentElement !== undefined) {
+      let elementName = this.xmlTracker.elementWithPosInName(document, position);
+      let newPosition = elementName ? elementName.nameRange.start : position;
+      let foundElement = currentElement;
+      while (foundElement.range.isEqual(currentElement.range)) {
+        newPosition = ScriptCompletion.movePositionLeft(newPosition, document);
+        if (newPosition === undefined) {
+          logger.debug('No more positions to check, exiting loop');
+          break; // No more positions to check, exit the loop
+        }
+        foundElement = this.xmlTracker.elementWithPosIn(document, newPosition);
+        if (foundElement === undefined || !foundElement.range.isEqual(currentElement.range)) {
+          break; // No more elements found, exit the loop
+        }
+        elementName = this.xmlTracker.elementWithPosInName(document, newPosition);
+        if (elementName) {
+          break; // Found the element name, exit the loop
+        }
+      }
+      logger.debug(`Element name found: ${foundElement ? foundElement.name : 'undefined'}`);
+      if (foundElement && !foundElement.range.isEqual(currentElement.range)) {
+        previousElement = foundElement;
+      }
+      logger.debug(`Current element: ${currentElement.name}, Previous element: ${previousElement ? previousElement.name : 'undefined'}`);
+    }
+    const possibleElements = this.xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy, previousElement ? previousElement.name : undefined );
     if (possibleElements !== undefined) {
       logger.debug(`Possible elements for ${parentName}:`, possibleElements);
       const currentLinePrefix =  document.lineAt(position).text.substring(0, position.character);
@@ -143,7 +186,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           return []; // Return empty list if only checking
         } else {
           if (element.parent !== undefined) {
-            return this.elementNameCompletion(schema, document, position, element, element.parent.name, element.parent.hierarchy, element.nameRange);
+            return this.elementNameCompletion(schema, document, position, element, element.parent, element.nameRange);
           }
         }
       }
@@ -295,7 +338,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       const element = this.xmlTracker.elementWithPosIn(document, position);
       if (element) {
         logger.debug(`Completion requested in element range: ${element.name}`);
-        return this.elementNameCompletion(schema, document, position, undefined, element.name, element.hierarchy);
+        return this.elementNameCompletion(schema, document, position, undefined, element);
       }
     }
     if (checkOnly) {
