@@ -67,7 +67,7 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
   ['resume#label', { type: 'label', attrType: 'reference' }],
   ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.', schema: 'aiscripts' }],
+  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.', schema: 'aiscripts' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
 ]);
 
@@ -457,7 +457,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
             const fileName = path.basename(file, '.xml');
             let fileContent: string = '';
             for (const trackerInfo of trackersInfo) {
-              if (!trackerInfo.filePrefix || fileName.startsWith(trackerInfo.filePrefix)) {
+              const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
+              if (prefixes.length === 0 || prefixes.some(prefix => fileName.startsWith(prefix))) {
                 logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}`);
                 if (!fileContent && fs.existsSync(file)) {
                   fileContent = fs.readFileSync(file, 'utf8');
