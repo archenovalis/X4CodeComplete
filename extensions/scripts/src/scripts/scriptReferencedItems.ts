@@ -29,10 +29,15 @@ export interface ScriptReferencedItemsReferences {
   references: vscode.Location[];
 };
 
+export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler';
+export type ScriptReferencedItemClassId = 'basic' | 'external';
+
+type ScriptReferencedItemType = Map<ScriptReferencedItemTypeId, ScriptReferencedItemClassId>;
+
 export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 
 export interface ScriptReferencedItemsDetectionItem {
-  type: 'label' | 'actions' | 'handler';
+  type: ScriptReferencedItemTypeId;
   attrType: 'definition' | 'reference';
   schema?: string; // Optional schema for actions
   filePrefix?: string; // Optional prefix for external definitions
@@ -61,6 +66,11 @@ interface ScriptReferencedItemsRegistryItem {
 
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
 
+const scriptReferencedItemType: ScriptReferencedItemType = new Map([
+  ['label', 'basic'],
+  ['actions', 'external'],
+  ['handler', 'external'],
+]);
 
 const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
   ['label#name', { type: 'label', attrType: 'definition', noCompletion: true }],
@@ -75,6 +85,20 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();
 
+function initializeScriptReferencedItemsDetectionMap() {
+  for (const [key, value] of scriptReferencedItemType.entries()) {
+    switch (value) {
+      case 'basic':
+        new ReferencedItemsTracker(key);
+        break;
+        case 'external':
+          new ReferencedItemsWithExternalDefinitionsTracker(key);
+        break;
+      default:
+        logger.warn(`Unknown item type '${value}' for key '${key}' in scriptReferencedItemType`);
+    }
+  }
+}
 
 // Helper function to calculate string similarity (Levenshtein distance based)
 function calculateSimilarity(str1: string, str2: string): number {
@@ -568,3 +592,5 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 }
+
+initializeScriptReferencedItemsDetectionMap();

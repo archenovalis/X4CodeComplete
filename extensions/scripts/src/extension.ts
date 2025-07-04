@@ -90,9 +90,6 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 
 /** Global tracker instances for document analysis */
 const variableTracker = new VariableTracker();
-const labelTracker = new ReferencedItemsTracker('label');
-const actionsTracker = new ReferencedItemsWithExternalDefinitionsTracker('actions');
-const handlerTracker = new ReferencedItemsWithExternalDefinitionsTracker('handler');
 
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
@@ -503,78 +500,71 @@ export function activate(context: vscode.ExtensionContext) {
         for (const diagnostic of context.diagnostics) {
           if (diagnostic.source === 'X4CodeComplete') {
             // Handle undefined label errors
-            if (diagnostic.code === 'undefined-label') {
-              const labelName = diagnostic.message.match(/'(.+)'/)?.[1];
-              if (labelName) {
-                // Suggest similar existing labels as replacements
-                const similarLabels = labelTracker.getSimilarItems(document, labelName);
-                similarLabels.forEach((similarLabel) => {
-                  const replaceAction = new vscode.CodeAction(
-                    `Replace with existing label '${similarLabel}'`,
-                    vscode.CodeActionKind.QuickFix
-                  );
-                  replaceAction.edit = new vscode.WorkspaceEdit();
-                  replaceAction.edit.replace(document.uri, diagnostic.range, similarLabel);
-                  replaceAction.diagnostics = [diagnostic];
-                  replaceAction.isPreferred = similarLabels.indexOf(similarLabel) === 0;
-                  actions.push(replaceAction);
-                });
-              }
-            }
-            // Handle undefined action errors
-            else if (diagnostic.code === 'undefined-action') {
-              const actionName = diagnostic.message.match(/'(.+)'/)?.[1];
-              if (actionName) {
-                // Create action to add new action definition
-                const createAction = new vscode.CodeAction(
-                  `Create action '${actionName}'`,
-                  vscode.CodeActionKind.QuickFix
-                );
-                createAction.edit = new vscode.WorkspaceEdit();
-
-                // Determine where to insert the new action definition
-                const text = document.getText();
-                const libraryMatch = text.match(/<library>/);
-                let insertPosition: vscode.Position;
-                let insertText: string;
-
-                if (libraryMatch) {
-                  // Insert into existing library section
-                  const libraryStartIndex = text.indexOf('<library>') + '<library>'.length;
-                  insertPosition = document.positionAt(libraryStartIndex);
-                  insertText = `\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>`;
+            if (diagnostic.code.toString().startsWith('undefined-')) {
+              const itemType = diagnostic.code.toString().split('-')[1];
+              if (itemType && scriptReferencedItemsRegistry.has(itemType)) {
+                const trackerInfo = scriptReferencedItemsRegistry.get(itemType);
+                if (trackerInfo) {
+                  const itemName = diagnostic.message.match(/'(.+)'/)?.[1];
+                  const similarItems = trackerInfo.tracker.getSimilarItems(document, itemName);
+                  similarItems.forEach((similarItem) => {
+                    if (similarItem === itemName) {
+                      return; // Skip if the item is the same as the one causing the error
+                    }
+                    const replaceAction = new vscode.CodeAction(
+                      `Replace with existing ${itemType} '${similarItem}'`,
+                      vscode.CodeActionKind.QuickFix
+                    );
+                    replaceAction.edit = new vscode.WorkspaceEdit();
+                    replaceAction.edit.replace(document.uri, diagnostic.range, similarItem);
+                    replaceAction.diagnostics = [diagnostic];
+                    replaceAction.isPreferred = similarItems.indexOf(similarItem) === 0;
+                    actions.push(replaceAction);
+                  });
                 } else {
-                  // Create new library section
-                  const aiscriptMatch = text.match(/<aiscript[^>]*>/);
-                  if (aiscriptMatch) {
-                    const aiscriptEndIndex = text.indexOf('>', text.indexOf(aiscriptMatch[0])) + 1;
-                    insertPosition = document.positionAt(aiscriptEndIndex);
-                    insertText = `\n  <library>\n    <actions name="${actionName}">\n      <!-- TODO: Implement action -->\n    </actions>\n  </library>`;
-                  } else {
-                    insertPosition = new vscode.Position(1, 0);
-                    insertText = `<library>\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>\n</library>\n`;
-                  }
+                  logger.debug(`No tracker found for item type: ${itemType}`);
                 }
-
-                createAction.edit.insert(document.uri, insertPosition, insertText);
-                createAction.diagnostics = [diagnostic];
-                actions.push(createAction);
-
-                // Also suggest similar existing actions as alternatives
-                const similarActions = actionsTracker.getSimilarItems(document, actionName);
-                similarActions.forEach((similarAction) => {
-                  const replaceAction = new vscode.CodeAction(
-                    `Replace with existing action '${similarAction}'`,
-                    vscode.CodeActionKind.QuickFix
-                  );
-                  replaceAction.edit = new vscode.WorkspaceEdit();
-                  replaceAction.edit.replace(document.uri, diagnostic.range, similarAction);
-                  replaceAction.diagnostics = [diagnostic];
-                  replaceAction.isPreferred = similarActions.indexOf(similarAction) === 0;
-                  actions.push(replaceAction);
-                });
               }
             }
+              // const actionName = diagnostic.message.match(/'(.+)'/)?.[1];
+              // if (actionName) {
+              //   // Create action to add new action definition
+              //   const createAction = new vscode.CodeAction(
+              //     `Create action '${actionName}'`,
+              //     vscode.CodeActionKind.QuickFix
+              //   );
+              //   createAction.edit = new vscode.WorkspaceEdit();
+
+              //   // Determine where to insert the new action definition
+              //   const text = document.getText();
+              //   const libraryMatch = text.match(/<library>/);
+              //   let insertPosition: vscode.Position;
+              //   let insertText: string;
+
+              //   if (libraryMatch) {
+              //     // Insert into existing library section
+              //     const libraryStartIndex = text.indexOf('<library>') + '<library>'.length;
+              //     insertPosition = document.positionAt(libraryStartIndex);
+              //     insertText = `\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>`;
+              //   } else {
+              //     // Create new library section
+              //     const aiscriptMatch = text.match(/<aiscript[^>]*>/);
+              //     if (aiscriptMatch) {
+              //       const aiscriptEndIndex = text.indexOf('>', text.indexOf(aiscriptMatch[0])) + 1;
+              //       insertPosition = document.positionAt(aiscriptEndIndex);
+              //       insertText = `\n  <library>\n    <actions name="${actionName}">\n      <!-- TODO: Implement action -->\n    </actions>\n  </library>`;
+              //     } else {
+              //       insertPosition = new vscode.Position(1, 0);
+              //       insertText = `<library>\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>\n</library>\n`;
+              //     }
+              //   }
+
+              //   createAction.edit.insert(document.uri, insertPosition, insertText);
+              //   createAction.diagnostics = [diagnostic];
+              //   actions.push(createAction);
+
+
+              // }
           }
         }
 
@@ -697,12 +687,7 @@ export function deactivate() {
       logger.debug('Variable tracker disposed');
     }
 
-    // Clear label tracking data
-    if (labelTracker) {
-      labelTracker.dispose();
-      logger.debug('Label tracker disposed');
-    }
-
+    // Clear referenced items tracking data
     for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
       if (trackerInfo.tracker) {
         trackerInfo.tracker.dispose();
