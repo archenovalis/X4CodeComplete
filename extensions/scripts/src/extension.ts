@@ -526,45 +526,6 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
             }
-              // const actionName = diagnostic.message.match(/'(.+)'/)?.[1];
-              // if (actionName) {
-              //   // Create action to add new action definition
-              //   const createAction = new vscode.CodeAction(
-              //     `Create action '${actionName}'`,
-              //     vscode.CodeActionKind.QuickFix
-              //   );
-              //   createAction.edit = new vscode.WorkspaceEdit();
-
-              //   // Determine where to insert the new action definition
-              //   const text = document.getText();
-              //   const libraryMatch = text.match(/<library>/);
-              //   let insertPosition: vscode.Position;
-              //   let insertText: string;
-
-              //   if (libraryMatch) {
-              //     // Insert into existing library section
-              //     const libraryStartIndex = text.indexOf('<library>') + '<library>'.length;
-              //     insertPosition = document.positionAt(libraryStartIndex);
-              //     insertText = `\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>`;
-              //   } else {
-              //     // Create new library section
-              //     const aiscriptMatch = text.match(/<aiscript[^>]*>/);
-              //     if (aiscriptMatch) {
-              //       const aiscriptEndIndex = text.indexOf('>', text.indexOf(aiscriptMatch[0])) + 1;
-              //       insertPosition = document.positionAt(aiscriptEndIndex);
-              //       insertText = `\n  <library>\n    <actions name="${actionName}">\n      <!-- TODO: Implement action -->\n    </actions>\n  </library>`;
-              //     } else {
-              //       insertPosition = new vscode.Position(1, 0);
-              //       insertText = `<library>\n  <actions name="${actionName}">\n    <!-- TODO: Implement action -->\n  </actions>\n</library>\n`;
-              //     }
-              //   }
-
-              //   createAction.edit.insert(document.uri, insertPosition, insertText);
-              //   createAction.diagnostics = [diagnostic];
-              //   actions.push(createAction);
-
-
-              // }
           }
         }
 
