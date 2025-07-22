@@ -5,7 +5,8 @@ import { getDocumentScriptType } from './scriptsMetadata';
 import { ScriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
-import { log } from 'console';
+import { getNearestBreakSymbolIndexForVariables } from './scriptUtilities';
+import { logger } from '../logger/logger';
 
 
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
@@ -21,8 +22,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     ['variable', vscode.CompletionItemKind.Variable],
     ['value', vscode.CompletionItemKind.Value],
   ]);
-
-  private static readonly breakSymbols: string[] = [' ', '.', '[', ']', '{', '}', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`'];
 
   private xsdReference: XsdReference;
   private xmlTracker: XmlStructureTracker;
@@ -166,16 +165,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       return ScriptCompletion.makeCompletionList(items, prefix);
     }
     return this.emptyCompletion;
-  }
-
-  private static getNearestBreakSymbolIndex(text: string, before: boolean): number {
-    const searchRange = before ? text.length - 1 : 0;
-    for (let i = searchRange; i >= 0 && i < text.length; i += before ? -1 : 1) {
-      if (this.breakSymbols.includes(text[i])) {
-        return i;
-      }
-    }
-    return -1;
   }
 
   public prepareCompletion(document: vscode.TextDocument, position: vscode.Position, checkOnly: boolean, token?: vscode.CancellationToken, context?: vscode.CompletionContext): vscode.CompletionItem[] | vscode.CompletionList | undefined {
@@ -322,8 +311,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
          textToProcessBefore = textToProcessBefore.substring(0, position.character);
       }
 
-      let lastBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessBefore, true);
-      let firstBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessAfter, false);
+      let lastBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessBefore, true);
+      let firstBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessAfter, false);
 
       const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
       const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';

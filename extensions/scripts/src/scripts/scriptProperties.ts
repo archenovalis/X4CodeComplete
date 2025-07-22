@@ -4,7 +4,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
-import { getDocumentScriptType} from './scriptsMetadata';
+import { getDocumentScriptType } from './scriptsMetadata';
+import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
+import { get } from 'http';
 
 class TypeEntry {
   properties: Map<string, string> = new Map<string, string>();
@@ -69,13 +71,16 @@ interface Datatype {
 }
 
 export class ScriptProperties {
+
+  private static readonly typesToIgnore: string[] = ['undefined', 'expression'];
+
   private librariesFolder: string;
   private scriptPropertiesPath: string;
   private keywords: Keyword[] = [];
   private datatypes: Datatype[] = [];
   private dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
-  private allProp: Map<string, string> = new Map<string, string>();
+  private allProp: Map<string, string[]> = new Map<string, string[]>();
   private allPropItems: vscode.CompletionItem[] = [];
   private keywordItems: vscode.CompletionItem[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
@@ -104,7 +109,7 @@ export class ScriptProperties {
     logger.info('Attempting to read scriptproperties.xml');
     // Can't move on until we do this so use sync version
     const rawData = fs.readFileSync(filepath).toString();
-    let parsedData : any;
+    let parsedData: any;
 
     xml2js.parseString(rawData, (err: any, result: any) => {
       if (err !== null) {
@@ -196,7 +201,7 @@ export class ScriptProperties {
   private processDatatypes(rawData: string, datatypes: any[]): Datatype[] {
     const processedDatatypes: Datatype[] = [];
     datatypes.forEach((e: Datatype) => {
-      this. processDatatype(rawData, e);
+      this.processDatatype(rawData, e);
       processedDatatypes.push(e); // Add processed datatype to the array
     });
     return processedDatatypes;
@@ -226,12 +231,12 @@ export class ScriptProperties {
   addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): void {
     const re = new RegExp(
       '(?:<' +
-        parentType +
-        ' name="' +
-        escapeRegex(parent) +
-        '"[^>]*>.*?)(<property name="' +
-        escapeRegex(name) +
-        '"[^>]*>)',
+      parentType +
+      ' name="' +
+      escapeRegex(parent) +
+      '"[^>]*>.*?)(<property name="' +
+      escapeRegex(name) +
+      '"[^>]*>)',
       's'
     );
     const matches = rawData.match(re);
@@ -267,12 +272,6 @@ export class ScriptProperties {
       this.typeDict.set(k, entry);
     }
     entry.addLiteral(v);
-    if (this.allProp.has(v)) {
-      // If the commonDict already has this property, we can skip adding it again
-      return;
-    } else {
-      this.allProp.set(v, 'undefined');
-    }
   }
 
   addProperty(key: string, prop: string, type?: string, details?: string): void {
@@ -287,12 +286,21 @@ export class ScriptProperties {
       entry.addDetail(prop, details);
     }
     const shortProp = prop.split('.')[0];
-    if (this.allProp.has(shortProp)) {
-      // If the commonDict already has this property, we can skip adding it again
-      return;
-    } else if (type !== undefined) {
-      this.allProp.set(shortProp, type);
-      const item = ScriptProperties.createItem(shortProp, ScriptProperties.getPropertyDescription(shortProp, type, details));
+    this.addToAllProp(shortProp, key);
+  }
+
+  addToAllProp(value: string, type: string): void {
+    const v = cleanStr(value);
+    if ('$<[{'.indexOf(v.slice(0, 1)) === -1) {
+      const types = this.allProp.get(v);
+      if (types && types.includes(type)) {
+        return;
+      } else if (types) {
+        types.push(type);
+      } else {
+        this.allProp.set(v, [type]);
+      }
+      const item = ScriptProperties.createItem(v, ScriptProperties.getPropertyDescription(v, type));
       this.allPropItems.push(item);
     }
   }
@@ -365,6 +373,14 @@ export class ScriptProperties {
     return result;
   }
 
+  private static getPropertyDescriptionMultipleTypes(name: string, types: string[]): string[] {
+    const result: string[] = [`Properties prefixed by **${name}** are in the following types:`];
+    if (types.length > 0) {
+      result.push(...types.map((type) => `- **${type}**`));
+    }
+    return result;
+  }
+
   private buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
     // TODO handle better
     if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(typeName) > -1) {
@@ -402,7 +418,7 @@ export class ScriptProperties {
     }
   }
 
-  private makeCompletionList(items: Map<string, vscode.CompletionItem>|vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
+  private makeCompletionList(items: Map<string, vscode.CompletionItem> | vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
     if (items instanceof Map) {
       items = Array.from(items.values());
     }
@@ -528,6 +544,28 @@ export class ScriptProperties {
 
   public processText(textToProcessBefore: string, textToProcessAfter: string, type: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
     const items = new Map<string, vscode.CompletionItem>();
+    logger.debug('Processing text: ', textToProcessBefore, ' & ', textToProcessAfter, ' Type: ', type);
+    textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
+    textToProcessAfter = getSubStringByBreakSymbolForExpressions(textToProcessAfter, false);
+    const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
+    if (lastDollarIndex >= 0) {
+      const firstDotAfterDollar = textToProcessBefore.indexOf('.', lastDollarIndex);
+      if (firstDotAfterDollar >= 0) {
+        textToProcessBefore = textToProcessBefore.substring(firstDotAfterDollar + 1);
+        const propertyParts = textToProcessBefore.split('.');
+        if (propertyParts.length === 1) {
+          const prefix = propertyParts[0];
+          const allPropItems = Array.from(this.allProp).filter((item) => (prefix === '' || item[0].startsWith(prefix)));
+          for (const item of allPropItems) {
+            const label = item[0];
+            const description = ScriptProperties.getPropertyDescriptionMultipleTypes(label, item[1]);
+            const completionItem = ScriptProperties.createItem(label, description);
+            items.set(label, completionItem);
+          }
+        }
+      }
+    }
+
     const interesting = ScriptProperties.findRelevantPortion(textToProcessBefore);
     if (interesting === null) {
       logger.debug('no relevant portion detected');
@@ -541,18 +579,18 @@ export class ScriptProperties {
       prevToken = this.typeDict.has(prevToken)
         ? prevToken
         : this.allProp.has(prevToken)
-          ? this.allProp.get(prevToken) || ''
+          ? this.allProp.get(prevToken)?.[0] || ''
           : '';
       if (prevToken === undefined || prevToken === '') {
         logger.debug('Missing previous token!');
         return this.makeCompletionList(newToken.length > 0
           ? this.allPropItems.filter((item) => {
-              const label = typeof item.label === 'string' ? item.label : item.label.label;
-              return label.startsWith(newToken);
-            })
+            const label = typeof item.label === 'string' ? item.label : item.label.label;
+            return label.startsWith(newToken);
+          })
           : this.allPropItems,
-            newToken
-          );
+          newToken
+        );
       } else {
         logger.debug(`Matching on type: ${prevToken}!`);
         this.buildType(newToken, prevToken, items, 0);
@@ -793,5 +831,5 @@ function cleanStr(text: string) {
 
 function escapeRegex(text: string) {
   // https://stackoverflow.com/a/6969486
-  return  cleanStr(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return cleanStr(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 }
