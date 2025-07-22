@@ -526,9 +526,9 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-  public processText(textToProcess: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
     const items = new Map<string, vscode.CompletionItem>();
-    const interesting = ScriptProperties.findRelevantPortion(textToProcess);
+    const interesting = ScriptProperties.findRelevantPortion(textToProcessBefore);
     if (interesting === null) {
       logger.debug('no relevant portion detected');
       return this.keywordItems;

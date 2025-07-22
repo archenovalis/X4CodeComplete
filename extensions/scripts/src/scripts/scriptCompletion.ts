@@ -22,6 +22,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     ['value', vscode.CompletionItemKind.Value],
   ]);
 
+  private static readonly breakSymbols: string[] = [' ', '.', '[', ']', '{', '}', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`'];
+
   private xsdReference: XsdReference;
   private xmlTracker: XmlStructureTracker;
   private scriptProperties: ScriptProperties;
@@ -166,6 +168,16 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     return this.emptyCompletion;
   }
 
+  private static getNearestBreakSymbolIndex(text: string, before: boolean, exceptDot: boolean = false): number {
+    const searchRange = before ? text.length - 1 : 0;
+    for (let i = searchRange; i >= 0 && i < text.length; i += before ? -1 : 1) {
+      if (this.breakSymbols.includes(text[i]) && (!exceptDot || text[i] !== '.')) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   public prepareCompletion(document: vscode.TextDocument, position: vscode.Position, checkOnly: boolean, token?: vscode.CancellationToken, context?: vscode.CompletionContext): vscode.CompletionItem[] | vscode.CompletionList | undefined {
     const schema = getDocumentScriptType(document);
     if (schema == '') {
@@ -232,6 +244,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       if (checkOnly) {
         return []; // Return empty list if only checking
       }
+
+      const attributeInfo = elementAttributes.find(attr => attr.name === attribute.name);
 
       const attributeValue = document.getText(attribute.valueRange);
 
@@ -307,30 +321,31 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
          }
          textToProcessBefore = textToProcessBefore.substring(0, position.character);
       }
+
+      let lastBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessBefore, true);
+      let firstBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessAfter, false);
+
       const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
-      if (lastDollarIndex >= 0) {
-        const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';
-        if (prefix === '' || /^[a-zA-Z0-9_]*$/.test(prefix)) {
-          let suffixLength = textToProcessAfter.length;
-          for (const breakSymbol of [' ', '.', '[', ']', '{', '}', '(', ')']) {
-            const breakIndex = textToProcessAfter.indexOf(breakSymbol);
-            if (breakIndex >= 0 && breakIndex < suffixLength) {
-              suffixLength = breakIndex;
-              break;
-            }
-          }
-          const variableRange = new vscode.Range(
-            position.translate(0, -textToProcessBefore.length + lastDollarIndex + 1),
-            position.translate(0, suffixLength)
-          );
-          const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, position, prefix);
-          for (const [variableName, info] of variableCompletion.entries()) {
-            ScriptCompletion.addItem(items, 'variable', variableName, info, variableRange);
-          }
-          return ScriptCompletion.makeCompletionList(items, prefix);
+      const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';
+      if (lastDollarIndex >= 0 && lastDollarIndex > lastBreakIndex && (prefix === '' || /^[a-zA-Z0-9_]*$/.test(prefix))) {
+        if (firstBreakIndex >= 0) {
+          textToProcessAfter = textToProcessAfter.substring(0, firstBreakIndex);
         }
+        const variableRange = new vscode.Range(
+          position.translate(0, -textToProcessBefore.length + lastDollarIndex + 1),
+          position.translate(0, textToProcessAfter.length)
+        );
+        const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, position, prefix);
+        for (const [variableName, info] of variableCompletion.entries()) {
+          ScriptCompletion.addItem(items, 'variable', variableName, info, variableRange);
+        }
+        return ScriptCompletion.makeCompletionList(items, prefix);
+      } else {
+        lastBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessBefore, true, true);
+        firstBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessAfter, false, true);
+        return this.scriptProperties.processText(textToProcessBefore, textToProcessAfter, attributeInfo?.type || 'undefined') || ScriptCompletion.emptyCompletion;
       }
-      return this.scriptProperties.processText(textToProcessBefore);
+      return ScriptCompletion.emptyCompletion; // Skip if no valid prefix found
     } else {
       if (checkOnly) {
         return undefined; // Return empty list if only checking
