@@ -263,7 +263,11 @@ export class ScriptDocumentTracker {
               const end = document.positionAt(variableEndOffset);
 
               // Determine variable type (normal or table key)
-              const variableType = tableIsFound ? 'tableKey' : 'normal';
+              let variableType = tableIsFound ? 'tableKey' : 'normal';
+              if (!tableIsFound && match.index > 0 && attrValue[match.index - 1] === '.') {
+                variableType = 'tableKey';
+                // !TODO: handle real MD remote variables
+              }
               const variableRange = new vscode.Range(start, end);
 
               if (end.isEqual(attr.valueRange.end) && priority >= 0) {
