@@ -168,10 +168,10 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     return this.emptyCompletion;
   }
 
-  private static getNearestBreakSymbolIndex(text: string, before: boolean, exceptDot: boolean = false): number {
+  private static getNearestBreakSymbolIndex(text: string, before: boolean): number {
     const searchRange = before ? text.length - 1 : 0;
     for (let i = searchRange; i >= 0 && i < text.length; i += before ? -1 : 1) {
-      if (this.breakSymbols.includes(text[i]) && (!exceptDot || text[i] !== '.')) {
+      if (this.breakSymbols.includes(text[i])) {
         return i;
       }
     }
@@ -341,8 +341,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       } else {
-        lastBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessBefore, true, true);
-        firstBreakIndex = ScriptCompletion.getNearestBreakSymbolIndex(textToProcessAfter, false, true);
         return this.scriptProperties.processText(textToProcessBefore, textToProcessAfter, attributeInfo?.type || 'undefined') || ScriptCompletion.emptyCompletion;
       }
       return ScriptCompletion.emptyCompletion; // Skip if no valid prefix found
