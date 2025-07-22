@@ -266,29 +266,26 @@ export class ScriptDocumentTracker {
               const variableType = tableIsFound ? 'tableKey' : 'normal';
               const variableRange = new vscode.Range(start, end);
 
-              // Skip if this is the position being edited (to avoid self-reference)
-              if (!(position && variableRange.contains(position))) {
-                if (end.isEqual(attr.valueRange.end) && priority >= 0) {
-                  // This is a variable definition
-                  this.variableTracker.addVariable(
-                    variableType,
-                    variableName,
-                    schema,
-                    document,
-                    new vscode.Range(start, end),
-                    true, // isDefinition
-                    priority
-                  );
-                } else {
-                  // This is a variable reference
-                  this.variableTracker.addVariable(
-                    variableType,
-                    variableName,
-                    schema,
-                    document,
-                    new vscode.Range(start, end)
-                  );
-                }
+              if (end.isEqual(attr.valueRange.end) && priority >= 0) {
+                // This is a variable definition
+                this.variableTracker.addVariable(
+                  variableType,
+                  variableName,
+                  schema,
+                  document,
+                  variableRange,
+                  true, // isDefinition
+                  priority
+                );
+              } else {
+                // This is a variable reference
+                this.variableTracker.addVariable(
+                  variableType,
+                  variableName,
+                  schema,
+                  document,
+                  variableRange
+                );
               }
             }
           }
