@@ -7,10 +7,25 @@
     {
       "name": "lua",
       "path": "extensions/lua"
-    },	
+    },
     {
       "name": ".",
       "path": "."
     }
-  ]
+  ],
+  "settings": {
+    "cSpell.customDictionaries": {
+    },
+    "cSpell.diagnosticLevel": "Information",
+    "cSpell.autoFormatConfigFile": true,
+    "cSpell.files": [
+      "**/*.ts",
+      "**/*.md",
+      "**/*.json",
+    ],
+    "cSpell.languageSettings": [
+
+    ],
+    "cSpell.dictionaryDefinitions": [],
+  }
 }

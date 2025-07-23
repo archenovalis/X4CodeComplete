@@ -1,7 +1,16 @@
 {
   "version": "0.2",
+  // Specify paths/files to ignore.
   "ignorePaths": [
-    "node"
+    "node_modules", // this will ignore anything the node_modules directory
+    "**/node_modules", // the same for this one
+    "**/node_modules/**", // the same for this one
+    "node_modules/**", // Doesn't currently work due to how the current working directory is determined.
+    "vscode-extension", //
+    ".git", // Ignore the .git directory
+    "**/.git", // Ignore the .git directory
+    ".git/**", // Ignore all files in the .git directory
+    "**/.git/**", // Ignore all files in the .git directory
   ],
   "dictionaryDefinitions": [],
   "dictionaries": [],
@@ -12,6 +21,8 @@
     "Charkey",
     "chemodun",
     "classlookup",
+    "codecomplete",
+    "dbdata",
     "egosoft",
     "ignoreprefix",
     "ledhead",
