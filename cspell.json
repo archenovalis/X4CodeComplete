@@ -1,7 +1,7 @@
 {
   "version": "0.2",
   "ignorePaths": [
-   "node"
+    "node"
   ],
   "dictionaryDefinitions": [],
   "dictionaries": [],
@@ -11,7 +11,9 @@
     "Cgetty",
     "Charkey",
     "chemodun",
+    "classlookup",
     "egosoft",
+    "ignoreprefix",
     "ledhead",
     "lvalueexpression",
     "lvaluename",
