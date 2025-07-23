@@ -8,11 +8,9 @@ import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
 import { getNearestBreakSymbolIndexForVariables } from './scriptUtilities';
 import { logger } from '../logger/logger';
 
-
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
 
 export class ScriptCompletion implements vscode.CompletionItemProvider {
-
   private static readonly completionTypes: Map<string, vscode.CompletionItemKind> = new Map([
     ['element', vscode.CompletionItemKind.Function],
     ['attribute', vscode.CompletionItemKind.Property],
@@ -50,7 +48,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       return;
     }
 
-    const item = new vscode.CompletionItem(completion, this.getType(type) );
+    const item = new vscode.CompletionItem(completion, this.getType(type));
     if (info) {
       item.documentation = info;
     }
@@ -88,11 +86,18 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     }
   }
 
-  private elementNameCompletion(schema: string, document: vscode.TextDocument, position: vscode.Position, element: XmlElement, parent: XmlElement | undefined, range?: vscode.Range): vscode.CompletionList {
+  private elementNameCompletion(
+    schema: string,
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    element: XmlElement,
+    parent: XmlElement | undefined,
+    range?: vscode.Range
+  ): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     const parentName = parent ? parent.name : '';
     const parentHierarchy = parent ? parent.hierarchy : [];
-    let currentElement: XmlElement | undefined = element || parent;
+    const currentElement: XmlElement | undefined = element || parent;
     let previousElement: XmlElement | undefined = undefined;
     if (currentElement !== undefined) {
       let elementName = this.xmlTracker.elementWithPosInName(document, position);
@@ -119,19 +124,24 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
       logger.debug(`Current element: ${currentElement.name}, Previous element: ${previousElement ? previousElement.name : 'undefined'}`);
     }
-    const possibleElements = this.xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy, previousElement ? previousElement.name : undefined );
+    const possibleElements = this.xsdReference.getPossibleChildElements(
+      schema,
+      parentName,
+      parentHierarchy,
+      previousElement ? previousElement.name : undefined
+    );
     if (possibleElements !== undefined) {
       logger.debug(`Possible elements for ${parentName}:`, possibleElements);
-      const currentLinePrefix =  document.lineAt(position).text.substring(0, position.character);
+      const currentLinePrefix = document.lineAt(position).text.substring(0, position.character);
       const startTagIndex = currentLinePrefix.lastIndexOf('<');
       if (startTagIndex === -1) {
         logger.debug('No start tag found in current line prefix:', currentLinePrefix);
-        return ScriptCompletion.emptyCompletion;; // Skip if no start tag found
+        return ScriptCompletion.emptyCompletion; // Skip if no start tag found
       }
       let prefix = currentLinePrefix.slice(currentLinePrefix.lastIndexOf('<') + 1);
       if (prefix.includes(' ')) {
         logger.debug('Start tag inside prefix contains space, skipping:', prefix);
-        return ScriptCompletion.emptyCompletion;; // Skip if the start tag inside prefix contains a space
+        return ScriptCompletion.emptyCompletion; // Skip if the start tag inside prefix contains a space
       }
       if (prefix === '' && element !== undefined && element.name !== '') {
         prefix = element.name;
@@ -148,7 +158,12 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     }
   }
 
-  private static attributeNameCompletion(element: XmlElement, elementAttributes: EnhancedAttributeInfo[], prefix: string = '', range?: vscode.Range): vscode.CompletionList {
+  private static attributeNameCompletion(
+    element: XmlElement,
+    elementAttributes: EnhancedAttributeInfo[],
+    prefix: string = '',
+    range?: vscode.Range
+  ): vscode.CompletionList {
     const items: CompletionsMap = new Map();
     for (const attr of elementAttributes) {
       if (!element.attributes.some((a) => a.name === attr.name) && (prefix == '' || attr.name.startsWith(prefix))) {
@@ -167,10 +182,16 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     return this.emptyCompletion;
   }
 
-  public prepareCompletion(document: vscode.TextDocument, position: vscode.Position, checkOnly: boolean, token?: vscode.CancellationToken, context?: vscode.CompletionContext): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+  public prepareCompletion(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    checkOnly: boolean,
+    token?: vscode.CancellationToken,
+    context?: vscode.CompletionContext
+  ): vscode.CompletionItem[] | vscode.CompletionList | undefined {
     const schema = getDocumentScriptType(document);
     if (schema == '') {
-      return ScriptCompletion.emptyCompletion;; // Skip if the document is not valid
+      return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
     }
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;
@@ -192,11 +213,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
       }
 
-      const elementAttributes: EnhancedAttributeInfo[] = this.xsdReference.getElementAttributesWithTypes(
-        schema,
-        element.name,
-        element.hierarchy
-      );
+      const elementAttributes: EnhancedAttributeInfo[] = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
 
       let attribute = this.xmlTracker.attributeWithPosInName(document, position);
       if (attribute) {
@@ -234,7 +251,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         return []; // Return empty list if only checking
       }
 
-      const attributeInfo = elementAttributes.find(attr => attr.name === attribute.name);
+      const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
 
       const attributeValue = document.getText(attribute.valueRange);
 
@@ -305,14 +322,14 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         textToProcessBefore = textToProcessBefore.substring(0, position.character);
       } else {
-         if (position.character < documentLine.range.end.character) {
-            textToProcessAfter = textToProcessBefore.substring(position.character);
-         }
-         textToProcessBefore = textToProcessBefore.substring(0, position.character);
+        if (position.character < documentLine.range.end.character) {
+          textToProcessAfter = textToProcessBefore.substring(position.character);
+        }
+        textToProcessBefore = textToProcessBefore.substring(0, position.character);
       }
 
-      let lastBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessBefore, true);
-      let firstBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessAfter, false);
+      const lastBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessBefore, true);
+      const firstBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessAfter, false);
 
       const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
       const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';
@@ -330,7 +347,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       } else {
-        return this.scriptProperties.processText(textToProcessBefore, textToProcessAfter, attributeInfo?.type || 'undefined') || ScriptCompletion.emptyCompletion;
+        return this.scriptProperties.processText(textToProcessBefore, textToProcessAfter, attributeInfo?.type || 'undefined', position);
       }
       return ScriptCompletion.emptyCompletion; // Skip if no valid prefix found
     } else {
@@ -346,11 +363,10 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (checkOnly) {
       return undefined; // Return empty list if only checking
     }
-    return ScriptCompletion.emptyCompletion;; // Skip if not in an element range
+    return ScriptCompletion.emptyCompletion; // Skip if not in an element range
   }
 
-  public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context?: vscode.CompletionContext
-  )  {
+  public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context?: vscode.CompletionContext) {
     return this.prepareCompletion(document, position, false, token, context);
   }
 }

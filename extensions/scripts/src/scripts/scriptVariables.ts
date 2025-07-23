@@ -136,7 +136,6 @@ export class VariableTracker {
   }
 
 
-
   public updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
@@ -189,7 +188,7 @@ export class VariableTracker {
   public static getVariableDetails(variable: ScriptVariableInfo): vscode.MarkdownString {
     const details = new vscode.MarkdownString();
     details.appendMarkdown(
-      `**${scriptIdDescription[variable.schema] || 'Script'} ${variableTypes[variable.type] || 'Variable'}**: \`${variable.name}\`` + '\n\n'
+      `*${scriptIdDescription[variable.schema] || 'Script'} ${variableTypes[variable.type] || 'Variable'}*: **${variable.name}**` + '\n\n'
     );
 
     details.appendMarkdown(

@@ -1,8 +1,8 @@
 
 
-export const breakoutsForVariables : string[] = [' ', '.', '[', ']', '{', '}', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`'];
+export const breakoutsForVariables : string[] = [' ', '.', '[', ']', '{', '}', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
 
-export const breakoutsForExpressions : string[] = [' ', '[', ']', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`'];
+export const breakoutsForExpressions : string[] = [' ', '[', ']', '(', ')', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
 
 export function getNearestBreakSymbolIndex(text: string, breakouts: string[], before: boolean): number {
   const searchRange = before ? text.length - 1 : 0;
@@ -19,7 +19,7 @@ export function getSubStringByBreakSymbol(text: string, breakouts: string[], bef
   if (index === -1) {
     return text;
   }
-  return before ? text.substring(0, index) : text.substring(index + 1);
+  return before ? text.substring(index + 1) : text.substring(0, index);
 }
 
 export function getNearestBreakSymbolIndexForVariables(text: string, before: boolean): number {

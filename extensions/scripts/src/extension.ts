@@ -178,8 +178,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize script analysis services
 
-  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
   xsdReference = new XsdReference(configManager.librariesPath);
+  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), xsdReference);
   scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
   scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
 
@@ -274,7 +274,7 @@ export function activate(context: vscode.ExtensionContext) {
             const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
 
             if (attributeInfo) {
-              hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '\`' + attributeInfo.annotation + '\`' : ''}\n\n`);
+              hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '`' + attributeInfo.annotation + '`' : ''}\n\n`);
               hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`\n\n`);
               hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`\n\n`);
             } else {
@@ -289,7 +289,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (elementInfo) {
               const annotationText = XsdReference.extractAnnotationText(elementInfo);
-              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '\`' + annotationText + '\`' : ''}\n\n`);
+              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}\n\n`);
             } else {
               hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`\n\n`);
             }
@@ -604,7 +604,6 @@ export function activate(context: vscode.ExtensionContext) {
       },
     })
   );
-
 
 
   codeCompleteStartupDone.fire();

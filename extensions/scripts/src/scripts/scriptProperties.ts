@@ -6,24 +6,115 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
-import { get } from 'http';
+import { XsdReference } from 'xsd-lookup';
+import { log } from 'console';
 
-class TypeEntry {
-  properties: Map<string, string> = new Map<string, string>();
-  supertype?: string;
-  literals: Set<string> = new Set<string>();
-  details: Map<string, string> = new Map<string, string>();
-  addProperty(value: string, type: string = '') {
-    this.properties.set(value, type);
+class PropertyEntry {
+  name: string;
+  type?: string;
+  details?: string;
+  owner?: TypeEntry | KeywordEntry;
+  constructor(name: string, type?: string, details?: string, owner?: TypeEntry | KeywordEntry) {
+    this.name = name;
+    this.type = type;
+    this.details = details;
+    this.owner = owner;
   }
-  addLiteral(value: string) {
-    this.literals.add(value);
+  public getDescription(): string[] {
+    const result: string[] = [];
+    result.push(`**${this.name}**${this.details ? ': *' + this.details + '*' : ''}`);
+    if (this.owner) {
+      result.push(`*Property of*: **${this.owner.name}**`);
+    }
+    if (this.type) {
+      result.push(`*Returned value type*: \`${this.type}\``);
+    }
+    return result;
   }
-  addDetail(key: string, value: string) {
-    this.details.set(key, value);
+
+  public putAsCompletionItem(items: Map<string, vscode.CompletionItem>, range?: vscode.Range) {
+    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(this.name) > -1) {
+      return;
+    }
+
+    if (items.has(this.name)) {
+      logger.debug('\t\tSkipped existing completion: ', this.name);
+      return;
+    }
+
+    const item = new vscode.CompletionItem(this.name, vscode.CompletionItemKind.Property);
+    if (this.getDescription().length > 0) {
+      item.documentation = new vscode.MarkdownString();
+      for (const line of this.getDescription()) {
+        item.documentation.appendMarkdown(line + '\n\n');
+      }
+    }
+    if (range) {
+      item.range = range;
+    }
+
+    logger.debug('\t\tAdded completion: ' + this.name + ' info: ' + item.documentation);
+    items.set(this.name, item);
   }
 }
 
+class TypeEntry {
+  public name: string;
+  public properties: Map<string, PropertyEntry> = new Map<string, PropertyEntry>();
+  public supertype?: TypeEntry;
+
+  constructor(name: string, supertype?: TypeEntry) {
+    this.name = name;
+    this.supertype = supertype;
+  }
+
+  public addProperty(value: string, type: string = '', details: string = '') {
+    this.properties.set(value, new PropertyEntry(value, type, details, this));
+  }
+
+  public getDescription(): string[] {
+    const result: string[] = [];
+    result.push(`*DataType*: **${this.name}**${this.supertype ? '. *Based on*: **' + this.supertype + '**.' : ''}`);
+    return result;
+  }
+
+  public prepareItems(prefix: string, items: Map<string, vscode.CompletionItem>, range?: vscode.Range): void {
+    if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(this.name) > -1) {
+      return;
+    }
+    logger.debug('Building Type: ', this.name, 'prefix: ', prefix);
+
+    if (items.size > 1000) {
+      logger.warning('\t\tMax count reached, returning');
+      return;
+    }
+
+    for (const prop of this.properties.entries()) {
+      if (prefix === '' || prop[0].startsWith(prefix)) {
+        prop[1].putAsCompletionItem(items, range);
+      }
+    }
+
+    if (this.supertype !== undefined) {
+      logger.debug('Recursing on supertype: ', this.supertype);
+      this.supertype.prepareItems(prefix, items);
+    }
+  }
+}
+
+class KeywordEntry extends TypeEntry {
+  public details?: string;
+  constructor(name: string, details?: string) {
+    super(name);
+    this.details = details;
+  }
+
+  public getDescription(): string[] {
+    const result: string[] = [];
+    result.push(`**${this.name}**${this.details ? ': *' + this.details + '*' : ''}`);
+    return result;
+  }
+}
 
 interface XPathResult {
   $: { [key: string]: string };
@@ -54,6 +145,7 @@ interface Keyword {
         {
           $: {
             name: string;
+            ignoreprefix?: string;
           };
         },
       ];
@@ -71,23 +163,26 @@ interface Datatype {
 }
 
 export class ScriptProperties {
-
   private static readonly typesToIgnore: string[] = ['undefined', 'expression'];
+  private static readonly regexLookupElement = /<([^>]+)>/;
+  private static readonly lookupsFixed: Map<string, string> = new Map<string, string>([['class', 'classlookup']]);
 
+  private xsdReference: XsdReference;
   private librariesFolder: string;
   private scriptPropertiesPath: string;
   private keywords: Keyword[] = [];
   private datatypes: Datatype[] = [];
   private dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
+  private keywordDict: Map<string, KeywordEntry> = new Map<string, KeywordEntry>();
   private allProp: Map<string, string[]> = new Map<string, string[]>();
-  private allPropItems: vscode.CompletionItem[] = [];
   private keywordItems: vscode.CompletionItem[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
 
-  constructor(librariesFolder: string) {
+  constructor(librariesFolder: string, xsdReference: XsdReference) {
     this.librariesFolder = librariesFolder;
     this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
+    this.xsdReference = xsdReference;
     this.readScriptProperties(this.scriptPropertiesPath);
   }
 
@@ -96,14 +191,11 @@ export class ScriptProperties {
     this.datatypes = [];
     this.dict.clear();
     this.typeDict.clear();
+    this.keywordDict.clear();
     this.allProp.clear();
-    this.allPropItems = [];
     this.keywordItems = [];
     this.descriptions.clear();
   }
-
-
-
 
   private readScriptProperties(filepath: string): void {
     logger.info('Attempting to read scriptproperties.xml');
@@ -122,25 +214,28 @@ export class ScriptProperties {
       // Process keywords and datatypes here, return the completed results
       this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
       this.datatypes = this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
-      this.addTypeLiteral('boolean', '==false');
+      // this.addTypeLiteral('boolean', '==false');
       logger.info('Parsed scriptproperties.xml');
     }
 
     this.makeKeywords();
   }
 
-
   private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
     const name = prop.$.name;
     logger.debug('\tProperty read: ', name);
     this.addPropertyLocation(rawData, name, parent, parentType);
-    this.addProperty(parent, name, prop.$.type, prop.$.result);
+    if (parentType === 'keyword') {
+      this.addKeywordProperty(parent, name, prop.$.type || '', prop.$.result);
+    } else {
+      this.addTypeProperty(parent, name, prop.$.type || '', prop.$.result);
+    }
   }
 
   private processKeyword(rawData: string, e: Keyword) {
     const name = e.$.name;
     this.addNonPropertyLocation(rawData, name, 'keyword');
-    this.addDescription(name, e.$.description);
+    this.addKeyword(name, e.$.description);
     logger.debug('Keyword read: ' + name);
 
     if (e.import !== undefined) {
@@ -148,33 +243,127 @@ export class ScriptProperties {
       const src = imp.$.source;
       const select = imp.$.select;
       const tgtName = imp.property[0].$.name;
-      this.processKeywordImport(name, src, select, tgtName);
+      const ignorePrefix = imp.property[0].$.ignoreprefix === 'true';
+      this.processKeywordImport(name, src, select, tgtName, ignorePrefix);
     } else if (e.property !== undefined) {
       e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop));
     }
   }
 
-  private processKeywordImport(name: string, src: string, select: string, targetName: string) {
+  private processKeywordImport(name: string, src: string, select: string, targetName: string, ignorePrefix: boolean = false) {
     const srcPath = path.join(this.librariesFolder, src);
-    logger.info('Attempting to import: ' + src);
+    logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
     // Can't move on until we do this so use sync version
     const rawData = fs.readFileSync(srcPath).toString();
     let parsedData: any;
     xml2js.parseString(rawData, function (err: any, result: any) {
       if (err !== null) {
-        vscode.window.showErrorMessage('Error during parsing of ' + src + err);
+        vscode.window.showErrorMessage(`Error during parsing of ${src}: ${err}`);
       }
       parsedData = result;
     });
     if (parsedData !== undefined) {
-      const matches = xpath.find(parsedData, select + '/' + targetName);
-      matches.forEach((element: XPathResult) => {
-        this.addTypeLiteral(name, element.$[targetName.substring(1)]);
-      });
+      let matches: XPathResult[] = [];
+
+      // Check if the select query contains 'or' operator and split it
+      if (select.includes(' or ')) {
+        matches = this.handleComplexXPathQuery(parsedData, select, targetName);
+      } else {
+        // Handle simple query as before
+        matches = xpath.find(parsedData, select + '/' + targetName);
+      }
+
+      if (matches.length > 0) {
+        matches.forEach((element: XPathResult) => {
+          this.addKeywordProperty(name, element.$[targetName.substring(1)], '', element.$['comment'], ignorePrefix);
+        });
+      } else if (name === 'class') {
+        const xsdEnums = this.xsdReference.getSimpleTypeEnumerationValues(src.replace('.xsd', ''), name + 'lookup');
+        if (xsdEnums) {
+          for (const enumValue of xsdEnums.values) {
+            this.addKeywordProperty(name, enumValue, '', xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
+          }
+        }
+      } else {
+        logger.warn('No matches found for import: ' + select + '/' + targetName + ' in ' + src);
+      }
     }
   }
 
+  /**
+   * Handles complex XPath queries that contain 'or' operators by splitting them into simpler queries
+   * @param parsedData The parsed XML data
+   * @param select The XPath select string that may contain 'or' operators
+   * @param targetName The target attribute or element name
+   * @returns Array of matching XPath results
+   */
+  private handleComplexXPathQuery(parsedData: any, select: string, targetName: string): XPathResult[] {
+    const allMatches: XPathResult[] = [];
 
+    try {
+      // Split complex XPath queries containing 'or' operator
+      // Example: "/scriptproperties/datatype[@type='enum' or @type='dbdata']"
+      // becomes: ["/scriptproperties/datatype[@type='enum']", "/scriptproperties/datatype[@type='dbdata']"]
+
+      const orSplitQueries = this.splitXPathOrQuery(select);
+
+      for (const query of orSplitQueries) {
+        logger.debug(`Processing split query: ${query}/${targetName}`);
+        const matches = xpath.find(parsedData, query + '/' + targetName);
+        allMatches.push(...matches);
+      }
+
+      logger.debug(`Total matches found from ${orSplitQueries.length} split queries: ${allMatches.length}`);
+    } catch (error) {
+      logger.error('Error processing complex XPath query:', error);
+      // Fallback: try the original query as-is
+      try {
+        const fallbackMatches = xpath.find(parsedData, select + '/' + targetName);
+        allMatches.push(...fallbackMatches);
+      } catch (fallbackError) {
+        logger.error('Fallback query also failed:', fallbackError);
+      }
+    }
+
+    return allMatches;
+  }
+
+  /**
+   * Splits an XPath query containing 'or' operators into multiple simpler queries
+   * @param xpathQuery The XPath query string to split
+   * @returns Array of simpler XPath query strings
+   */
+  private splitXPathOrQuery(xpathQuery: string): string[] {
+    const queries: string[] = [];
+
+    // Handle queries like "/scriptproperties/datatype[@type='enum' or @type='dbdata']"
+    const orPattern = /\[(.*?)\]/g;
+    let match;
+
+    while ((match = orPattern.exec(xpathQuery)) !== null) {
+      const predicateContent = match[1];
+
+      if (predicateContent.includes(' or ')) {
+        // Split the predicate on ' or '
+        const orConditions = predicateContent.split(' or ').map((condition) => condition.trim());
+
+        // Create separate queries for each condition
+        for (const condition of orConditions) {
+          const newQuery = xpathQuery.replace(match[0], `[${condition}]`);
+          queries.push(newQuery);
+        }
+
+        return queries; // Return early for the first 'or' found
+      }
+    }
+
+    // If no 'or' operator found, return the original query
+    if (queries.length === 0) {
+      queries.push(xpathQuery);
+    }
+
+    return queries;
+  }
 
   private processDatatype(rawData: any, e: Datatype) {
     const name = e.$.name;
@@ -229,16 +418,7 @@ export class ScriptProperties {
   }
 
   addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): void {
-    const re = new RegExp(
-      '(?:<' +
-      parentType +
-      ' name="' +
-      escapeRegex(parent) +
-      '"[^>]*>.*?)(<property name="' +
-      escapeRegex(name) +
-      '"[^>]*>)',
-      's'
-    );
+    const re = new RegExp('(?:<' + parentType + ' name="' + escapeRegex(parent) + '"[^>]*>.*?)(<property name="' + escapeRegex(name) + '"[^>]*>)', 's');
     const matches = rawData.match(re);
     if (matches === null || matches.index === undefined) {
       logger.info("strangely couldn't find property named:", name, 'parent:', parent);
@@ -251,12 +431,18 @@ export class ScriptProperties {
   addType(key: string, supertype?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
-    if (entry === undefined) {
-      entry = new TypeEntry();
+    if (entry === undefined && k !== 'datatype') {
+      entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined);
       this.typeDict.set(k, entry);
     }
-    if (supertype !== 'datatype') {
-      entry.supertype = supertype;
+  }
+
+  addKeyword(key: string, details?: string): void {
+    const k = cleanStr(key);
+    let entry = this.keywordDict.get(k);
+    if (entry === undefined) {
+      entry = new KeywordEntry(k, details);
+      this.keywordDict.set(k, entry);
     }
   }
 
@@ -266,32 +452,48 @@ export class ScriptProperties {
     if (v.indexOf(k) === 0) {
       v = v.slice(k.length + 1);
     }
-    let entry = this.typeDict.get(k);
-    if (entry === undefined) {
-      entry = new TypeEntry();
-      this.typeDict.set(k, entry);
+    if (!this.typeDict.has(k)) {
+      this.addType(k);
     }
-    entry.addLiteral(v);
+    const entry = this.typeDict.get(k);
+    if (entry === undefined) {
+      return;
+    }
+    // entry.addLiteral(v);
   }
 
-  addProperty(key: string, prop: string, type?: string, details?: string): void {
+  addTypeProperty(key: string, prop: string, type?: string, details?: string): void {
     const k = cleanStr(key);
-    let entry = this.typeDict.get(k);
+    if (!this.typeDict.has(k)) {
+      this.addType(k);
+    }
+    const entry = this.typeDict.get(k);
     if (entry === undefined) {
-      entry = new TypeEntry();
-      this.typeDict.set(k, entry);
+      return;
     }
-    entry.addProperty(prop, type);
-    if (details !== undefined) {
-      entry.addDetail(prop, details);
-    }
+    entry.addProperty(prop, type, details);
     const shortProp = prop.split('.')[0];
     this.addToAllProp(shortProp, key);
   }
 
+  addKeywordProperty(key: string, prop: string, type?: string, details?: string, ignorePrefix: boolean = false): void {
+    const k = cleanStr(key);
+    if (!this.keywordDict.has(k)) {
+      this.addKeyword(k);
+    }
+    const entry = this.keywordDict.get(k);
+    if (entry === undefined) {
+      return;
+    }
+    if (ignorePrefix && prop.startsWith(k + '.')) {
+      prop = prop.substring(k.length + 1);
+    }
+    entry.addProperty(prop, '', details);
+  }
+
   addToAllProp(value: string, type: string): void {
     const v = cleanStr(value);
-    if ('$<[{'.indexOf(v.slice(0, 1)) === -1) {
+    if ('$&<[{'.indexOf(v.slice(0, 1)) === -1) {
       const types = this.allProp.get(v);
       if (types && types.includes(type)) {
         return;
@@ -300,8 +502,8 @@ export class ScriptProperties {
       } else {
         this.allProp.set(v, [type]);
       }
-      const item = ScriptProperties.createItem(v, ScriptProperties.getPropertyDescription(v, type));
-      this.allPropItems.push(item);
+      // const item = ScriptProperties.createItem(v, ScriptProperties.getPropertyDescription(v, type));
+      // this.allPropItems.push(item);
     }
   }
 
@@ -333,9 +535,12 @@ export class ScriptProperties {
     items.set(complete, item);
   }
 
-
-  private static createItem(complete: string, info: string[] = []): vscode.CompletionItem {
-    const item = new vscode.CompletionItem(complete, vscode.CompletionItemKind.Property);
+  private static createItem(
+    complete: string,
+    info: string[] = [],
+    kind: vscode.CompletionItemKind = vscode.CompletionItemKind.Property
+  ): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(complete, kind);
     if (info.length > 0) {
       item.documentation = new vscode.MarkdownString();
       for (const line of info) {
@@ -345,77 +550,14 @@ export class ScriptProperties {
     return item;
   }
 
-  private static addItem(items: Map<string, vscode.CompletionItem>, complete: string, info: string[] = []): void {
-    // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(complete) > -1) {
-      return;
-    }
-
-    if (items.has(complete)) {
-      logger.debug('\t\tSkipped existing completion: ', complete);
-      return;
-    }
-
-    const item = ScriptProperties.createItem(complete, info);
-
-    logger.debug('\t\tAdded completion: ' + complete + ' info: ' + item.documentation);
-    items.set(complete, item);
-  }
-
-  private static getPropertyDescription(name: string, type?: string, details?: string): string[] {
-    const result: string[] = [];
-    if (type) {
-      result.push(`**${name}**${details ? ': ' + details : ''}`);
-    }
-    if (type) {
-      result.push(`**Returned value type**: ${type}`);
-    }
-    return result;
-  }
-
-  private static getPropertyDescriptionMultipleTypes(name: string, types: string[]): string[] {
+  private getPropertyDescriptionMultipleTypes(name: string, types: string[]): string[] {
     const result: string[] = [`Properties prefixed by **${name}** are in the following types:`];
-    if (types.length > 0) {
-      result.push(...types.map((type) => `- **${type}**`));
+    for (const type of types) {
+      if (this.typeDict.has(type)) {
+        result.push(...(this.typeDict.get(type)?.getDescription() || []));
+      }
     }
     return result;
-  }
-
-  private buildType(prefix: string, typeName: string, items: Map<string, vscode.CompletionItem>, depth: number): void {
-    // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(typeName) > -1) {
-      return;
-    }
-    logger.debug('Building Type: ', typeName, 'depth: ', depth, 'prefix: ', prefix);
-    const entry = this.typeDict.get(typeName);
-    if (entry === undefined) {
-      return;
-    }
-    if (depth > 1) {
-      logger.debug('\t\tMax depth reached, returning');
-      return;
-    }
-
-    if (items.size > 1000) {
-      logger.debug('\t\tMax count reached, returning');
-      return;
-    }
-
-    for (const prop of entry.properties.entries()) {
-      if (prefix === '' || prop[0].startsWith(prefix)) {
-        ScriptProperties.addItem(items, prop[0], ScriptProperties.getPropertyDescription(prop[0], prop[1], entry.details.get(prop[0])));
-      }
-    }
-    for (const literal of entry.literals.values()) {
-      if (prefix === '' || literal.startsWith(prefix)) {
-        // If the literal starts with the prefix, add it to the items
-        ScriptProperties.addItem(items, literal);
-      }
-    }
-    if (entry.supertype !== undefined) {
-      logger.debug('Recursing on supertype: ', entry.supertype);
-      this.buildType(typeName, entry.supertype, items, depth /*  + 1 */);
-    }
   }
 
   private makeCompletionList(items: Map<string, vscode.CompletionItem> | vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
@@ -443,7 +585,6 @@ export class ScriptProperties {
     });
   }
 
-
   private static findRelevantPortion(text: string) {
     const bracketPos = text.lastIndexOf('{');
     text = text.substring(bracketPos + 1).trim();
@@ -456,10 +597,7 @@ export class ScriptProperties {
     const newToken = text.substring(pos + 1).trim();
     const prevPos = Math.max(text.lastIndexOf('.', pos - 1), text.lastIndexOf(' ', pos - 1));
     const prevToken = text.substring(prevPos + 1, pos).trim();
-    return [
-      prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken,
-      newToken.indexOf('@') === 0 ? newToken.slice(1) : newToken,
-    ];
+    return [prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken, newToken.indexOf('@') === 0 ? newToken.slice(1) : newToken];
   }
 
   private generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
@@ -542,7 +680,7 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string, position: vscode.Position): vscode.CompletionList {
     const items = new Map<string, vscode.CompletionItem>();
     logger.debug('Processing text: ', textToProcessBefore, ' & ', textToProcessAfter, ' Type: ', type);
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
@@ -555,79 +693,102 @@ export class ScriptProperties {
         const propertyParts = textToProcessBefore.split('.');
         if (propertyParts.length === 1) {
           const prefix = propertyParts[0];
-          const allPropItems = Array.from(this.allProp).filter((item) => (prefix === '' || item[0].startsWith(prefix)));
+          const allPropItems = Array.from(this.allProp).filter((item) => prefix === '' || item[0].startsWith(prefix));
           for (const item of allPropItems) {
             const label = item[0];
-            const description = ScriptProperties.getPropertyDescriptionMultipleTypes(label, item[1]);
-            const completionItem = ScriptProperties.createItem(label, description);
-            items.set(label, completionItem);
+            if (item[1].length === 1) {
+              const typeEntry = this.typeDict.get(item[1][0]);
+              if (typeEntry) {
+                for (const prop of typeEntry.properties.entries()) {
+                  if (prop[0].startsWith(label)) {
+                    const description = prop[1].getDescription();
+                    const completionItem = ScriptProperties.createItem(prop[0], description);
+                    items.set(prop[0], completionItem);
+                  }
+                }
+              } else {
+                logger.warn(`Type entry not found for: ${item[1][0]}`);
+              }
+            } else {
+              const description = this.getPropertyDescriptionMultipleTypes(label, item[1]);
+              const completionItem = ScriptProperties.createItem(label, description);
+              items.set(label, completionItem);
+            }
+          }
+        } else {
+          const primaryPart = propertyParts[0];
+          const allPropItems = Array.from(this.allProp).filter((item) => item[0] === primaryPart);
+          for (const item of allPropItems) {
+            for (const datatype of item[1]) {
+              const typeEntry = this.typeDict.get(datatype);
+              if (typeEntry) {
+                // xsdReference.
+                const properties = Array.from(typeEntry.properties).filter(
+                  (prop) => prop[0].startsWith(primaryPart) && (!ScriptProperties.typesToIgnore.includes(type) || prop[1].type !== type)
+                );
+                for (const prop of properties) {
+                  const labels = [prop[0]];
+                  if (ScriptProperties.regexLookupElement.test(prop[0])) {
+                    const label = labels.pop();
+                    const replacements = [];
+                    const match = label.match(ScriptProperties.regexLookupElement);
+                    if (match && match[1]) {
+                      const detail = prop[1].details || '';
+                      const lookupMatch = detail.match(new RegExp(`^Shortcut.+?\\{(\\w+?)\\.\\<${match[1]}\\>\\}`));
+                      if (lookupMatch && lookupMatch[1]) {
+                        const replacementsType = this.keywordDict.get(lookupMatch[1]);
+                        if (replacementsType) {
+                          for (const literal of replacementsType.properties.keys()) {
+                            replacements.push(literal);
+                          }
+                        }
+                      } else {
+                        logger.warn(`Failed to match lookup for property: ${prop[0]} with detail: ${detail}`);
+                      }
+                    }
+                    for (const replacement of replacements) {
+                      labels.push(label.replace(`<${match[1]}>`, replacement));
+                    }
+                    logger.debug(`Replaced labels for ${label}: `, labels);
+                  }
+                  for (const label of labels) {
+                    if (label.startsWith(textToProcessBefore)) {
+                      const description = prop[1].getDescription();
+                      const completionItem = ScriptProperties.createItem(label, description);
+                      items.set(label, completionItem);
+                    }
+                  }
+                  if (items.size === 0 && textToProcessBefore.lastIndexOf('.') > 0) {
+                    const prefix = textToProcessBefore.substring(0, textToProcessBefore.lastIndexOf('.'));
+                    for (const label of labels) {
+                      if (label == prefix && this.typeDict.has(prop[1].type)) {
+                        this.typeDict.get(prop[1].type)?.prepareItems('', items);
+                        break; // Stop after finding the first matching type
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
-    }
-
-    const interesting = ScriptProperties.findRelevantPortion(textToProcessBefore);
-    if (interesting === null) {
-      logger.debug('no relevant portion detected');
-      return this.keywordItems;
-    }
-    let prevToken = interesting[0];
-    const newToken = interesting[1];
-    logger.debug('Previous token: ', interesting[0], ' New token: ', interesting[1]);
-    // If we have a previous token & it's in the typeDictionary or a property with type, only use that's entries
-    if (prevToken !== '') {
-      prevToken = this.typeDict.has(prevToken)
-        ? prevToken
-        : this.allProp.has(prevToken)
-          ? this.allProp.get(prevToken)?.[0] || ''
-          : '';
-      if (prevToken === undefined || prevToken === '') {
-        logger.debug('Missing previous token!');
-        return this.makeCompletionList(newToken.length > 0
-          ? this.allPropItems.filter((item) => {
-            const label = typeof item.label === 'string' ? item.label : item.label.label;
-            return label.startsWith(newToken);
-          })
-          : this.allPropItems,
-          newToken
-        );
+    } else {
+      const firstDot = textToProcessBefore.indexOf('.');
+      if (firstDot >= 0) {
+        const baseType = textToProcessBefore.substring(0, firstDot);
+        const propertyName = textToProcessBefore.substring(firstDot + 1);
+        const keywordEntry = this.keywordDict.get(baseType);
+        if (keywordEntry) {
+          keywordEntry.prepareItems(propertyName, items);
+        }
       } else {
-        logger.debug(`Matching on type: ${prevToken}!`);
-        this.buildType(newToken, prevToken, items, 0);
-        return this.makeCompletionList(items, newToken);
+        const keywordsFiltered = Array.from(this.keywordDict).filter((item) => textToProcessBefore === '' || item[0].startsWith(textToProcessBefore));
+        for (const [name, entry] of keywordsFiltered) {
+          const completionItem = ScriptProperties.createItem(name, entry.getDescription(), vscode.CompletionItemKind.Keyword);
+          items.set(name, completionItem);
+        }
       }
-    }
-    // Ignore tokens where all we have is a short string and no previous data to go off of
-    if (prevToken === '' && newToken === '') {
-      logger.debug('Ignoring short token without context!');
-      return undefined;
-    }
-    // Now check for the special hard to complete ones
-    // if (prevToken.startsWith('{')) {
-    //   if (exceedinglyVerbose) {
-    //     logger.info('Matching bracketed type');
-    //   }
-    //   const token = prevToken.substring(1);
-
-    //   const entry = this.typeDict.get(token);
-    //   if (entry === undefined) {
-    //     if (exceedinglyVerbose) {
-    //       logger.info('Failed to match bracketed type');
-    //     }
-    //   } else {
-    //     entry.literals.forEach((value) => {
-    //       this.addItem(items, value + '}');
-    //     });
-    //   }
-    // }
-
-    logger.debug('Trying fallback');
-    // Otherwise fall back to looking at keys of the typeDictionary for the new string
-    for (const key of this.typeDict.keys()) {
-      if (!key.startsWith(newToken)) {
-        continue;
-      }
-      this.buildType('', key, items, 0);
     }
     return this.makeCompletionList(items);
   }
@@ -655,8 +816,7 @@ export class ScriptProperties {
 
     // Find keywords that match the hoverWord either in their name or property names
     const matchingKeyNames = keywords.filter(
-      (k: Keyword) =>
-        k.$.name.includes(hoverWord) || k.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord))
+      (k: Keyword) => k.$.name.includes(hoverWord) || k.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord))
     );
 
     // Find datatypes that match the hoverWord either in their name or property names
@@ -823,7 +983,6 @@ export class ScriptProperties {
     return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
   }
 }
-
 
 function cleanStr(text: string) {
   return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
