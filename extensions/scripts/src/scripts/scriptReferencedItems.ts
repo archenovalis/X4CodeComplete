@@ -3,31 +3,31 @@ import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
 import { log } from 'console';
-const fs = require('fs');
+import fs from 'fs';
 
 export interface ScriptReferencedItemInfo {
   name: string;
   definition: vscode.Location;
   references: vscode.Location[];
-};
+}
 
 export interface ScriptReferencedItemAtPosition {
   item: ScriptReferencedItemInfo;
   location: vscode.Location;
   isDefinition: boolean;
-};
+}
 
 export type ScriptReferencedItems = Map<string, ScriptReferencedItemInfo>;
 
 export interface ScriptReferencedItemsDefinition {
   name: string;
   definition: vscode.Location;
-};
+}
 
 export interface ScriptReferencedItemsReferences {
   name: string;
   references: vscode.Location[];
-};
+}
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler';
 export type ScriptReferencedItemClassId = 'basic' | 'external';
@@ -42,10 +42,9 @@ export interface ScriptReferencedItemsDetectionItem {
   schema?: string; // Optional schema for actions
   filePrefix?: string; // Optional prefix for external definitions
   noCompletion?: boolean; // Optional flag to disable completion for this item
-};
+}
 
 type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
-
 
 interface ScriptItemExternalDefinition {
   name: string;
@@ -57,7 +56,7 @@ interface externalTrackerInfo {
   attributeName: string;
   filePrefix: string; // Optional prefix for external definitions
   tracker: ReferencedItemsWithExternalDefinitionsTracker;
-};
+}
 
 interface ScriptReferencedItemsRegistryItem {
   type: string;
@@ -91,8 +90,8 @@ function initializeScriptReferencedItemsDetectionMap() {
       case 'basic':
         new ReferencedItemsTracker(key);
         break;
-        case 'external':
-          new ReferencedItemsWithExternalDefinitionsTracker(key);
+      case 'external':
+        new ReferencedItemsWithExternalDefinitionsTracker(key);
         break;
       default:
         logger.warn(`Unknown item type '${value}' for key '${key}' in scriptReferencedItemType`);
@@ -157,16 +156,14 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
     .map((item) => item.name);
 }
 
-
 export function checkReferencedItemAttributeType(elementName, attributeName): ScriptReferencedItemsDetectionItem | undefined {
-  let key = `${elementName}#${attributeName}`;
+  const key = `${elementName}#${attributeName}`;
   if (scriptReferencedItemsDetectionMap.has(key)) {
     const item = scriptReferencedItemsDetectionMap.get(key);
     return item ? item : undefined;
   }
   return undefined;
 }
-
 
 export class ReferencedItemsTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
@@ -265,20 +262,18 @@ export class ReferencedItemsTracker {
     return undefined;
   }
 
-
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
     return item.definition;
   }
 
   public getItemDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptReferencedItemsDefinition | undefined {
-
     const item = this.getItemAtPosition(document, position);
     if (!item) {
       return undefined;
     }
     return {
       name: item.item.name,
-      definition: this.getDefinition(document, item.item)
+      definition: this.getDefinition(document, item.item),
     };
   }
 
@@ -297,7 +292,7 @@ export class ReferencedItemsTracker {
     if (definition) {
       references.unshift(definition); // Include definition as a reference
     }
-    return {name: item.item.name, references};
+    return { name: item.item.name, references };
   }
 
   public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
@@ -309,7 +304,7 @@ export class ReferencedItemsTracker {
     // Process all labels
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
-      // Only add the item if it matches the prefix
+        // Only add the item if it matches the prefix
         result.set(itemName, this.getItemDetails(document, itemData, 'full'));
       }
     }
@@ -329,11 +324,11 @@ export class ReferencedItemsTracker {
       const definition = this.getDefinition(document, itemData);
       if (!definition) {
         itemData.references.forEach((reference) => {
-            const diagnostic = new vscode.Diagnostic(
+          const diagnostic = new vscode.Diagnostic(
             reference.range,
             `${this.itemTypeCapitalized} '${itemName}' is not defined`,
             vscode.DiagnosticSeverity.Error
-            );
+          );
           diagnostic.code = `undefined-${this.itemType}`;
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
@@ -358,22 +353,26 @@ export class ReferencedItemsTracker {
     return `**Defined**: ${item.definition ? `at line ${item.definition.range.start.line + 1}` : '*No definition found!*'}`;
   }
 
-  public getItemDetails(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: 'full' | 'external' | 'definition' | 'reference'): vscode.MarkdownString {
+  public getItemDetails(
+    document: vscode.TextDocument,
+    item: ScriptReferencedItemInfo,
+    detailsType: 'full' | 'external' | 'definition' | 'reference'
+  ): vscode.MarkdownString {
     const markdownString = new vscode.MarkdownString();
     const defined = this.definitionToMarkdown(document, item);
     const references = this.getReferences(document, item);
     const referenced = `**Referenced**: ${references.length} time${references.length !== 1 ? 's' : ''}`;
     if (detailsType === 'full' || detailsType === 'external') {
-      markdownString.appendMarkdown(`**${this.itemTypeCapitalized}**: \`${item.name}\`\n\n`);
-      markdownString.appendMarkdown(defined + '\n\n');
+      markdownString.appendMarkdown(`*${this.itemTypeCapitalized}*: **${item.name}**  \n`);
+      markdownString.appendMarkdown(defined + '  \n');
       if (detailsType === 'full') {
         markdownString.appendMarkdown(referenced);
       }
     } else if (detailsType === 'definition') {
-      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Definition**: \`${item.name}\`\n\n`);
+      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Definition**: \`${item.name}\`  \n`);
       markdownString.appendMarkdown(referenced);
     } else {
-      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Reference**: \`${item.name}\`\n\n`);
+      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Reference**: \`${item.name}\`  \n`);
       markdownString.appendMarkdown(defined);
     }
     return markdownString;
@@ -397,9 +396,7 @@ export class ReferencedItemsTracker {
     const availableItems = Array.from(documentData.keys());
     const similarItems = findSimilarItems(name, availableItems);
     return similarItems;
-
   }
-
 
   public clearItemsForDocument(document: vscode.TextDocument): void {
     this.documentReferencedItems.delete(document);
@@ -416,10 +413,12 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
   private static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker): void {
-    const itemInfo = Array.from(scriptReferencedItemsDetectionMap.keys()).find(key => scriptReferencedItemsDetectionMap.get(key)?.type === itemType && scriptReferencedItemsDetectionMap.get(key)?.attrType === 'definition');
+    const itemInfo = Array.from(scriptReferencedItemsDetectionMap.keys()).find(
+      (key) => scriptReferencedItemsDetectionMap.get(key)?.type === itemType && scriptReferencedItemsDetectionMap.get(key)?.attrType === 'definition'
+    );
     if (!itemInfo) {
       logger.warn(`No item info found for item type: ${itemType}`);
-      return
+      return;
     }
     const [elementName, attributeName] = itemInfo.split('#');
     const filePrefix = scriptReferencedItemsDetectionMap.get(itemInfo)?.filePrefix || '';
@@ -432,13 +431,13 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         elementName,
         attributeName,
         filePrefix,
-        tracker
+        tracker,
       });
     }
   }
 
   public static collectExternalDefinitions(config: X4CodeCompleteConfig) {
-    const folders : string[] = [];
+    const folders: string[] = [];
     const mainFolders: string[] = [];
     // if (config.extensionsFolder) {
     //   mainFolders.push(config.extensionsFolder);
@@ -475,7 +474,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       for (const folder of folders) {
         if (fs.existsSync(folder) && fs.statSync(folder).isDirectory()) {
           logger.debug(`Processing folder: ${folder}`);
-          const files = fs.readdirSync(folder, { withFileTypes: true })
+          const files = fs
+            .readdirSync(folder, { withFileTypes: true })
             .filter((item) => item.isFile() && item.name.endsWith('.xml'))
             .map((item) => path.join(folder, item.name));
           for (const file of files) {
@@ -484,7 +484,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
             let fileContent: string = '';
             for (const trackerInfo of trackersInfo) {
               const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
-              if (prefixes.length === 0 || prefixes.some(prefix => fileName.startsWith(prefix))) {
+              if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
                 logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}`);
                 if (!fileContent && fs.existsSync(file)) {
                   fileContent = fs.readFileSync(file, 'utf8');
@@ -505,7 +505,6 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         }
       }
     }
-
   }
 
   constructor(itemType: string) {
@@ -522,7 +521,10 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 
   public addExternalDefinition(value: string, line: number, position: number, length: number, fileName: string): void {
-    const definition = new vscode.Location(vscode.Uri.file(fileName), new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length)));
+    const definition = new vscode.Location(
+      vscode.Uri.file(fileName),
+      new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
+    );
     this.externalDefinitions.set(value, { name: value, definition });
   }
 
@@ -530,8 +532,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     if (item.definition) {
       return super.getDefinition(document, item);
     } else {
-      const definitions  = Array.from(this.documentReferencedItems.values());
-      const externalDefinitions =  definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
+      const definitions = Array.from(this.documentReferencedItems.values());
+      const externalDefinitions = definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
       if (externalDefinitions && externalDefinitions.length > 0) {
         return externalDefinitions[0].get(item.name)?.definition;
       }
@@ -544,7 +546,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 
   protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
-    return Array.from(this.documentReferencedItems.values()).flatMap(itemMap => itemMap.get(item.name)?.references || []);
+    return Array.from(this.documentReferencedItems.values()).flatMap((itemMap) => itemMap.get(item.name)?.references || []);
   }
 
   public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
@@ -557,7 +559,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     // Process all labels
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
-      // Only add the item if it matches the prefix
+        // Only add the item if it matches the prefix
         result.set(itemName, this.getItemDetails(document, itemData, 'full'));
       }
     }
@@ -565,8 +567,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     // Process all labels
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix)) && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
-      // Only add the item if it matches the prefix
-      if (!result.has(itemName)) {
+        // Only add the item if it matches the prefix
+        if (!result.has(itemName)) {
           result.set(itemName, this.getItemDetails(document, itemData, 'external'));
         }
       }

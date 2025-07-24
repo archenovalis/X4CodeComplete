@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getDocumentScriptType, scriptIdDescription} from './scriptsMetadata';
+import { getDocumentScriptType, scriptIdDescription } from './scriptsMetadata';
 
 export type ScriptVariableInfo = {
   name: string;
@@ -28,7 +28,6 @@ export type ScriptVariableReferences = {
   name: string;
   references: vscode.Location[];
 };
-
 
 const variableTypes = {
   normal: 'usual variable',
@@ -74,11 +73,7 @@ export class VariableTracker {
     // Handle definition if this is marked as one
     if (isDefinition && definitionPriority !== undefined) {
       // Only set definition if we don't have one, or if this has higher priority (lower number = higher priority)
-      if (
-        !variableData.definition ||
-        !variableData.definitionPriority ||
-        definitionPriority < variableData.definitionPriority
-      ) {
+      if (!variableData.definition || !variableData.definitionPriority || definitionPriority < variableData.definitionPriority) {
         variableData.definition = new vscode.Location(document.uri, range);
         variableData.definitionPriority = definitionPriority;
       }
@@ -86,7 +81,6 @@ export class VariableTracker {
   }
 
   public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | undefined {
-
     // Navigate through the map levels
     const variablesTypes = this.documentVariables.get(document);
     if (!variablesTypes) return undefined;
@@ -114,7 +108,6 @@ export class VariableTracker {
     return undefined;
   }
 
-
   public getVariableDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableDefinition | undefined {
     const variable = this.getVariableAtPosition(document, position);
     if (!variable) return undefined;
@@ -134,7 +127,6 @@ export class VariableTracker {
 
     return { name: variable.variable.name, references: references };
   }
-
 
   public updateVariableName(type: string, oldName: string, newName: string, document: vscode.TextDocument): void {
     // Navigate through the map levels
@@ -172,8 +164,12 @@ export class VariableTracker {
       for (const [variableName, variableData] of typeMap) {
         if (prefix === '' || variableName.startsWith(prefix)) {
           // Only add the item if it matches the prefix
-          if (prefix !== '' && variableData.definition === undefined && variableData.locations.length === 1 &&
-            variableData.locations[0].range.contains(position)) {
+          if (
+            prefix !== '' &&
+            variableData.definition === undefined &&
+            variableData.locations.length === 1 &&
+            variableData.locations[0].range.contains(position)
+          ) {
             continue;
           }
           const info = VariableTracker.getVariableDetails(variableData);
@@ -188,12 +184,10 @@ export class VariableTracker {
   public static getVariableDetails(variable: ScriptVariableInfo): vscode.MarkdownString {
     const details = new vscode.MarkdownString();
     details.appendMarkdown(
-      `*${scriptIdDescription[variable.schema] || 'Script'} ${variableTypes[variable.type] || 'Variable'}*: **${variable.name}**` + '\n\n'
+      `*${scriptIdDescription[variable.schema] || 'Script'} ${variableTypes[variable.type] || 'Variable'}*: **${variable.name}**` + '  \n'
     );
 
-    details.appendMarkdown(
-      `**Used**: ${variable.locations.length} time${variable.locations.length !== 1 ? 's' : ''}\n\n`
-    );
+    details.appendMarkdown(`**Used**: ${variable.locations.length} time${variable.locations.length !== 1 ? 's' : ''}  \n`);
     details.appendMarkdown('**Defined**: ' + (variable.definition ? `at line ${variable.definition.range.start.line + 1}` : 'definition not found'));
     return details;
   }
@@ -201,5 +195,4 @@ export class VariableTracker {
   public dispose(): void {
     this.documentVariables = new WeakMap();
   }
-
 }

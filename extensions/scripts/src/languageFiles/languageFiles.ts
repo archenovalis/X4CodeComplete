@@ -165,11 +165,7 @@ export class LanguageFileProcessor {
 
     if (textData) {
       const textDataKeys = Array.from(textData.keys()).sort((a, b) =>
-        a === preferredLanguage
-          ? -1
-          : b === preferredLanguage
-            ? 1
-            : (a === '*' ? 0 : parseInt(a)) - (b === '*' ? 0 : parseInt(b))
+        a === preferredLanguage ? -1 : b === preferredLanguage ? 1 : (a === '*' ? 0 : parseInt(a)) - (b === '*' ? 0 : parseInt(b))
       );
 
       if (limitLanguage && !textData.has(preferredLanguage)) {
@@ -182,7 +178,7 @@ export class LanguageFileProcessor {
 
       for (const language of textDataKeys) {
         if (!limitLanguage || language == preferredLanguage) {
-          result += (result == '' ? '' : `\n\n`) + `${language}: ${textData.get(language)}`;
+          result += (result == '' ? '' : `  \n`) + `${language}: ${textData.get(language)}`;
         }
       }
     }
@@ -190,8 +186,7 @@ export class LanguageFileProcessor {
   }
 
   public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.ProviderResult<vscode.Hover> {
-    const tPattern =
-      /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
+    const tPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
     // matches:
     // {1015,7} or {1015, 7}
     // readtext.{1015}.{7}

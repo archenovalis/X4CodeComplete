@@ -171,7 +171,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           items,
           'attribute',
           attr.name,
-          new vscode.MarkdownString(`${attr.annotation || ''}\n\n**Required**: ${attr.required ? '**Yes**' : 'No'}\n\n**Type**: ${attr.type || 'unknown'}`),
+          new vscode.MarkdownString(`${attr.annotation || ''}  \n**Required**: ${attr.required ? '**Yes**' : 'No'}  \n**Type**: ${attr.type || 'unknown'}`),
           range
         );
       }

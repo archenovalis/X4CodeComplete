@@ -48,7 +48,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 
 // Configuration imports
-import {X4CodeCompleteConfig, X4ConfigurationManager, ConfigChangeCallbacks} from './extension/configuration';
+import { X4CodeCompleteConfig, X4ConfigurationManager, ConfigChangeCallbacks } from './extension/configuration';
 
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
@@ -62,12 +62,11 @@ import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scripts
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
-import { ScriptDocumentTracker} from './scripts/scriptDocumentTracker';
+import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
 // ================================================================================================
-
 
 // ================================================================================================
 // 3. GLOBAL VARIABLES AND CONFIGURATION
@@ -101,7 +100,6 @@ const variableTracker = new VariableTracker();
  * into other modules.
  */
 
-
 const codeCompleteStartupDone = new vscode.EventEmitter<void>();
 export const onCodeCompleteStartupProcessed = codeCompleteStartupDone.event;
 
@@ -129,7 +127,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
-      await languageProcessor.loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
+      await languageProcessor
+        .loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
         .then(() => {
           logger.info('Language files reloaded successfully.');
         })
@@ -139,11 +138,9 @@ export function activate(context: vscode.ExtensionContext) {
     },
 
     onResetReloadFlag: async () => {
-      await vscode.workspace
-        .getConfiguration()
-        .update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration().update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
       logger.debug('Reload language data flag reset to false');
-    }
+    },
   };
 
   // Initialize configuration manager
@@ -167,7 +164,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Initialize language processor and load language files
   languageProcessor = new LanguageFileProcessor();
-  languageProcessor.loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
+  languageProcessor
+    .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
     .then(() => {
       logger.info('Language files loaded successfully.');
     })
@@ -191,11 +189,7 @@ export function activate(context: vscode.ExtensionContext) {
   const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
   // Register completion provider with trigger characters
-  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(
-    xmlSelector,
-    scriptCompletionProvider,
-    '.', '"', '{', ' ', '<'
-  );
+  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '<');
   context.subscriptions.push(disposableCompleteProvider);
 
   // Register definition provider for go-to-definition functionality
@@ -220,7 +214,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         // AI script specific features
         if (schema === aiScriptId) {
-
           for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
             const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
             if (itemDefinition) {
@@ -228,12 +221,11 @@ export function activate(context: vscode.ExtensionContext) {
               return itemDefinition.definition;
             }
           }
-
         }
 
         // Fallback to script properties
         return scriptProperties.provideDefinition(document, position);
-      }
+      },
     })
   );
 
@@ -244,10 +236,7 @@ export function activate(context: vscode.ExtensionContext) {
        * Provides hover information for symbols at a given position
        * Shows documentation for elements, attributes, variables, labels, and actions
        */
-      provideHover: async (
-        document: vscode.TextDocument,
-        position: vscode.Position
-      ): Promise<vscode.Hover | undefined> => {
+      provideHover: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> => {
         const schema = getDocumentScriptType(document);
         if (schema === '') {
           return undefined;
@@ -274,11 +263,11 @@ export function activate(context: vscode.ExtensionContext) {
             const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
 
             if (attributeInfo) {
-              hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '`' + attributeInfo.annotation + '`' : ''}\n\n`);
-              hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`\n\n`);
-              hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`\n\n`);
+              hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '`' + attributeInfo.annotation + '`' : ''}  \n`);
+              hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`  \n`);
+              hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`  \n`);
             } else {
-              hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`\n\n`);
+              hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`  \n`);
             }
             return new vscode.Hover(hoverText, attribute.nameRange);
           }
@@ -289,9 +278,9 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (elementInfo) {
               const annotationText = XsdReference.extractAnnotationText(elementInfo);
-              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}\n\n`);
+              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
             } else {
-              hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`\n\n`);
+              hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`  \n`);
             }
             return new vscode.Hover(hoverText, element.nameRange);
           }
@@ -320,8 +309,6 @@ export function activate(context: vscode.ExtensionContext) {
         return scriptProperties.provideHover(document, position);
       },
     })
-
-
   );
 
   // ================================================================================================
@@ -334,7 +321,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor && scriptsMetadataSet(editor.document)) {
-       scriptDocumentTracker.trackScriptDocument(editor.document, true);
+        scriptDocumentTracker.trackScriptDocument(editor.document, true);
       }
     })
   );
@@ -370,7 +357,7 @@ export function activate(context: vscode.ExtensionContext) {
           const cursorPos = activeEditor.selection.active;
 
           // Update the document structure on change
-         scriptDocumentTracker.trackScriptDocument(event.document, true, cursorPos);
+          scriptDocumentTracker.trackScriptDocument(event.document, true, cursorPos);
 
           // Check if we're in a specialized completion context and trigger suggestions if needed
           if (configManager.config.forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
@@ -386,7 +373,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (scriptsMetadataSet(document, true)) {
-       scriptDocumentTracker.trackScriptDocument(document, true);
+        scriptDocumentTracker.trackScriptDocument(document, true);
       }
     })
   );
@@ -397,8 +384,8 @@ export function activate(context: vscode.ExtensionContext) {
       const uri = document.uri;
 
       const stillOpenInTab = vscode.window.tabGroups.all
-        .flatMap(group => group.tabs)
-        .some(tab => {
+        .flatMap((group) => group.tabs)
+        .some((tab) => {
           const input = tab.input as any;
           return input?.uri?.toString() === uri.toString();
         });
@@ -414,7 +401,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-
 
   // ================================================================================================
   // 9. EXTENSION STARTUP HANDLER
@@ -443,7 +429,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
       } else {
         // Initialize by parsing the currently active document
-        vscode.workspace.textDocuments.forEach(doc => {
+        vscode.workspace.textDocuments.forEach((doc) => {
           logger.debug(`Document found on startup: ${doc.uri.toString()}`);
           if (doc.languageId === 'xml') {
             scriptDocumentTracker.trackScriptDocument(doc, true);
@@ -454,9 +440,7 @@ export function activate(context: vscode.ExtensionContext) {
     openDocument();
   });
 
-  context.subscriptions.push(
-    codeCompleteStartupDone
-  );
+  context.subscriptions.push(codeCompleteStartupDone);
 
   // ================================================================================================
   // 10. CONFIGURATION CHANGE HANDLER
@@ -507,10 +491,7 @@ export function activate(context: vscode.ExtensionContext) {
                     if (similarItem === itemName) {
                       return; // Skip if the item is the same as the one causing the error
                     }
-                    const replaceAction = new vscode.CodeAction(
-                      `Replace with existing ${itemType} '${similarItem}'`,
-                      vscode.CodeActionKind.QuickFix
-                    );
+                    const replaceAction = new vscode.CodeAction(`Replace with existing ${itemType} '${similarItem}'`, vscode.CodeActionKind.QuickFix);
                     replaceAction.edit = new vscode.WorkspaceEdit();
                     replaceAction.edit.replace(document.uri, diagnostic.range, similarItem);
                     replaceAction.diagnostics = [diagnostic];
@@ -586,9 +567,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Debug log: Print each edit
             const rangeText = location.range ? document.getText(location.range) : '';
             const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-            logger.debug(
-              `Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`
-            );
+            logger.debug(`Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`);
             workspaceEdit.replace(location.uri, location.range, replacementText);
           });
 
@@ -604,7 +583,6 @@ export function activate(context: vscode.ExtensionContext) {
       },
     })
   );
-
 
   codeCompleteStartupDone.fire();
 
