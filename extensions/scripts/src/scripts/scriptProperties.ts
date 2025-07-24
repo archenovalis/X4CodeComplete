@@ -857,14 +857,6 @@ export class ScriptProperties {
       if (!isLastPart) {
         // Not last part - this is a complex property, continue with same contentType
         return { isCompleted: false };
-      } else {
-        // Last part - try without dot to find completion candidates
-        const candidateProperties = contentType.filterPropertiesByPrefix(fullPropertyName, false);
-
-        if (candidateProperties.length > 0) {
-          const completions = this.generateCompletionsFromProperties(candidateProperties, prefix);
-          return { isCompleted: false, completions };
-        }
       }
     }
 
