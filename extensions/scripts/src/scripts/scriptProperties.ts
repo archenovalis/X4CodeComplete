@@ -84,6 +84,11 @@ class TypeEntry {
   public getProperty(name: string): PropertyEntry | undefined {
     if (this.properties.has(name)) {
       return this.properties.get(name);
+    } else {
+      const filtered = this.filterPropertiesByPrefix(name, true);
+      if (filtered.length === 1 && name.split('.').length === filtered[0].name.split('.').length) {
+        return filtered[0];
+      }
     }
     return this.supertype ? this.supertype.getProperty(name) : undefined;
   }
@@ -91,9 +96,37 @@ class TypeEntry {
   public filterPropertiesByPrefix(prefix: string, appendDot: boolean = true): PropertyEntry[] {
     const result: PropertyEntry[] = [];
     const workingPrefix = appendDot ? prefix + '.' : prefix;
+    const prefixSplitted = prefix.split('.');
+    const countItems = prefixSplitted.length;
     for (const [name, prop] of this.getProperties()) {
       if (name.startsWith(workingPrefix)) {
         result.push(prop);
+      } else {
+        const nameSplitted = name.split('.');
+        if (nameSplitted.length >= countItems) {
+          const maxItems = appendDot ? countItems : countItems - 1;
+          let i = 0;
+          let matched = true;
+          for (i = 0; i < maxItems; i++) {
+            if (
+              prefixSplitted[i] !== nameSplitted[i] &&
+              (prefixSplitted[i].length <= 2 ||
+                nameSplitted[i].length <= 2 ||
+                !prefixSplitted[i].startsWith('{') ||
+                !nameSplitted[i].startsWith('{') ||
+                !prefixSplitted[i].endsWith('}') ||
+                !nameSplitted[i].endsWith('}'))
+            ) {
+              // If the parts do not match, break
+              matched = false;
+              break;
+            }
+          }
+          if (matched) {
+            // If the last part matches and there are more parts, add it
+            result.push(prop);
+          }
+        }
       }
     }
     if (this.supertype) {
@@ -881,41 +914,35 @@ export class ScriptProperties {
     const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
-    const prefixWithDot = prefix ? `${prefix}.` : '';
+    const prefixSplitted = prefix.split('.');
+    const prefixSplittedLength = prefixSplitted.length; // Exclude the last part
 
     for (const property of properties) {
-      let completion = property.name;
+      const nameSplitted = property.name.split('.');
 
-      // Remove prefix (with dot)
-      if (completion.startsWith(prefixWithDot)) {
-        completion = completion.substring(prefixWithDot.length);
-      }
+      if (nameSplitted.length > prefixSplittedLength) {
+        const completion = nameSplitted[prefixSplittedLength];
 
-      // Remove suffix (everything after and including first dot)
-      const dotIndex = completion.indexOf('.');
-      if (dotIndex >= 0) {
-        completion = completion.substring(0, dotIndex);
-      }
+        // Add to unique completions
+        if (completion) {
+          if (!uniqueCompletions.has(completion)) {
+            uniqueCompletions.add(completion);
 
-      // Add to unique completions
-      if (completion) {
-        if (!uniqueCompletions.has(completion)) {
-          uniqueCompletions.add(completion);
-
-          const item = ScriptProperties.createItem(completion, property.getDescription(), vscode.CompletionItemKind.Property);
-          items.set(completion, item);
-        } else {
-          const item = items.get(completion);
-          if (item) {
-            // Add property description if available
-            const description = property.getDescription();
-            if (description.length > 0) {
-              if (!(item.documentation as vscode.MarkdownString).value.includes('part of')) {
-                item.documentation = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`).appendMarkdown(
-                  '* ' + (item.documentation as vscode.MarkdownString).value.split('  \n- ').join('  \n  - ').concat('\n\n')
-                );
+            const item = ScriptProperties.createItem(completion, property.getDescription(), vscode.CompletionItemKind.Property);
+            items.set(completion, item);
+          } else {
+            const item = items.get(completion);
+            if (item) {
+              // Add property description if available
+              const description = property.getDescription();
+              if (description.length > 0) {
+                if (!(item.documentation as vscode.MarkdownString).value.includes('part of')) {
+                  item.documentation = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`).appendMarkdown(
+                    '* ' + (item.documentation as vscode.MarkdownString).value.split('  \n- ').join('  \n  - ').concat('\n\n')
+                  );
+                }
+                (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
               }
-              (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
             }
           }
         }
