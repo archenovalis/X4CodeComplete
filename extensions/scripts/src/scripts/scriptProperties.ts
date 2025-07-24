@@ -4,10 +4,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as xml2js from 'xml2js';
 import * as xpath from 'xml2js-xpath';
-import { getDocumentScriptType } from './scriptsMetadata';
+import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
 import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
 import { XsdReference } from 'xsd-lookup';
-import { log } from 'console';
 
 class PropertyEntry {
   name: string;
@@ -62,14 +61,20 @@ class TypeEntry {
   public name: string;
   public properties: Map<string, PropertyEntry> = new Map<string, PropertyEntry>();
   public supertype?: TypeEntry;
+  public suffix?: string;
 
-  constructor(name: string, supertype?: TypeEntry) {
+  constructor(name: string, supertype?: TypeEntry, suffix?: string) {
     this.name = name;
     this.supertype = supertype;
+    this.suffix = suffix;
   }
 
   public addProperty(value: string, type: string = '', details: string = '') {
     this.properties.set(value, new PropertyEntry(value, type, details, this));
+  }
+
+  public getProperties(): Map<string, PropertyEntry> {
+    return new Map(Array.from(this.properties.entries()).concat(Array.from(this.supertype ? this.supertype.getProperties().entries() : [])));
   }
 
   public getDescription(): string[] {
@@ -89,23 +94,22 @@ class TypeEntry {
       return;
     }
 
-    for (const prop of this.properties.entries()) {
+    for (const prop of this.getProperties().entries()) {
       if (prefix === '' || prop[0].startsWith(prefix)) {
         prop[1].putAsCompletionItem(items, range);
       }
-    }
-
-    if (this.supertype !== undefined) {
-      logger.debug('Recursing on supertype: ', this.supertype);
-      this.supertype.prepareItems(prefix, items);
     }
   }
 }
 
 class KeywordEntry extends TypeEntry {
   public details?: string;
-  constructor(name: string, details?: string) {
-    super(name);
+  public script?: string;
+  constructor(name: string, supertype?: TypeEntry, script?: string, details?: string) {
+    super(name, supertype);
+    if (script) {
+      this.script = script === 'md' ? mdScriptId : aiScriptId;
+    }
     this.details = details;
   }
 
@@ -131,6 +135,7 @@ interface Keyword {
   $: {
     name: string;
     type?: string;
+    script?: string;
     pseudo?: string;
     description?: string;
   };
@@ -174,7 +179,7 @@ export class ScriptProperties {
   private datatypes: Datatype[] = [];
   private dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
-  private keywordDict: Map<string, KeywordEntry> = new Map<string, KeywordEntry>();
+  private keywordList: KeywordEntry[] = [];
   private allProp: Map<string, string[]> = new Map<string, string[]>();
   private keywordItems: vscode.CompletionItem[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
@@ -191,7 +196,7 @@ export class ScriptProperties {
     this.datatypes = [];
     this.dict.clear();
     this.typeDict.clear();
-    this.keywordDict.clear();
+    this.keywordList = [];
     this.allProp.clear();
     this.keywordItems = [];
     this.descriptions.clear();
@@ -212,8 +217,8 @@ export class ScriptProperties {
 
     if (parsedData !== undefined) {
       // Process keywords and datatypes here, return the completed results
-      this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
       this.datatypes = this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
+      this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
       // this.addTypeLiteral('boolean', '==false');
       logger.info('Parsed scriptproperties.xml');
     }
@@ -221,12 +226,12 @@ export class ScriptProperties {
     this.makeKeywords();
   }
 
-  private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty) {
+  private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty, script?: string) {
     const name = prop.$.name;
     logger.debug('\tProperty read: ', name);
     this.addPropertyLocation(rawData, name, parent, parentType);
     if (parentType === 'keyword') {
-      this.addKeywordProperty(parent, name, prop.$.type || '', prop.$.result);
+      this.addKeywordProperty(parent, name, script, prop.$.type || '', prop.$.result);
     } else {
       this.addTypeProperty(parent, name, prop.$.type || '', prop.$.result);
     }
@@ -235,7 +240,8 @@ export class ScriptProperties {
   private processKeyword(rawData: string, e: Keyword) {
     const name = e.$.name;
     this.addNonPropertyLocation(rawData, name, 'keyword');
-    this.addKeyword(name, e.$.description);
+    const type = this.typeDict.get(e.$.type || '');
+    this.addKeyword(name, type, e.$.script, e.$.description);
     logger.debug('Keyword read: ' + name);
 
     if (e.import !== undefined) {
@@ -244,13 +250,13 @@ export class ScriptProperties {
       const select = imp.$.select;
       const tgtName = imp.property[0].$.name;
       const ignorePrefix = imp.property[0].$.ignoreprefix === 'true';
-      this.processKeywordImport(name, src, select, tgtName, ignorePrefix);
+      this.processKeywordImport(name, src, select, tgtName, e.$.script, ignorePrefix);
     } else if (e.property !== undefined) {
-      e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop));
+      e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop, e.$.script));
     }
   }
 
-  private processKeywordImport(name: string, src: string, select: string, targetName: string, ignorePrefix: boolean = false) {
+  private processKeywordImport(name: string, src: string, select: string, targetName: string, script?: string, ignorePrefix: boolean = false) {
     const srcPath = path.join(this.librariesFolder, src);
     logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
     // Can't move on until we do this so use sync version
@@ -275,13 +281,13 @@ export class ScriptProperties {
 
       if (matches.length > 0) {
         matches.forEach((element: XPathResult) => {
-          this.addKeywordProperty(name, element.$[targetName.substring(1)], '', element.$['comment'], ignorePrefix);
+          this.addKeywordProperty(name, element.$[targetName.substring(1)], script, '', element.$['comment'], ignorePrefix);
         });
       } else if (name === 'class') {
         const xsdEnums = this.xsdReference.getSimpleTypeEnumerationValues(src.replace('.xsd', ''), name + 'lookup');
         if (xsdEnums) {
           for (const enumValue of xsdEnums.values) {
-            this.addKeywordProperty(name, enumValue, '', xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
+            this.addKeywordProperty(name, enumValue, script, '', xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
           }
         }
       } else {
@@ -372,7 +378,7 @@ export class ScriptProperties {
     if (e.property === undefined) {
       return;
     }
-    this.addType(name, e.$.type);
+    this.addType(name, e.$.type, e.$.suffix);
     e.property.forEach((prop) => this.processProperty(rawData, name, 'datatype', prop));
   }
 
@@ -428,21 +434,21 @@ export class ScriptProperties {
     this.addLocationForRegexMatch(rawData, rawIdx, parent + '.' + name);
   }
 
-  addType(key: string, supertype?: string): void {
+  addType(key: string, supertype?: string, suffix?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
     if (entry === undefined && k !== 'datatype') {
-      entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined);
+      entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined, suffix);
       this.typeDict.set(k, entry);
     }
   }
 
-  addKeyword(key: string, details?: string): void {
+  addKeyword(key: string, type?: TypeEntry, script?: string, details?: string): void {
     const k = cleanStr(key);
-    let entry = this.keywordDict.get(k);
+    let entry = this.getKeyword(k, script || '');
     if (entry === undefined) {
-      entry = new KeywordEntry(k, details);
-      this.keywordDict.set(k, entry);
+      entry = new KeywordEntry(k, type, script, details);
+      this.keywordList.push(entry);
     }
   }
 
@@ -476,19 +482,17 @@ export class ScriptProperties {
     this.addToAllProp(shortProp, key);
   }
 
-  addKeywordProperty(key: string, prop: string, type?: string, details?: string, ignorePrefix: boolean = false): void {
+  addKeywordProperty(key: string, prop: string, script?: string, type?: string, details?: string, ignorePrefix: boolean = false): void {
     const k = cleanStr(key);
-    if (!this.keywordDict.has(k)) {
-      this.addKeyword(k);
-    }
-    const entry = this.keywordDict.get(k);
+
+    const entry = this.getKeyword(k, script || '');
     if (entry === undefined) {
       return;
     }
     if (ignorePrefix && prop.startsWith(k + '.')) {
       prop = prop.substring(k.length + 1);
     }
-    entry.addProperty(prop, '', details);
+    entry.addProperty(prop, type, details);
   }
 
   addToAllProp(value: string, type: string): void {
@@ -558,6 +562,14 @@ export class ScriptProperties {
       }
     }
     return result;
+  }
+
+  private getKeywords(schema: string): KeywordEntry[] {
+    return this.keywordList.filter((entry) => !entry.script || entry.script === schema);
+  }
+
+  private getKeyword(name: string, schema: string): KeywordEntry | undefined {
+    return this.keywordList.find((entry) => entry.name === name && (!entry.script || entry.script === schema));
   }
 
   private makeCompletionList(items: Map<string, vscode.CompletionItem> | vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
@@ -680,7 +692,7 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string, position: vscode.Position): vscode.CompletionList {
+  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string, schema: string, position: vscode.Position): vscode.CompletionList {
     const items = new Map<string, vscode.CompletionItem>();
     logger.debug('Processing text: ', textToProcessBefore, ' & ', textToProcessAfter, ' Type: ', type);
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
@@ -699,7 +711,7 @@ export class ScriptProperties {
             if (item[1].length === 1) {
               const typeEntry = this.typeDict.get(item[1][0]);
               if (typeEntry) {
-                for (const prop of typeEntry.properties.entries()) {
+                for (const prop of typeEntry.getProperties().entries()) {
                   if (prop[0].startsWith(label)) {
                     const description = prop[1].getDescription();
                     const completionItem = ScriptProperties.createItem(prop[0], description);
@@ -723,7 +735,7 @@ export class ScriptProperties {
               const typeEntry = this.typeDict.get(datatype);
               if (typeEntry) {
                 // xsdReference.
-                const properties = Array.from(typeEntry.properties).filter(
+                const properties = Array.from(typeEntry.getProperties()).filter(
                   (prop) => prop[0].startsWith(primaryPart) && (!ScriptProperties.typesToIgnore.includes(type) || prop[1].type !== type)
                 );
                 for (const prop of properties) {
@@ -736,9 +748,9 @@ export class ScriptProperties {
                       const detail = prop[1].details || '';
                       const lookupMatch = detail.match(new RegExp(`^Shortcut.+?\\{(\\w+?)\\.\\<${match[1]}\\>\\}`));
                       if (lookupMatch && lookupMatch[1]) {
-                        const replacementsType = this.keywordDict.get(lookupMatch[1]);
+                        const replacementsType = this.getKeyword(lookupMatch[1], schema);
                         if (replacementsType) {
-                          for (const literal of replacementsType.properties.keys()) {
+                          for (const literal of replacementsType.getProperties().keys()) {
                             replacements.push(literal);
                           }
                         }
@@ -778,15 +790,15 @@ export class ScriptProperties {
       if (firstDot >= 0) {
         const baseType = textToProcessBefore.substring(0, firstDot);
         const propertyName = textToProcessBefore.substring(firstDot + 1);
-        const keywordEntry = this.keywordDict.get(baseType);
+        const keywordEntry = this.getKeyword(baseType, schema);
         if (keywordEntry) {
           keywordEntry.prepareItems(propertyName, items);
         }
       } else {
-        const keywordsFiltered = Array.from(this.keywordDict).filter((item) => textToProcessBefore === '' || item[0].startsWith(textToProcessBefore));
-        for (const [name, entry] of keywordsFiltered) {
-          const completionItem = ScriptProperties.createItem(name, entry.getDescription(), vscode.CompletionItemKind.Keyword);
-          items.set(name, completionItem);
+        const keywordsFiltered = this.getKeywords(schema).filter((item) => textToProcessBefore === '' || item.name.startsWith(textToProcessBefore));
+        for (const keywordItem of keywordsFiltered) {
+          const completionItem = ScriptProperties.createItem(keywordItem.name, keywordItem.getDescription(), vscode.CompletionItemKind.Keyword);
+          items.set(keywordItem.name, completionItem);
         }
       }
     }
