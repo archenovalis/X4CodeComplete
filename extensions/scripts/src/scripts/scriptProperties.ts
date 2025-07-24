@@ -91,6 +91,19 @@ class TypeEntry {
     return this.supertype ? this.supertype.getProperty(name) : undefined;
   }
 
+  public filterPropertiesByPrefix(prefix: string): PropertyEntry[] {
+    const result: PropertyEntry[] = [];
+    for (const [name, prop] of this.getProperties()) {
+      if (name.startsWith(prefix)) {
+        result.push(prop);
+      }
+    }
+    if (this.supertype) {
+      result.push(...this.supertype.filterPropertiesByPrefix(prefix));
+    }
+    return result;
+  }
+
   public getDescription(): string[] {
     const result: string[] = [];
     result.push(`*DataType*: **${this.name}**${this.supertype ? '. *Based on*: **' + this.supertype + '**.' : ''}`);
