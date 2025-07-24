@@ -7,7 +7,7 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "sourceMap": true,
-    "rootDir": "src",
+    "rootDir": "./src",
     "strict": false,
     "noImplicitAny": false
     /* Additional Checks */
@@ -15,5 +15,14 @@
     // "noFallthroughCasesInSwitch": true, /* Report errors for fallthrough cases in switch statement. */
     // "noUnusedParameters": true,  /* Report errors on unused parameters. */
   },
-  "exclude": ["node_modules", ".vscode-test"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "temp/**/*",
+    "node_modules",
+    "out",
+    ".vscode-test",
+    "dist",
+  ]
 }
