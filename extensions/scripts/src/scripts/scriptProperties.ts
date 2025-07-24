@@ -692,7 +692,13 @@ export class ScriptProperties {
     return updated ? hoverText : '';
   }
 
-  public processText(textToProcessBefore: string, textToProcessAfter: string, type: string, schema: string, position: vscode.Position): vscode.CompletionList {
+  public makeCompletionsFromExpression(
+    textToProcessBefore: string,
+    textToProcessAfter: string,
+    type: string,
+    schema: string,
+    position: vscode.Position
+  ): vscode.CompletionList {
     const items = new Map<string, vscode.CompletionItem>();
     logger.debug('Processing text: ', textToProcessBefore, ' & ', textToProcessAfter, ' Type: ', type);
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);

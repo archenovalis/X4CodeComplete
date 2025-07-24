@@ -347,7 +347,13 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       } else {
-        return this.scriptProperties.processText(textToProcessBefore, textToProcessAfter, attributeInfo?.type || 'undefined', schema, position);
+        return this.scriptProperties.makeCompletionsFromExpression(
+          textToProcessBefore,
+          textToProcessAfter,
+          attributeInfo?.type || 'undefined',
+          schema,
+          position
+        );
       }
       return ScriptCompletion.emptyCompletion; // Skip if no valid prefix found
     } else {
