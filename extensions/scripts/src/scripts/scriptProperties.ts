@@ -77,6 +77,20 @@ class TypeEntry {
     return new Map(Array.from(this.properties.entries()).concat(Array.from(this.supertype ? this.supertype.getProperties().entries() : [])));
   }
 
+  public hasProperty(name: string): boolean {
+    if (this.properties.has(name)) {
+      return true;
+    }
+    return this.supertype ? this.supertype.hasProperty(name) : false;
+  }
+
+  public getProperty(name: string): PropertyEntry | undefined {
+    if (this.properties.has(name)) {
+      return this.properties.get(name);
+    }
+    return this.supertype ? this.supertype.getProperty(name) : undefined;
+  }
+
   public getDescription(): string[] {
     const result: string[] = [];
     result.push(`*DataType*: **${this.name}**${this.supertype ? '. *Based on*: **' + this.supertype + '**.' : ''}`);
