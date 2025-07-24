@@ -21,7 +21,7 @@ class PropertyEntry {
   }
   public getDescription(): string[] {
     const result: string[] = [];
-    result.push(`**${this.name}**${this.details ? ': *' + this.details + '*' : ''}`);
+    result.push(`**${this.name}**${this.details ? ': ' + this.details + '' : ''}`);
     if (this.owner) {
       result.push(`*Property of*: **${this.owner.name}**`);
     }
@@ -43,10 +43,7 @@ class PropertyEntry {
 
     const item = new vscode.CompletionItem(this.name, vscode.CompletionItemKind.Property);
     if (this.getDescription().length > 0) {
-      item.documentation = new vscode.MarkdownString();
-      for (const line of this.getDescription()) {
-        item.documentation.appendMarkdown(line + '\n\n');
-      }
+      item.documentation = new vscode.MarkdownString(this.getDescription().join('  \n- '));
     }
     if (range) {
       item.range = range;
@@ -91,9 +88,9 @@ class TypeEntry {
     return this.supertype ? this.supertype.getProperty(name) : undefined;
   }
 
-  public filterPropertiesByPrefix(prefix: string, withDot: boolean = true): PropertyEntry[] {
+  public filterPropertiesByPrefix(prefix: string, appendDot: boolean = true): PropertyEntry[] {
     const result: PropertyEntry[] = [];
-    const workingPrefix = withDot ? prefix : prefix + '.';
+    const workingPrefix = appendDot ? prefix + '.' : prefix;
     for (const [name, prop] of this.getProperties()) {
       if (name.startsWith(workingPrefix)) {
         result.push(prop);
@@ -574,10 +571,7 @@ export class ScriptProperties {
   ): vscode.CompletionItem {
     const item = new vscode.CompletionItem(complete, kind);
     if (info.length > 0) {
-      item.documentation = new vscode.MarkdownString();
-      for (const line of info) {
-        item.documentation.appendMarkdown(line + '\n\n');
-      }
+      item.documentation = new vscode.MarkdownString(info.join('  \n- '));
     }
     return item;
   }
@@ -698,7 +692,7 @@ export class ScriptProperties {
         properties.forEach((property) => {
           // Safely access property attributes
           if (property && property.$ && property.$.name && property.$.result) {
-            hoverText += `\n\n- ${name}.${property.$.name}: ${property.$.result}`;
+            hoverText += `  \n- ${name}.${property.$.name}: ${property.$.result}`;
             updated = true;
 
             // Update currentPropertyList for the next part
@@ -727,116 +721,230 @@ export class ScriptProperties {
     schema: string,
     position: vscode.Position
   ): vscode.CompletionList {
-    const items = new Map<string, vscode.CompletionItem>();
-    logger.debug('Processing text: ', textToProcessBefore, ' & ', textToProcessAfter, ' Type: ', type);
+    logger.debug('Processing expression: ', textToProcessBefore, ' Type: ', type, ' Schema: ', schema);
+
+    // Clean the input text
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
-    textToProcessAfter = getSubStringByBreakSymbolForExpressions(textToProcessAfter, false);
-    const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
-    if (lastDollarIndex >= 0) {
-      const firstDotAfterDollar = textToProcessBefore.indexOf('.', lastDollarIndex);
-      if (firstDotAfterDollar >= 0) {
-        textToProcessBefore = textToProcessBefore.substring(firstDotAfterDollar + 1);
-        const propertyParts = textToProcessBefore.split('.');
-        if (propertyParts.length === 1) {
-          const prefix = propertyParts[0];
-          const allPropItems = Array.from(this.allProp).filter((item) => prefix === '' || item[0].startsWith(prefix));
-          for (const item of allPropItems) {
-            const label = item[0];
-            if (item[1].length === 1) {
-              const typeEntry = this.typeDict.get(item[1][0]);
-              if (typeEntry) {
-                for (const prop of typeEntry.getProperties().entries()) {
-                  if (prop[0].startsWith(label)) {
-                    const description = prop[1].getDescription();
-                    const completionItem = ScriptProperties.createItem(prop[0], description);
-                    items.set(prop[0], completionItem);
-                  }
-                }
-              } else {
-                logger.warn(`Type entry not found for: ${item[1][0]}`);
-              }
-            } else {
-              const description = this.getPropertyDescriptionMultipleTypes(label, item[1]);
-              const completionItem = ScriptProperties.createItem(label, description);
-              items.set(label, completionItem);
-            }
-          }
-        } else {
-          const primaryPart = propertyParts[0];
-          const allPropItems = Array.from(this.allProp).filter((item) => item[0] === primaryPart);
-          for (const item of allPropItems) {
-            for (const datatype of item[1]) {
-              const typeEntry = this.typeDict.get(datatype);
-              if (typeEntry) {
-                // xsdReference.
-                const properties = Array.from(typeEntry.getProperties()).filter(
-                  (prop) => prop[0].startsWith(primaryPart) && (!ScriptProperties.typesToIgnore.includes(type) || prop[1].type !== type)
-                );
-                for (const prop of properties) {
-                  const labels = [prop[0]];
-                  if (ScriptProperties.regexLookupElement.test(prop[0])) {
-                    const label = labels.pop();
-                    const replacements = [];
-                    const match = label.match(ScriptProperties.regexLookupElement);
-                    if (match && match[1]) {
-                      const detail = prop[1].details || '';
-                      const lookupMatch = detail.match(new RegExp(`^Shortcut.+?\\{(\\w+?)\\.\\<${match[1]}\\>\\}`));
-                      if (lookupMatch && lookupMatch[1]) {
-                        const replacementsType = this.getKeyword(lookupMatch[1], schema);
-                        if (replacementsType) {
-                          for (const literal of replacementsType.getProperties().keys()) {
-                            replacements.push(literal);
-                          }
-                        }
-                      } else {
-                        logger.warn(`Failed to match lookup for property: ${prop[0]} with detail: ${detail}`);
-                      }
-                    }
-                    for (const replacement of replacements) {
-                      labels.push(label.replace(`<${match[1]}>`, replacement));
-                    }
-                    logger.debug(`Replaced labels for ${label}: `, labels);
-                  }
-                  for (const label of labels) {
-                    if (label.startsWith(textToProcessBefore)) {
-                      const description = prop[1].getDescription();
-                      const completionItem = ScriptProperties.createItem(label, description);
-                      items.set(label, completionItem);
-                    }
-                  }
-                  if (items.size === 0 && textToProcessBefore.lastIndexOf('.') > 0) {
-                    const prefix = textToProcessBefore.substring(0, textToProcessBefore.lastIndexOf('.'));
-                    for (const label of labels) {
-                      if (label == prefix && this.typeDict.has(prop[1].type)) {
-                        this.typeDict.get(prop[1].type)?.prepareItems('', items);
-                        break; // Stop after finding the first matching type
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+
+    // Use step-by-step analysis
+    const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema);
+
+    return this.makeCompletionList(completions);
+  }
+
+  /**
+   * Step-by-step expression analysis as specified:
+   * Each part is either "identified & completed" or "identified & not completed"
+   * Tracks contentType through the analysis
+   */
+  private analyzeExpressionStepByStep(expression: string, schema: string): Map<string, vscode.CompletionItem> {
+    const items = new Map<string, vscode.CompletionItem>();
+
+    // Split expression into parts (empty parts are valid and should be processed)
+    const parts = expression.split('.');
+
+    logger.warn(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
+    console.log(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
+
+    if (parts.length === 0) {
+      return items;
+    }
+
+    // Step 1: First part must be a keyword
+    const firstPart = parts[0];
+    const keyword = this.getKeyword(firstPart, schema);
+
+    if (!keyword) {
+      // First part not found as keyword - provide keyword suggestions
+      logger.debug(`First part "${firstPart}" not found as keyword, providing keyword suggestions`);
+      this.addKeywordCompletions(items, firstPart, schema);
+      return items;
+    }
+
+    logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
+
+    // First part is identified and completed
+    if (parts.length === 1) {
+      // Only one part - this means no completion is requested (no dot at end)
+      // Return empty completions
+      logger.debug(`Single part "${firstPart}" - no completion requested, returning empty`);
+      return items;
+    }
+
+    // Continue with property steps
+    let currentContentType: KeywordEntry | TypeEntry = keyword;
+    let prefix = '';
+
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const isLastPart = i === parts.length - 1;
+
+      logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType.name}"`);
+
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart);
+
+      if (result.completions) {
+        // Add completions and stop analysis
+        for (const [key, value] of result.completions) {
+          items.set(key, value);
         }
+        break;
       }
-    } else {
-      const firstDot = textToProcessBefore.indexOf('.');
-      if (firstDot >= 0) {
-        const baseType = textToProcessBefore.substring(0, firstDot);
-        const propertyName = textToProcessBefore.substring(firstDot + 1);
-        const keywordEntry = this.getKeyword(baseType, schema);
-        if (keywordEntry) {
-          keywordEntry.prepareItems(propertyName, items);
-        }
+
+      if (result.isCompleted) {
+        // Part was completed, update contentType and continue
+        currentContentType = result.newContentType!;
+        prefix = ''; // Reset prefix for clean property step
+        logger.debug(`Part "${part}" completed, new contentType: "${currentContentType.name}"`);
       } else {
-        const keywordsFiltered = this.getKeywords(schema).filter((item) => textToProcessBefore === '' || item.name.startsWith(textToProcessBefore));
-        for (const keywordItem of keywordsFiltered) {
-          const completionItem = ScriptProperties.createItem(keywordItem.name, keywordItem.getDescription(), vscode.CompletionItemKind.Keyword);
-          items.set(keywordItem.name, completionItem);
+        // Part is identified but not completed - add to prefix and continue
+        prefix = prefix ? `${prefix}.${part}` : part;
+        logger.debug(`Part "${part}" not completed, updated prefix: "${prefix}"`);
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Analyzes a single property step
+   */
+  private analyzePropertyStep(
+    part: string,
+    contentType: KeywordEntry | TypeEntry,
+    prefix: string,
+    isLastPart: boolean
+  ): {
+    isCompleted: boolean;
+    completions?: Map<string, vscode.CompletionItem>;
+    newContentType?: KeywordEntry | TypeEntry;
+  } {
+    const fullPropertyName = prefix ? `${prefix}.${part}` : part;
+
+    // Try to find exact property match
+    if (contentType.hasProperty(fullPropertyName)) {
+      const property = contentType.getProperty(fullPropertyName)!;
+      logger.debug(`Found exact property: "${fullPropertyName}", type: "${property.type}"`);
+
+      if (isLastPart) {
+        // Last part and found - provide next level completions if property has a type
+        const completions = new Map<string, vscode.CompletionItem>();
+        if (property.type) {
+          const typeEntry = this.typeDict.get(property.type);
+          if (typeEntry) {
+            typeEntry.prepareItems('', completions);
+          }
+        }
+        return { isCompleted: true, completions };
+      } else {
+        // Not last part - continue with the property's type
+        const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+        if (newContentType) {
+          return { isCompleted: true, newContentType };
+        } else {
+          // Property has no type - can't continue
+          return { isCompleted: false };
         }
       }
     }
-    return this.makeCompletionList(items);
+
+    // Property not found exactly - try filtering by prefix
+    const filteredProperties = contentType.filterPropertiesByPrefix(fullPropertyName, true);
+
+    if (filteredProperties.length > 0) {
+      logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullPropertyName}"`);
+
+      if (!isLastPart) {
+        // Not last part - this is a complex property, continue with same contentType
+        return { isCompleted: false };
+      } else {
+        // Last part - try without dot to find completion candidates
+        const candidateProperties = contentType.filterPropertiesByPrefix(fullPropertyName, false);
+
+        if (candidateProperties.length > 0) {
+          const completions = this.generateCompletionsFromProperties(candidateProperties, prefix);
+          return { isCompleted: false, completions };
+        }
+      }
+    }
+
+    // No properties found
+    if (isLastPart) {
+      // Last part and nothing found - try without dot one more time
+      const candidateProperties = contentType.filterPropertiesByPrefix(fullPropertyName, false);
+      if (candidateProperties.length > 0) {
+        const completions = this.generateCompletionsFromProperties(candidateProperties, prefix);
+        return { isCompleted: false, completions };
+      }
+    }
+
+    // Nothing found - error case
+    return { isCompleted: false };
+  }
+
+  /**
+   * Generates completions from filtered properties by removing prefix and suffixes
+   */
+  private generateCompletionsFromProperties(properties: PropertyEntry[], prefix: string): Map<string, vscode.CompletionItem> {
+    const items = new Map<string, vscode.CompletionItem>();
+    const uniqueCompletions = new Set<string>();
+
+    const prefixWithDot = prefix ? `${prefix}.` : '';
+
+    for (const property of properties) {
+      let completion = property.name;
+
+      // Remove prefix (with dot)
+      if (completion.startsWith(prefixWithDot)) {
+        completion = completion.substring(prefixWithDot.length);
+      }
+
+      // Remove suffix (everything after and including first dot)
+      const dotIndex = completion.indexOf('.');
+      if (dotIndex >= 0) {
+        completion = completion.substring(0, dotIndex);
+      }
+
+      // Add to unique completions
+      if (completion) {
+        if (!uniqueCompletions.has(completion)) {
+          uniqueCompletions.add(completion);
+
+          const item = ScriptProperties.createItem(completion, property.getDescription(), vscode.CompletionItemKind.Property);
+          items.set(completion, item);
+        } else {
+          const item = items.get(completion);
+          if (item) {
+            // Add property description if available
+            const description = property.getDescription();
+            if (description.length > 0) {
+              if (!(item.documentation as vscode.MarkdownString).value.includes('part of')) {
+                item.documentation = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`).appendMarkdown(
+                  '* ' + (item.documentation as vscode.MarkdownString).value.split('  \n- ').join('  \n  - ').concat('\n\n')
+                );
+              }
+              (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
+            }
+          }
+        }
+      }
+    }
+
+    logger.debug(`Generated ${items.size} unique completions from ${properties.length} properties`);
+    return items;
+  }
+
+  /**
+   * Adds keyword completions that match the given prefix
+   */
+  private addKeywordCompletions(items: Map<string, vscode.CompletionItem>, prefix: string, schema: string): void {
+    const keywords = this.getKeywords(schema);
+    for (const keyword of keywords) {
+      if (keyword.name.toLowerCase().startsWith(prefix.toLowerCase())) {
+        const item = ScriptProperties.createItem(keyword.name, keyword.getDescription(), vscode.CompletionItemKind.Keyword);
+        items.set(keyword.name, item);
+      }
+    }
   }
 
   public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
