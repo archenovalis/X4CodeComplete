@@ -91,11 +91,11 @@ class TypeEntry {
     return this.supertype ? this.supertype.getProperty(name) : undefined;
   }
 
-  public filterPropertiesByPrefix(prefix: string): PropertyEntry[] {
+  public filterPropertiesByPrefix(prefix: string, withDot: boolean = true): PropertyEntry[] {
     const result: PropertyEntry[] = [];
-    const dottedPrefix = prefix.endsWith('.') ? prefix : prefix + '.';
+    const workingPrefix = withDot ? prefix : prefix + '.';
     for (const [name, prop] of this.getProperties()) {
-      if (name.startsWith(dottedPrefix)) {
+      if (name.startsWith(workingPrefix)) {
         result.push(prop);
       }
     }
