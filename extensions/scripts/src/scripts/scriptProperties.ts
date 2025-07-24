@@ -93,8 +93,9 @@ class TypeEntry {
 
   public filterPropertiesByPrefix(prefix: string): PropertyEntry[] {
     const result: PropertyEntry[] = [];
+    const dottedPrefix = prefix.endsWith('.') ? prefix : prefix + '.';
     for (const [name, prop] of this.getProperties()) {
-      if (name.startsWith(prefix)) {
+      if (name.startsWith(dottedPrefix)) {
         result.push(prop);
       }
     }
