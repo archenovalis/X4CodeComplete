@@ -7,7 +7,7 @@ export interface XmlElement {
   startTagRange: vscode.Range; // Range of the start tag, used for attribute parsing
   nameRange: vscode.Range; // Range of just the element name within the start tag
   isSelfClosing: boolean;
-  parent? : XmlElement; // Optional parent element for easier hierarchy traversal
+  parent?: XmlElement; // Optional parent element for easier hierarchy traversal
   hierarchy: string[]; // Array representing the full hierarchy of parent elements
   children: XmlElement[];
   attributes: XmlElementAttribute[];
@@ -23,7 +23,7 @@ export interface XmlElementAttribute {
   elementId: number;
 }
 
-type OffsetItem = { index: number; shift: number, type?: 'element' | 'attribute' };
+type OffsetItem = { index: number; shift: number; type?: 'element' | 'attribute' };
 
 function patchUnclosedTags(text: string): {
   patchedText: string;
@@ -62,8 +62,7 @@ function patchUnclosedTags(text: string): {
     if (nextClose === -1 || (nextAngle !== -1 && nextAngle < nextClose)) {
       // It's an unclosed tag. Patch with `/>` just before the next tag or end of match.
       const insertAt = tagStart + tagContent.length;
-      patchedText =
-        patchedText.slice(0, insertAt) + '/>' + patchedText.slice(insertAt);
+      patchedText = patchedText.slice(0, insertAt) + '/>' + patchedText.slice(insertAt);
       const attributeDelta = revertOffset(insertAt, attributePatches.offsetMap) - insertAt;
       offsetMap.push({ index: insertAt - delta + attributeDelta, shift: 2, type: 'element' });
       delta += 2;
@@ -110,8 +109,8 @@ function patchUnclosedAttributes(text: string): {
 
     // Look for the closing quote, considering multiline values
     let closeQuoteIdx = -1;
-    let searchIdx = 0;
-    let inQuotes = false;
+    const searchIdx = 0;
+    const inQuotes = false;
 
     for (let i = 0; i < restOfText.length; i++) {
       const char = restOfText[i];
@@ -175,10 +174,7 @@ function patchUnclosedAttributes(text: string): {
       insertPosition += endPosition;
 
       // Insert the missing closing quote
-      patchedText =
-        patchedText.slice(0, insertPosition) +
-        expectedCloseQuote +
-        patchedText.slice(insertPosition);
+      patchedText = patchedText.slice(0, insertPosition) + expectedCloseQuote + patchedText.slice(insertPosition);
 
       offsetMap.push({
         index: insertPosition - delta,
@@ -195,7 +191,6 @@ function patchUnclosedAttributes(text: string): {
   return { patchedText, offsetMap };
 }
 
-
 function revertOffset(patchedOffset: number, offsetMap: OffsetItem[]): number {
   let realOffset = patchedOffset;
   for (const { index, shift } of offsetMap) {
@@ -206,7 +201,7 @@ function revertOffset(patchedOffset: number, offsetMap: OffsetItem[]): number {
   return realOffset;
 }
 
-type Offsets =  OffsetItem[];
+type Offsets = OffsetItem[];
 
 type DocumentInfo = {
   elements: XmlElement[];
@@ -220,14 +215,14 @@ export class XmlStructureTracker {
   // private lastParseTimestamps: WeakMap<vscode.TextDocument, number> = new WeakMap();
   private documentInfoMap: WeakMap<vscode.TextDocument, DocumentInfo> = new WeakMap();
 
-  private prepareDocumentInfo(document: vscode.TextDocument): DocumentInfo  {
+  private prepareDocumentInfo(document: vscode.TextDocument): DocumentInfo {
     let documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) {
       // If no document info exists, create a new one
       documentInfo = {
         elements: [],
         lastParsed: 0,
-        offsets:  [],
+        offsets: [],
       };
       this.documentInfoMap.set(document, documentInfo);
     }
@@ -257,11 +252,11 @@ export class XmlStructureTracker {
     }
     try {
       const text = document.getText();
-      const {patchedText, offsetMap} = patchUnclosedTags(text);
+      const { patchedText, offsetMap } = patchUnclosedTags(text);
       documentInfo.offsets = offsetMap;
 
       // Create a non-strict parser to be more tolerant of errors
-      const parser = sax.parser(false, {lowercase: true});
+      const parser = sax.parser(false, { lowercase: true });
 
       const elements: XmlElement[] = [];
       const openElementStack: XmlElement[] = [];
@@ -409,15 +404,13 @@ export class XmlStructureTracker {
     if (documentInfo === undefined) {
       this.documentInfoMap.delete(document);
       return [];
-    }
-    else {
+    } else {
       return documentInfo.elements;
     }
   }
 
   public attributeWithPosInName(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
-
       // Step 1: Find all elements containing the position
       const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
 
@@ -438,7 +431,6 @@ export class XmlStructureTracker {
 
   public attributeWithPosInValue(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
     try {
-
       // Step 1: Find all elements containing the position
       const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
 
@@ -463,7 +455,9 @@ export class XmlStructureTracker {
     const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
 
-    const elements = rootElements.filter((element) => element.range.contains(position)).sort((a, b) => a.range.contains(b.range) ? 1 : a.range.isEqual(b.range) ? 0 : -1);
+    const elements = rootElements
+      .filter((element) => element.range.contains(position))
+      .sort((a, b) => (a.range.contains(b.range) ? 1 : a.range.isEqual(b.range) ? 0 : -1));
     return elements.length > 0 ? elements[0] : undefined;
   }
 
@@ -497,6 +491,5 @@ export class XmlStructureTracker {
     // WeakMaps don't have a clear method, but we can recreate them
     this.documentInfoMap = new WeakMap();
   }
-
 }
 export const xmlTracker = new XmlStructureTracker();
