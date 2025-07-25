@@ -915,13 +915,14 @@ export class ScriptProperties {
     const uniqueCompletions = new Set<string>();
 
     const prefixSplitted = prefix.split('.');
-    const prefixSplittedLength = prefixSplitted.length; // Exclude the last part
+    const prefixSplittedLength = prefixSplitted.length;
+    const completionPosition = prefixSplittedLength - 1; // Exclude the last part
 
     for (const property of properties) {
       const nameSplitted = property.name.split('.');
 
-      if (nameSplitted.length > prefixSplittedLength) {
-        const completion = nameSplitted[prefixSplittedLength];
+      if (nameSplitted.length >= prefixSplittedLength) {
+        const completion = nameSplitted[completionPosition];
 
         // Add to unique completions
         if (completion) {
