@@ -129,9 +129,6 @@ class TypeEntry {
         }
       }
     }
-    if (this.supertype) {
-      result.push(...this.supertype.filterPropertiesByPrefix(prefix));
-    }
     return result;
   }
 
