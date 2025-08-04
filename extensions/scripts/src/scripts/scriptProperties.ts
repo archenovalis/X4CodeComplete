@@ -95,7 +95,7 @@ class TypeEntry {
 
   public filterPropertiesByPrefix(prefix: string, appendDot: boolean = true): PropertyEntry[] {
     const result: PropertyEntry[] = [];
-    const workingPrefix = appendDot ? prefix + '.' : prefix;
+    const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
     const prefixSplitted = prefix.split('.');
     const countItems = prefixSplitted.length;
     for (const [name, prop] of this.getProperties()) {
@@ -895,7 +895,7 @@ export class ScriptProperties {
       // Last part and nothing found - try without dot one more time
       const candidateProperties = contentType.filterPropertiesByPrefix(fullPropertyName, false);
       if (candidateProperties.length > 0) {
-        const completions = this.generateCompletionsFromProperties(candidateProperties, prefix);
+        const completions = this.generateCompletionsFromProperties(candidateProperties, fullPropertyName);
         return { isCompleted: false, completions };
       }
     }
