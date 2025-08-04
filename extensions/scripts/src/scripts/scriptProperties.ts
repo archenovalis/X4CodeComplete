@@ -21,7 +21,7 @@ class PropertyEntry {
   }
   public getDescription(): string[] {
     const result: string[] = [];
-    result.push(`**${this.name}**${this.details ? ': ' + this.details + '' : ''}`);
+    result.push(`**${this.name}**${this.details ? ': ' + this.details + '' : ''}`.replace(/([<>])/g, '\\$1')); // Escape < and > characters
     if (this.owner) {
       result.push(`*Property of*: **${this.owner.name}**`);
     }
@@ -1022,7 +1022,7 @@ export class ScriptProperties {
         uniqueCompletions.add(expandedCompletion);
 
         const description = [...property.getDescription()];
-        description.push(`*Expanded from*: \`<${placeholderName}>\` → \`${propName}\``);
+        description.push(`*Expanded from*: \`${keywordName}.<${placeholderName}>\` → \`${propName}\``);
 
         const item = ScriptProperties.createItem(expandedCompletion, description, vscode.CompletionItemKind.Property);
         items.set(expandedCompletion, item);
