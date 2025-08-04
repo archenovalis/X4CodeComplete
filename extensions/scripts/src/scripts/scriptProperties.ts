@@ -225,7 +225,7 @@ interface Datatype {
 export class ScriptProperties {
   private static readonly typesToIgnore: string[] = ['undefined', 'expression'];
   private static readonly regexLookupElement = /<([^>]+)>/;
-  private static readonly lookupsFixed: Map<string, string> = new Map<string, string>([['class', 'classlookup']]);
+  // Removed the incorrect lookup mapping for class->classlookup
 
   private xsdReference: XsdReference;
   private librariesFolder: string;
@@ -811,7 +811,7 @@ export class ScriptProperties {
 
       logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType.name}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart);
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema);
 
       if (result.completions) {
         // Add completions and stop analysis
@@ -843,7 +843,8 @@ export class ScriptProperties {
     part: string,
     contentType: KeywordEntry | TypeEntry,
     prefix: string,
-    isLastPart: boolean
+    isLastPart: boolean,
+    schema: string
   ): {
     isCompleted: boolean;
     completions?: Map<string, vscode.CompletionItem>;
@@ -895,7 +896,7 @@ export class ScriptProperties {
       // Last part and nothing found - try without dot one more time
       const candidateProperties = contentType.filterPropertiesByPrefix(fullContentOnStep, false);
       if (candidateProperties.length > 0) {
-        const completions = this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep);
+        const completions = this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, schema);
         return { isCompleted: false, completions };
       }
     }
@@ -907,7 +908,7 @@ export class ScriptProperties {
   /**
    * Generates completions from filtered properties by removing prefix and suffixes
    */
-  private generateCompletionsFromProperties(properties: PropertyEntry[], fullContentOnStep: string): Map<string, vscode.CompletionItem> {
+  private generateCompletionsFromProperties(properties: PropertyEntry[], fullContentOnStep: string, schema?: string): Map<string, vscode.CompletionItem> {
     const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
@@ -921,8 +922,14 @@ export class ScriptProperties {
       if (nameSplitted.length >= contentPartsCount) {
         const completion = nameSplitted[completionPosition];
 
-        // Add to unique completions
-        if (completion) {
+        // Check if completion contains placeholder pattern like <classname>
+        const placeholderMatch = completion?.match(ScriptProperties.regexLookupElement);
+
+        if (placeholderMatch && schema) {
+          // Expand placeholder to actual keyword values
+          this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, uniqueCompletions);
+        } else if (completion) {
+          // Add regular completion
           if (!uniqueCompletions.has(completion)) {
             uniqueCompletions.add(completion);
 
@@ -934,10 +941,16 @@ export class ScriptProperties {
               // Add property description if available
               const description = property.getDescription();
               if (description.length > 0) {
-                if (!(item.documentation as vscode.MarkdownString).value.includes('part of')) {
-                  item.documentation = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`).appendMarkdown(
-                    '* ' + (item.documentation as vscode.MarkdownString).value.split('  \n- ').join('  \n  - ').concat('\n\n')
-                  );
+                // Ensure documentation exists
+                if (!item.documentation) {
+                  item.documentation = new vscode.MarkdownString('');
+                }
+
+                const docString = item.documentation as vscode.MarkdownString;
+                if (!docString.value.includes('part of')) {
+                  const newDoc = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`);
+                  newDoc.appendMarkdown('* ' + docString.value.split('  \n- ').join('  \n  - ').concat('\n\n'));
+                  item.documentation = newDoc;
                 }
                 (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
               }
@@ -962,6 +975,79 @@ export class ScriptProperties {
         items.set(keyword.name, item);
       }
     }
+  }
+
+  /**
+   * Expands a placeholder in completion (like <classname>) to actual keyword values
+   */
+  private expandPlaceholderInCompletion(
+    completion: string,
+    property: PropertyEntry,
+    placeholderName: string,
+    schema: string,
+    items: Map<string, vscode.CompletionItem>,
+    uniqueCompletions: Set<string>
+  ): void {
+    logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
+
+    // Extract the keyword name from the property's result attribute
+    const keywordName = this.extractKeywordFromPropertyResult(property.details || '', placeholderName);
+
+    logger.debug(`Extracted keyword name: "${keywordName}" from details: "${property.details}"`);
+
+    if (!keywordName) {
+      logger.debug(`Could not extract keyword for placeholder <${placeholderName}>`);
+      return;
+    }
+
+    // Get the keyword entry
+    const keyword = this.getKeyword(keywordName, schema);
+    logger.debug(`Keyword "${keywordName}" found: ${keyword ? 'YES' : 'NO'}`);
+
+    if (!keyword) {
+      logger.debug(`Keyword "${keywordName}" not found for placeholder <${placeholderName}>`);
+      return;
+    }
+
+    // Get all properties from the keyword
+    const keywordProperties = keyword.getProperties();
+    logger.debug(`Keyword "${keywordName}" has ${keywordProperties.size} properties`);
+
+    let expandedCount = 0;
+    for (const [propName, _] of keywordProperties) {
+      // Replace the placeholder with the actual property name
+      const expandedCompletion = completion.replace(`<${placeholderName}>`, propName);
+
+      if (!uniqueCompletions.has(expandedCompletion)) {
+        uniqueCompletions.add(expandedCompletion);
+
+        const description = [...property.getDescription()];
+        description.push(`*Expanded from*: \`<${placeholderName}>\` → \`${propName}\``);
+
+        const item = ScriptProperties.createItem(expandedCompletion, description, vscode.CompletionItemKind.Property);
+        items.set(expandedCompletion, item);
+        expandedCount++;
+      }
+    }
+
+    logger.debug(`Expanded ${expandedCount} completions from placeholder <${placeholderName}>`);
+  }
+
+  /**
+   * Extracts keyword name from property result attribute
+   * Example: "Shortcut for isclass.{class.<classname>}" with placeholder "classname" -> "class"
+   */
+  private extractKeywordFromPropertyResult(resultText: string, placeholderName: string): string | undefined {
+    // Look for pattern like {keyword.<placeholderName>}
+    const pattern = new RegExp(`\\{([^.}]+)\\.\\<${placeholderName}\\>\\}`, 'i');
+    const match = resultText.match(pattern);
+
+    if (match && match[1]) {
+      // Return the keyword name directly - no mapping needed
+      return match[1];
+    }
+
+    return undefined;
   }
 
   public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
