@@ -184,6 +184,7 @@ interface ScriptProperty {
     name: string;
     result: string;
     type?: string;
+    ignoreprefix?: string;
   };
 }
 interface Keyword {
@@ -201,14 +202,7 @@ interface Keyword {
         source: string;
         select: string;
       };
-      property: [
-        {
-          $: {
-            name: string;
-            ignoreprefix?: string;
-          };
-        },
-      ];
+      property: [ScriptProperty];
     },
   ];
 }
@@ -303,16 +297,18 @@ export class ScriptProperties {
       const imp = e.import[0];
       const src = imp.$.source;
       const select = imp.$.select;
-      const tgtName = imp.property[0].$.name;
-      const ignorePrefix = imp.property[0].$.ignoreprefix === 'true';
-      this.processKeywordImport(name, src, select, tgtName, e.$.script, ignorePrefix);
+      this.processKeywordImport(name, src, select, imp.property[0], e.$.script);
     } else if (e.property !== undefined) {
       e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop, e.$.script));
     }
   }
 
-  private processKeywordImport(name: string, src: string, select: string, targetName: string, script?: string, ignorePrefix: boolean = false) {
+  private processKeywordImport(name: string, src: string, select: string, property: ScriptProperty, script?: string) {
     const srcPath = path.join(this.librariesFolder, src);
+    const targetName = property?.$?.name || '';
+    const ignorePrefix = property?.$?.ignoreprefix === 'true' || false;
+    const result = property?.$?.result || '';
+    const type = property?.$?.type || '';
     logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
     // Can't move on until we do this so use sync version
     const rawData = fs.readFileSync(srcPath).toString();
@@ -335,14 +331,27 @@ export class ScriptProperties {
       }
 
       if (matches.length > 0) {
-        matches.forEach((element: XPathResult) => {
-          this.addKeywordProperty(name, element.$[targetName.substring(1)], script, '', element.$['comment'], ignorePrefix);
-        });
+        for (const element of matches) {
+          const value = element.$[targetName.substring(1)];
+          let description = element.$['comment'] || '';
+          if (description === '') {
+            if (result && result[0] === '@') {
+              description = element.$[result.substring(1)] || '';
+            } else if (result && result.endsWith('/text()')) {
+              description =
+                xpath
+                  .find(element, '/' + result.replace('/text()', ''))
+                  .map((text) => (typeof text === 'string' ? text.replace(/[\r\n]/g, '').trim() : ''))
+                  .join('.') || '';
+            }
+          }
+          this.addKeywordProperty(name, value, script, type, description, ignorePrefix);
+        }
       } else if (name === 'class') {
         const xsdEnums = this.xsdReference.getSimpleTypeEnumerationValues(src.replace('.xsd', ''), name + 'lookup');
         if (xsdEnums) {
           for (const enumValue of xsdEnums.values) {
-            this.addKeywordProperty(name, enumValue, script, '', xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
+            this.addKeywordProperty(name, enumValue, script, type, xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
           }
         }
       } else {
