@@ -934,8 +934,8 @@ export class ScriptProperties {
         // Check if completion contains placeholder pattern like <classname>
         const placeholderMatch = completion?.match(ScriptProperties.regexLookupElement);
 
-        if (placeholderMatch && schema) {
-          // Expand placeholder to actual keyword values
+        if (nameSplitted.length === contentPartsCount && placeholderMatch && schema) {
+          // Expand placeholder to actual keyword values only if at the end of the property name
           this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, uniqueCompletions);
         } else if (completion) {
           // Add regular completion
