@@ -1000,13 +1000,13 @@ export class ScriptProperties {
     logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
 
     // Extract the keyword name from the property's result attribute
-    const keywordName = this.extractKeywordFromPropertyResult(property.details || '', placeholderName);
+    let keywordName = this.extractKeywordFromPropertyResult(property.details || '', placeholderName);
 
     logger.debug(`Extracted keyword name: "${keywordName}" from details: "${property.details}"`);
 
     if (!keywordName) {
-      logger.debug(`Could not extract keyword for placeholder <${placeholderName}>`);
-      return;
+      logger.debug(`Could not extract keyword for placeholder <${placeholderName}>. Will use placeholder instead.`);
+      keywordName = placeholderName;
     }
 
     // Get the keyword entry
