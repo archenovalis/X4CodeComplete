@@ -254,7 +254,11 @@ export class ScriptProperties {
   private readScriptProperties(filepath: string): void {
     logger.info('Attempting to read scriptproperties.xml');
     // Can't move on until we do this so use sync version
-    const rawData = fs.readFileSync(filepath).toString();
+    let rawData = fs.readFileSync(filepath).toString();
+
+    // Inject additional keyword definitions before processing
+    rawData = this.injectAdditionalKeywords(rawData);
+
     let parsedData: any;
 
     xml2js.parseString(rawData, (err: any, result: any) => {
@@ -273,6 +277,45 @@ export class ScriptProperties {
     }
 
     this.makeKeywords();
+  }
+
+  /**
+   * Injects additional keyword definitions into the raw XML data before processing
+   */
+  private injectAdditionalKeywords(rawData: string): string {
+    // Define additional keywords to inject
+    const additionalKeywords = `
+  <!-- Additional auto-injected keywords -->
+  <!-- Relation range lookup -->
+  <datatype name="relationrange" type="enum" />
+  
+  <keyword name="relationrange" description="Relation range lookup">
+    <import source="factions.xsd" select="/xs:schema/xs:simpleType[@name='relationrangelookup']//xs:enumeration">
+      <property name="@value" result="xs:annotation/xs:documentation/text()" type="relationrange" />
+    </import>
+  </keyword>
+
+  <!-- License type lookup -->
+  <datatype name="licencetype" type="enum" />
+  <keyword name="licencetype" description="License type lookup">
+    <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='licencelookup']//xs:enumeration">
+      <property name="@value" result="xs:annotation/xs:documentation/text()" type="licencetype" />
+    </import>
+  </keyword>
+  `;
+
+    // Find the closing tag of scriptproperties and insert before it
+    const closingTag = '</scriptproperties>';
+    const insertPosition = rawData.lastIndexOf(closingTag);
+
+    if (insertPosition !== -1) {
+      const modifiedData = rawData.slice(0, insertPosition) + additionalKeywords + '\n\n' + rawData.slice(insertPosition);
+      logger.info('Injected additional keywords: relationrange');
+      return modifiedData;
+    } else {
+      logger.warn('Could not find closing scriptproperties tag - additional keywords not injected');
+      return rawData;
+    }
   }
 
   private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty, script?: string) {
