@@ -849,12 +849,12 @@ export class ScriptProperties {
     completions?: Map<string, vscode.CompletionItem>;
     newContentType?: KeywordEntry | TypeEntry;
   } {
-    const fullPropertyName = prefix ? `${prefix}.${part}` : part;
+    const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
 
     // Try to find exact property match
-    if (contentType.hasProperty(fullPropertyName)) {
-      const property = contentType.getProperty(fullPropertyName)!;
-      logger.debug(`Found exact property: "${fullPropertyName}", type: "${property.type}"`);
+    if (contentType.hasProperty(fullContentOnStep)) {
+      const property = contentType.getProperty(fullContentOnStep)!;
+      logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
 
       if (isLastPart) {
         // Last part and found - provide next level completions if property has a type
@@ -879,10 +879,10 @@ export class ScriptProperties {
     }
 
     // Property not found exactly - try filtering by prefix
-    const filteredProperties = contentType.filterPropertiesByPrefix(fullPropertyName, true);
+    const filteredProperties = contentType.filterPropertiesByPrefix(fullContentOnStep, true);
 
     if (filteredProperties.length > 0) {
-      logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullPropertyName}"`);
+      logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
 
       if (!isLastPart) {
         // Not last part - this is a complex property, continue with same contentType
@@ -893,9 +893,9 @@ export class ScriptProperties {
     // No properties found
     if (isLastPart) {
       // Last part and nothing found - try without dot one more time
-      const candidateProperties = contentType.filterPropertiesByPrefix(fullPropertyName, false);
+      const candidateProperties = contentType.filterPropertiesByPrefix(fullContentOnStep, false);
       if (candidateProperties.length > 0) {
-        const completions = this.generateCompletionsFromProperties(candidateProperties, fullPropertyName);
+        const completions = this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep);
         return { isCompleted: false, completions };
       }
     }
@@ -907,18 +907,18 @@ export class ScriptProperties {
   /**
    * Generates completions from filtered properties by removing prefix and suffixes
    */
-  private generateCompletionsFromProperties(properties: PropertyEntry[], prefix: string): Map<string, vscode.CompletionItem> {
+  private generateCompletionsFromProperties(properties: PropertyEntry[], fullContentOnStep: string): Map<string, vscode.CompletionItem> {
     const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
-    const prefixSplitted = prefix.split('.');
-    const prefixSplittedLength = prefixSplitted.length;
-    const completionPosition = prefixSplittedLength - 1; // Exclude the last part
+    const contentParts = fullContentOnStep.split('.');
+    const contentPartsCount = contentParts.length;
+    const completionPosition = contentPartsCount - 1; // Exclude the last part
 
     for (const property of properties) {
       const nameSplitted = property.name.split('.');
 
-      if (nameSplitted.length >= prefixSplittedLength) {
+      if (nameSplitted.length >= contentPartsCount) {
         const completion = nameSplitted[completionPosition];
 
         // Add to unique completions
