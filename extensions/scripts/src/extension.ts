@@ -177,7 +177,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize script analysis services
 
   xsdReference = new XsdReference(configManager.librariesPath);
-  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), xsdReference);
+  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
   scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
   scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
 

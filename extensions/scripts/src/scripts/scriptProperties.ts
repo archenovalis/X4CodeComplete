@@ -3,7 +3,8 @@ import { logger } from '../logger/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as xml2js from 'xml2js';
-import * as xpath from 'xml2js-xpath';
+import * as xpath from 'xpath';
+import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
 import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
 import { XsdReference } from 'xsd-lookup';
@@ -176,8 +177,89 @@ export class ScriptProperties {
   private static readonly typesToIgnore: string[] = ['undefined', 'expression'];
   private static readonly regexLookupElement = /<([^>]+)>/;
   // Removed the incorrect lookup mapping for class->classlookup
+  // Define additional keywords to inject
+  private static readonly additionalKeywords: string = `
+    <!-- Additional auto-injected keywords -->
+    <!-- Relation range lookup -->
+    <datatype name="relationrange" type="enum" />
+    
+    <keyword name="relationrange" description="Relation range lookup">
+      <import source="factions.xsd" select="/xs:schema/xs:simpleType[@name='relationrangelookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="relationrange" />
+      </import>
+    </keyword>
 
-  private xsdReference: XsdReference;
+    <!-- License type lookup -->
+    <datatype name="licencetype" type="enum" />
+    <keyword name="licencetype" description="License type lookup">
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='licencelookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="licencetype" />
+      </import>
+    </keyword>
+
+    <!-- Component state lookup -->
+    <keyword name="state" description="Component state lookup">
+      <property name="all" result="all possible component states" type="componentstate" />
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='componentstatelookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="componentstate" />
+      </import>
+    </keyword>
+
+    <!-- Traffic levels -->
+    <datatype name="trafficlevel" type="enum" />
+    <keyword name="trafficlevel" description="Traffic level lookup">
+      <property name="normal" result="normal traffic level" type="trafficlevel" />
+      <property name="high" result="high traffic level" type="trafficlevel" />
+      <property name="gridlock" result="gridlock traffic level" type="trafficlevel" />
+    </keyword>
+
+    <!-- Mood type lookup -->
+    <datatype name="moodtype" type="enum" />
+    <keyword name="moodtype" description="Mood type lookup">
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='moodtypelookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="moodtype" />
+      </import>
+    </keyword>
+
+    <!-- Info library type lookup -->
+    <datatype name="infolibrarytype" type="enum" />
+    <keyword name="infolibrarytype" description="Info library type lookup">
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='infolibrarytypelookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="infolibrarytype" />
+      </import>
+    </keyword>
+
+    <!-- Production method lookup -->
+    <datatype name="productionmethod" type="enum" />
+    <keyword name="productionmethod" description="Production method lookup">
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='buildmethodlookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="productionmethod" />
+      </import>
+    </keyword>
+
+    <!-- Debug filter -->
+    <datatype name="debugfilter" type="enum" />
+    <keyword name="debugfilter" description="Debug filter lookup">
+      <property name="error" result="error debug filter" type="debugfilter" />
+      <property name="general" result="general debug filter" type="debugfilter" />
+      <property name="scripts" result="scripts debug filter" type="debugfilter" />
+      <property name="scripts_verbose" result="scripts_verbose debug filter" type="debugfilter" />
+      <property name="economy_verbose" result="economy_verbose debug filter" type="debugfilter" />
+      <property name="combat" result="combat debug filter" type="debugfilter" />
+      <property name="savegame" result="savegame debug filter" type="debugfilter" />
+      <property name="none" result="none debug filter" type="debugfilter" />
+    </keyword>
+
+    <!-- Input function lookup -->
+    <datatype name="inputfunction" type="enum" />
+    <keyword name="inputfunction" description="Input function lookup">
+      <import source="inputmap.xml" select="/inputmap/action[not(@removed)]">
+        <property name="@id" type="inputfunction" />
+      </import>
+    </keyword>
+  `;
+
+  private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
   private scriptPropertiesPath: string;
   private keywords: Keyword[] = [];
@@ -189,14 +271,14 @@ export class ScriptProperties {
   private keywordItems: vscode.CompletionItem[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
 
-  constructor(librariesFolder: string, xsdReference: XsdReference) {
+  constructor(librariesFolder: string) {
     this.librariesFolder = librariesFolder;
     this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
-    this.xsdReference = xsdReference;
     this.readScriptProperties(this.scriptPropertiesPath);
   }
 
   dispose(): void {
+    this.domParser = undefined;
     this.keywords = [];
     this.datatypes = [];
     this.dict.clear();
@@ -239,34 +321,13 @@ export class ScriptProperties {
    * Injects additional keyword definitions into the raw XML data before processing
    */
   private injectAdditionalKeywords(rawData: string): string {
-    // Define additional keywords to inject
-    const additionalKeywords = `
-  <!-- Additional auto-injected keywords -->
-  <!-- Relation range lookup -->
-  <datatype name="relationrange" type="enum" />
-  
-  <keyword name="relationrange" description="Relation range lookup">
-    <import source="factions.xsd" select="/xs:schema/xs:simpleType[@name='relationrangelookup']//xs:enumeration">
-      <property name="@value" result="xs:annotation/xs:documentation/text()" type="relationrange" />
-    </import>
-  </keyword>
-
-  <!-- License type lookup -->
-  <datatype name="licencetype" type="enum" />
-  <keyword name="licencetype" description="License type lookup">
-    <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='licencelookup']//xs:enumeration">
-      <property name="@value" result="xs:annotation/xs:documentation/text()" type="licencetype" />
-    </import>
-  </keyword>
-  `;
-
     // Find the closing tag of scriptproperties and insert before it
     const closingTag = '</scriptproperties>';
     const insertPosition = rawData.lastIndexOf(closingTag);
 
     if (insertPosition !== -1) {
-      const modifiedData = rawData.slice(0, insertPosition) + additionalKeywords + '\n\n' + rawData.slice(insertPosition);
-      logger.info('Injected additional keywords: relationrange');
+      const modifiedData = rawData.slice(0, insertPosition) + ScriptProperties.additionalKeywords + '\n\n' + rawData.slice(insertPosition);
+      logger.info('Injected additional keywords.');
       return modifiedData;
     } else {
       logger.warn('Could not find closing scriptproperties tag - additional keywords not injected');
@@ -297,7 +358,8 @@ export class ScriptProperties {
       const src = imp.$.source;
       const select = imp.$.select;
       this.processKeywordImport(name, src, select, imp.property[0], e.$.script);
-    } else if (e.property !== undefined) {
+    }
+    if (e.property !== undefined) {
       e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop, e.$.script));
     }
   }
@@ -311,127 +373,50 @@ export class ScriptProperties {
     logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
     // Can't move on until we do this so use sync version
     const rawData = fs.readFileSync(srcPath).toString();
-    let parsedData: any;
-    xml2js.parseString(rawData, function (err: any, result: any) {
-      if (err !== null) {
-        vscode.window.showErrorMessage(`Error during parsing of ${src}: ${err}`);
-      }
-      parsedData = result;
-    });
+    const parsedData = this.domParser.parseFromString(rawData, 'text/xml');
     if (parsedData !== undefined) {
-      let matches: XPathResult[] = [];
+      const process = src.endsWith('.xsd') ? xpath.useNamespaces({ xs: 'http://www.w3.org/2001/XMLSchema' }) : xpath.useNamespaces({});
+      const matches = process(select, parsedData as any);
 
-      // Check if the select query contains 'or' operator and split it
-      if (select.includes(' or ')) {
-        matches = this.handleComplexXPathQuery(parsedData, select, targetName);
-      } else {
-        // Handle simple query as before
-        matches = xpath.find(parsedData, select + '/' + targetName);
-      }
+      if (Array.isArray(matches) && matches.length > 0) {
+        for (const item of matches) {
+          let value = '';
+          let description = '';
 
-      if (matches.length > 0) {
-        for (const element of matches) {
-          const value = element.$[targetName.substring(1)];
-          let description = element.$['comment'] || '';
-          if (description === '') {
-            if (result && result[0] === '@') {
-              description = element.$[result.substring(1)] || '';
-            } else if (result && result.endsWith('/text()')) {
-              description =
-                xpath
-                  .find(element, '/' + result.replace('/text()', ''))
-                  .map((text) => (typeof text === 'string' ? text.replace(/[\r\n]/g, '').trim() : ''))
-                  .join('.') || '';
+          // If element is a DOM node, extract attribute or text content
+          if (item.nodeType === Node.ELEMENT_NODE) {
+            const element = item as unknown as Element;
+            // ELEMENT_NODE
+            // Get attribute value for targetName (e.g., "@value" -> "value")
+            if (targetName.startsWith('@')) {
+              value = element.getAttribute(targetName.substring(1)) || '';
+            } else {
+              // Try to get child node text content
+              const child = Array.from(element.childNodes).find((n: any) => n.nodeType === 1 && n.nodeName === targetName);
+              value = child && (child as Element).textContent ? (child as Element).textContent.trim() : '';
+            }
+
+            // Try to get comment/description
+            if (element.hasAttribute('comment')) {
+              description = element.getAttribute('comment') || '';
+            } else if (result && result[0] === '@') {
+              description = element.getAttribute(result.substring(1)) || '';
+            } else if (result) {
+              const descriptionMatches = process(result, item);
+              if (Array.isArray(descriptionMatches) && descriptionMatches.length > 0 && descriptionMatches[0].nodeType === Node.TEXT_NODE) {
+                description = descriptionMatches
+                  .filter((node: any) => node.nodeType === Node.TEXT_NODE && typeof (node as Text).data === 'string')
+                  .map((node: any) => (node as Text).data.replace(/[\r\n]/g, '').trim())
+                  .join('. ');
+              }
             }
           }
           this.addKeywordProperty(name, value, script, type, description, ignorePrefix);
-        }
-      } else if (name === 'class') {
-        const xsdEnums = this.xsdReference.getSimpleTypeEnumerationValues(src.replace('.xsd', ''), name + 'lookup');
-        if (xsdEnums) {
-          for (const enumValue of xsdEnums.values) {
-            this.addKeywordProperty(name, enumValue, script, type, xsdEnums.annotations.get(enumValue) || '', ignorePrefix);
-          }
         }
       } else {
         logger.warn('No matches found for import: ' + select + '/' + targetName + ' in ' + src);
       }
     }
-  }
-
-  /**
-   * Handles complex XPath queries that contain 'or' operators by splitting them into simpler queries
-   * @param parsedData The parsed XML data
-   * @param select The XPath select string that may contain 'or' operators
-   * @param targetName The target attribute or element name
-   * @returns Array of matching XPath results
-   */
-  private handleComplexXPathQuery(parsedData: any, select: string, targetName: string): XPathResult[] {
-    const allMatches: XPathResult[] = [];
-
-    try {
-      // Split complex XPath queries containing 'or' operator
-      // Example: "/scriptproperties/datatype[@type='enum' or @type='dbdata']"
-      // becomes: ["/scriptproperties/datatype[@type='enum']", "/scriptproperties/datatype[@type='dbdata']"]
-
-      const orSplitQueries = this.splitXPathOrQuery(select);
-
-      for (const query of orSplitQueries) {
-        logger.debug(`Processing split query: ${query}/${targetName}`);
-        const matches = xpath.find(parsedData, query + '/' + targetName);
-        allMatches.push(...matches);
-      }
-
-      logger.debug(`Total matches found from ${orSplitQueries.length} split queries: ${allMatches.length}`);
-    } catch (error) {
-      logger.error('Error processing complex XPath query:', error);
-      // Fallback: try the original query as-is
-      try {
-        const fallbackMatches = xpath.find(parsedData, select + '/' + targetName);
-        allMatches.push(...fallbackMatches);
-      } catch (fallbackError) {
-        logger.error('Fallback query also failed:', fallbackError);
-      }
-    }
-
-    return allMatches;
-  }
-
-  /**
-   * Splits an XPath query containing 'or' operators into multiple simpler queries
-   * @param xpathQuery The XPath query string to split
-   * @returns Array of simpler XPath query strings
-   */
-  private splitXPathOrQuery(xpathQuery: string): string[] {
-    const queries: string[] = [];
-
-    // Handle queries like "/scriptproperties/datatype[@type='enum' or @type='dbdata']"
-    const orPattern = /\[(.*?)\]/g;
-    let match;
-
-    while ((match = orPattern.exec(xpathQuery)) !== null) {
-      const predicateContent = match[1];
-
-      if (predicateContent.includes(' or ')) {
-        // Split the predicate on ' or '
-        const orConditions = predicateContent.split(' or ').map((condition) => condition.trim());
-
-        // Create separate queries for each condition
-        for (const condition of orConditions) {
-          const newQuery = xpathQuery.replace(match[0], `[${condition}]`);
-          queries.push(newQuery);
-        }
-
-        return queries; // Return early for the first 'or' found
-      }
-    }
-
-    // If no 'or' operator found, return the original query
-    if (queries.length === 0) {
-      queries.push(xpathQuery);
-    }
-
-    return queries;
   }
 
   private processDatatype(rawData: any, e: Datatype) {
@@ -1017,9 +1002,11 @@ export class ScriptProperties {
       // Replace the placeholder with the actual property name
       const expandedCompletion = completion.replace(`<${placeholderName}>`, propName);
       const description = [...propertyDescription];
-      description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
-      if (prop.details) {
-        description.push(`**${propName}**: ${prop.details}`);
+      if (propName !== `<${placeholderName}>`) {
+        description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
+        if (prop.details) {
+          description.push(`**${propName}**: ${prop.details}`);
+        }
       }
       this.addToUniqueCompletions(expandedCompletion, items, uniqueCompletions, description);
     }
