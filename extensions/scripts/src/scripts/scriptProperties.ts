@@ -201,6 +201,14 @@ export class ScriptProperties {
       </import>
     </keyword>
 
+    <!-- Defensible alert level lookup -->
+    <datatype name="defensiblealertlevel" type="enum" />
+    <keyword name="defensiblealertlevel" description="Defensible alert level lookup">
+      <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='alertlevellookup']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="defensiblealertlevel" />
+      </import>
+    </keyword>
+
     <!-- Traffic levels -->
     <datatype name="trafficlevel" type="enum" />
     <keyword name="trafficlevel" description="Traffic level lookup">
@@ -249,6 +257,7 @@ export class ScriptProperties {
       </import>
     </keyword>
   `;
+  private static readonly enumsReAssigned: Map<string, string> = new Map<string, string>([['isalertlevel.<alertlevel>', 'defensiblealertlevel']]);
 
   private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
@@ -976,7 +985,7 @@ export class ScriptProperties {
     logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
 
     // Get the keyword item from the property's result attribute or directly from the placeholder name
-    const keyword = this.getKeywordForPlaceholder(property.details || '', placeholderName, schema);
+    const keyword = this.getKeywordForPlaceholder(property, placeholderName, schema);
 
     if (!keyword) {
       logger.debug(`Could not extract keyword for placeholder <${placeholderName}>.`);
@@ -1009,16 +1018,21 @@ export class ScriptProperties {
    * Extracts keyword name from property result attribute
    * Example: "Shortcut for isclass.{class.<classname>}" with placeholder "classname" -> "class"
    */
-  private getKeywordForPlaceholder(resultText: string, placeholderName: string, schema: string): KeywordEntry | undefined {
+  private getKeywordForPlaceholder(property: PropertyEntry, placeholderName: string, schema: string): KeywordEntry | undefined {
     // Look for pattern like {keyword.<placeholderName>}
-    const pattern = new RegExp(`\\{([^.}]+)\\.\\<${placeholderName}\\>\\}`, 'i');
-    const match = resultText.match(pattern);
+    const resultText = property.details || '';
+    if (resultText) {
+      const pattern = new RegExp(`\\{([^.}]+)\\.\\<${placeholderName}\\>\\}`, 'i');
+      const match = resultText.match(pattern);
 
-    if (match && match[1]) {
-      // Return the KeywordEntry if found
-      return this.getKeyword(match[1], schema);
+      if (match && match[1]) {
+        // Return the KeywordEntry if found
+        return this.getKeyword(match[1], schema);
+      }
     }
-
+    if (ScriptProperties.enumsReAssigned.has(property.name)) {
+      placeholderName = ScriptProperties.enumsReAssigned.get(property.name);
+    }
     // Fallback: try to find a keyword with the placeholder name
     return this.getKeyword(placeholderName, schema) || undefined;
   }
@@ -1067,7 +1081,7 @@ export class ScriptProperties {
           const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
           if (placeholderMatch && schema) {
             // Get the keyword item from the property's result attribute or directly from the placeholder name
-            const keyword = this.getKeywordForPlaceholder(prop.details || '', placeholderMatch[1], schema);
+            const keyword = this.getKeywordForPlaceholder(prop, placeholderMatch[1], schema);
 
             if (keyword && keyword.hasProperty(prefixPart)) {
               logger.debug(`Matched placeholder <${placeholderMatch[1]}> in "${namePart}" with prefix part "${prefixPart}"`);
