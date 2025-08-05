@@ -977,7 +977,7 @@ export class ScriptProperties {
         // Check if completion contains placeholder pattern like <classname>
         const placeholderMatch = completion?.match(ScriptProperties.regexLookupElement);
 
-        if (nameSplitted.length === contentPartsCount && placeholderMatch && schema) {
+        if (placeholderMatch && schema) {
           // Expand placeholder to actual keyword values only if at the end of the property name
           this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, uniqueCompletions);
         } else if (completion) {
@@ -1043,27 +1043,18 @@ export class ScriptProperties {
     logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
 
     // Extract the keyword name from the property's result attribute
-    let keywordName = this.extractKeywordFromPropertyResult(property.details || '', placeholderName);
-
-    logger.debug(`Extracted keyword name: "${keywordName}" from details: "${property.details}"`);
-
-    if (!keywordName) {
-      logger.debug(`Could not extract keyword for placeholder <${placeholderName}>. Will use placeholder instead.`);
-      keywordName = placeholderName;
-    }
-
-    // Get the keyword entry
-    const keyword = this.getKeyword(keywordName, schema);
-    logger.debug(`Keyword "${keywordName}" found: ${keyword ? 'YES' : 'NO'}`);
+    const keyword = this.getKeywordForPlaceholder(property.details || '', placeholderName, schema);
 
     if (!keyword) {
-      logger.debug(`Keyword "${keywordName}" not found for placeholder <${placeholderName}>`);
+      logger.debug(`Could not extract keyword for placeholder <${placeholderName}>.`);
       return;
     }
 
+    logger.debug(`Extracted keyword name: "${keyword?.name}" for ${placeholderName} with details: "${property.details}"`);
+
     // Get all properties from the keyword
     const keywordProperties = keyword.getProperties();
-    logger.debug(`Keyword "${keywordName}" has ${keywordProperties.size} properties`);
+    logger.debug(`Keyword "${keyword.name}" has ${keywordProperties.size} properties`);
 
     let expandedCount = 0;
     for (const [propName, _] of keywordProperties) {
@@ -1074,7 +1065,7 @@ export class ScriptProperties {
         uniqueCompletions.add(expandedCompletion);
 
         const description = [...property.getDescription()];
-        description.push(`*Expanded from*: \`${keywordName}.<${placeholderName}>\` → \`${propName}\``);
+        description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
 
         const item = ScriptProperties.createItem(expandedCompletion, description, vscode.CompletionItemKind.Property);
         items.set(expandedCompletion, item);
@@ -1089,17 +1080,18 @@ export class ScriptProperties {
    * Extracts keyword name from property result attribute
    * Example: "Shortcut for isclass.{class.<classname>}" with placeholder "classname" -> "class"
    */
-  private extractKeywordFromPropertyResult(resultText: string, placeholderName: string): string | undefined {
+  private getKeywordForPlaceholder(resultText: string, placeholderName: string, schema: string): KeywordEntry | undefined {
     // Look for pattern like {keyword.<placeholderName>}
     const pattern = new RegExp(`\\{([^.}]+)\\.\\<${placeholderName}\\>\\}`, 'i');
     const match = resultText.match(pattern);
 
     if (match && match[1]) {
-      // Return the keyword name directly - no mapping needed
-      return match[1];
+      // Return the KeywordEntry if found
+      return this.getKeyword(match[1], schema);
     }
 
-    return undefined;
+    // Fallback: try to find a keyword with the placeholder name
+    return this.getKeyword(placeholderName, schema) || undefined;
   }
 
   public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
