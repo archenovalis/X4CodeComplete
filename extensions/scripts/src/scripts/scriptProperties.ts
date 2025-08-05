@@ -84,52 +84,8 @@ class TypeEntry {
   public getProperty(name: string): PropertyEntry | undefined {
     if (this.properties.has(name)) {
       return this.properties.get(name);
-    } else {
-      const filtered = this.filterPropertiesByPrefix(name, true);
-      if (filtered.length === 1 && name.split('.').length === filtered[0].name.split('.').length) {
-        return filtered[0];
-      }
     }
     return this.supertype ? this.supertype.getProperty(name) : undefined;
-  }
-
-  public filterPropertiesByPrefix(prefix: string, appendDot: boolean = true): PropertyEntry[] {
-    const result: PropertyEntry[] = [];
-    const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
-    const prefixSplitted = prefix.split('.');
-    const countItems = prefixSplitted.length;
-    for (const [name, prop] of this.getProperties()) {
-      if (name.startsWith(workingPrefix)) {
-        result.push(prop);
-      } else {
-        const nameSplitted = name.split('.');
-        if (nameSplitted.length >= countItems) {
-          const maxItems = appendDot ? countItems : countItems - 1;
-          let i = 0;
-          let matched = true;
-          for (i = 0; i < maxItems; i++) {
-            if (
-              prefixSplitted[i] !== nameSplitted[i] &&
-              (prefixSplitted[i].length <= 2 ||
-                nameSplitted[i].length <= 2 ||
-                !prefixSplitted[i].startsWith('{') ||
-                !nameSplitted[i].startsWith('{') ||
-                !prefixSplitted[i].endsWith('}') ||
-                !nameSplitted[i].endsWith('}'))
-            ) {
-              // If the parts do not match, break
-              matched = false;
-              break;
-            }
-          }
-          if (matched) {
-            // If the last part matches and there are more parts, add it
-            result.push(prop);
-          }
-        }
-      }
-    }
-    return result;
   }
 
   public getDescription(): string[] {
@@ -931,8 +887,8 @@ export class ScriptProperties {
       }
     }
 
-    // Property not found exactly - try filtering by prefix
-    const filteredProperties = contentType.filterPropertiesByPrefix(fullContentOnStep, true);
+    // Property not found exactly - try filtering by prefix using enhanced method
+    const filteredProperties = this.filterPropertiesByPrefix(contentType, fullContentOnStep, true, schema);
 
     if (filteredProperties.length > 0) {
       logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
@@ -945,8 +901,8 @@ export class ScriptProperties {
 
     // No properties found
     if (isLastPart) {
-      // Last part and nothing found - try without dot one more time
-      const candidateProperties = contentType.filterPropertiesByPrefix(fullContentOnStep, false);
+      // Last part and nothing found - try without dot one more time using enhanced method
+      const candidateProperties = this.filterPropertiesByPrefix(contentType, fullContentOnStep, false, schema);
       if (candidateProperties.length > 0) {
         const completions = this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, schema);
         return { isCompleted: false, completions };
@@ -1042,7 +998,7 @@ export class ScriptProperties {
   ): void {
     logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
 
-    // Extract the keyword name from the property's result attribute
+    // Get the keyword item from the property's result attribute or directly from the placeholder name
     const keyword = this.getKeywordForPlaceholder(property.details || '', placeholderName, schema);
 
     if (!keyword) {
@@ -1092,6 +1048,72 @@ export class ScriptProperties {
 
     // Fallback: try to find a keyword with the placeholder name
     return this.getKeyword(placeholderName, schema) || undefined;
+  }
+
+  public filterPropertiesByPrefix(contentType: KeywordEntry | TypeEntry, prefix: string, appendDot: boolean = true, schema?: string): PropertyEntry[] {
+    const result: PropertyEntry[] = [];
+    const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
+    const prefixSplitted = prefix.split('.');
+    const countItems = prefixSplitted.length;
+
+    for (const [name, prop] of contentType.getProperties()) {
+      // Check for exact prefix match first
+      if (name.startsWith(workingPrefix)) {
+        result.push(prop);
+        continue;
+      }
+
+      // Check for placeholder expansion in middle parts
+      const nameSplitted = name.split('.');
+      if (nameSplitted.length >= countItems) {
+        const maxItems = appendDot ? countItems : countItems - 1;
+        let matched = true;
+
+        for (let i = 0; i < maxItems; i++) {
+          const prefixPart = prefixSplitted[i];
+          const namePart = nameSplitted[i];
+
+          // Direct match
+          if (prefixPart === namePart) {
+            continue;
+          }
+
+          // Check for parameter matching like {$component} and {$faction}
+          if (
+            prefixPart.length > 2 &&
+            namePart.length > 2 &&
+            prefixPart.startsWith('{') &&
+            namePart.startsWith('{') &&
+            prefixPart.endsWith('}') &&
+            namePart.endsWith('}')
+          ) {
+            continue;
+          }
+
+          // Check for placeholder expansion in middle parts
+          const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
+          if (placeholderMatch && schema) {
+            // Get the keyword item from the property's result attribute or directly from the placeholder name
+            const keyword = this.getKeywordForPlaceholder(prop.details || '', placeholderMatch[1], schema);
+
+            if (keyword && keyword.hasProperty(prefixPart)) {
+              logger.debug(`Matched placeholder <${placeholderMatch[1]}> in "${namePart}" with prefix part "${prefixPart}"`);
+              continue;
+            }
+          }
+
+          // No match found
+          matched = false;
+          break;
+        }
+
+        if (matched) {
+          result.push(prop);
+        }
+      }
+    }
+
+    return result;
   }
 
   public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
