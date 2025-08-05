@@ -132,10 +132,6 @@ class KeywordEntry extends TypeEntry {
   }
 }
 
-interface XPathResult {
-  $: { [key: string]: string };
-}
-
 interface ScriptProperty {
   $: {
     name: string;
@@ -208,9 +204,9 @@ export class ScriptProperties {
     <!-- Traffic levels -->
     <datatype name="trafficlevel" type="enum" />
     <keyword name="trafficlevel" description="Traffic level lookup">
-      <property name="normal" result="normal traffic level" type="trafficlevel" />
-      <property name="high" result="high traffic level" type="trafficlevel" />
-      <property name="gridlock" result="gridlock traffic level" type="trafficlevel" />
+      <import source="parameters.xsd" select="/xs:schema//xs:element[@name='landing']//xs:attribute[@name='traffic']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="componentstate" />
+      </import>
     </keyword>
 
     <!-- Mood type lookup -->
@@ -240,14 +236,9 @@ export class ScriptProperties {
     <!-- Debug filter -->
     <datatype name="debugfilter" type="enum" />
     <keyword name="debugfilter" description="Debug filter lookup">
-      <property name="error" result="error debug filter" type="debugfilter" />
-      <property name="general" result="general debug filter" type="debugfilter" />
-      <property name="scripts" result="scripts debug filter" type="debugfilter" />
-      <property name="scripts_verbose" result="scripts_verbose debug filter" type="debugfilter" />
-      <property name="economy_verbose" result="economy_verbose debug filter" type="debugfilter" />
-      <property name="combat" result="combat debug filter" type="debugfilter" />
-      <property name="savegame" result="savegame debug filter" type="debugfilter" />
-      <property name="none" result="none debug filter" type="debugfilter" />
+      <import source="common.xsd" select="/xs:schema/xs:group[@name='commonactions']//xs:element[@name='debug_text']//xs:attribute[@name='filter']//xs:enumeration">
+        <property name="@value" result="xs:annotation/xs:documentation/text()" type="debugfilter" />
+      </import>
     </keyword>
 
     <!-- Input function lookup -->
