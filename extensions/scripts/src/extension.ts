@@ -189,7 +189,7 @@ export function activate(context: vscode.ExtensionContext) {
   const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
   // Register completion provider with trigger characters
-  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '<');
+  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '$');
   context.subscriptions.push(disposableCompleteProvider);
 
   // Register definition provider for go-to-definition functionality
