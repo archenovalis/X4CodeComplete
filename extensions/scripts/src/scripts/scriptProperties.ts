@@ -937,39 +937,40 @@ export class ScriptProperties {
           // Expand placeholder to actual keyword values only if at the end of the property name
           this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, uniqueCompletions);
         } else if (completion) {
-          // Add regular completion
-          if (!uniqueCompletions.has(completion)) {
-            uniqueCompletions.add(completion);
-
-            const item = ScriptProperties.createItem(completion, property.getDescription(), vscode.CompletionItemKind.Property);
-            items.set(completion, item);
-          } else {
-            const item = items.get(completion);
-            if (item) {
-              // Add property description if available
-              const description = property.getDescription();
-              if (description.length > 0) {
-                // Ensure documentation exists
-                if (!item.documentation) {
-                  item.documentation = new vscode.MarkdownString('');
-                }
-
-                const docString = item.documentation as vscode.MarkdownString;
-                if (!docString.value.includes('part of')) {
-                  const newDoc = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`);
-                  newDoc.appendMarkdown('* ' + docString.value.split('  \n- ').join('  \n  - ').concat('\n\n'));
-                  item.documentation = newDoc;
-                }
-                (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
-              }
-            }
-          }
+          this.addToUniqueCompletions(completion, items, uniqueCompletions, property.getDescription());
         }
       }
     }
 
     logger.debug(`Generated ${items.size} unique completions from ${properties.length} properties`);
     return items;
+  }
+
+  private addToUniqueCompletions(completion: string, items: Map<string, vscode.CompletionItem>, uniqueCompletions: Set<string>, description: string[]): void {
+    if (!uniqueCompletions.has(completion)) {
+      uniqueCompletions.add(completion);
+      const item = ScriptProperties.createItem(completion, description, vscode.CompletionItemKind.Property);
+      items.set(completion, item);
+    } else {
+      const item = items.get(completion);
+      if (item) {
+        // Add property description if available
+        if (description.length > 0) {
+          // Ensure documentation exists
+          if (!item.documentation) {
+            item.documentation = new vscode.MarkdownString('');
+          }
+
+          const docString = item.documentation as vscode.MarkdownString;
+          if (!docString.value.includes('part of')) {
+            const newDoc = new vscode.MarkdownString(`**${completion}** is a part of *"complex" property*:\n\n`);
+            newDoc.appendMarkdown('* ' + docString.value.split('  \n- ').join('  \n  - ').concat('\n\n'));
+            item.documentation = newDoc;
+          }
+          (item.documentation as vscode.MarkdownString).appendMarkdown('* ' + description.join('  \n  - ').concat('\n\n'));
+        }
+      }
+    }
   }
 
   /**
@@ -1011,25 +1012,19 @@ export class ScriptProperties {
     // Get all properties from the keyword
     const keywordProperties = keyword.getProperties();
     logger.debug(`Keyword "${keyword.name}" has ${keywordProperties.size} properties`);
-
-    let expandedCount = 0;
-    for (const [propName, _] of keywordProperties) {
+    const propertyDescription = property.getDescription();
+    for (const [propName, prop] of keywordProperties) {
       // Replace the placeholder with the actual property name
       const expandedCompletion = completion.replace(`<${placeholderName}>`, propName);
-
-      if (!uniqueCompletions.has(expandedCompletion)) {
-        uniqueCompletions.add(expandedCompletion);
-
-        const description = [...property.getDescription()];
-        description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
-
-        const item = ScriptProperties.createItem(expandedCompletion, description, vscode.CompletionItemKind.Property);
-        items.set(expandedCompletion, item);
-        expandedCount++;
+      const description = [...propertyDescription];
+      description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
+      if (prop.details) {
+        description.push(`**${propName}**: ${prop.details}`);
       }
+      this.addToUniqueCompletions(expandedCompletion, items, uniqueCompletions, description);
     }
 
-    logger.debug(`Expanded ${expandedCount} completions from placeholder <${placeholderName}>`);
+    logger.debug(`Expanded ${keywordProperties.size} completions from placeholder <${placeholderName}>`);
   }
 
   /**
