@@ -10,31 +10,49 @@
     ".git", // Ignore the .git directory
     "**/.git", // Ignore the .git directory
     ".git/**", // Ignore all files in the .git directory
-    "**/.git/**", // Ignore all files in the .git directory
+    "**/.git/**" // Ignore all files in the .git directory
   ],
   "dictionaryDefinitions": [],
   "dictionaries": [],
   "words": [
     "aiscript",
     "aiscripts",
+    "buildmethodlookup",
     "Cgetty",
     "Charkey",
     "chemodun",
     "classlookup",
     "codecomplete",
+    "commonactions",
+    "componentstate",
+    "componentstatelookup",
     "dbdata",
+    "debugfilter",
     "egosoft",
     "ignoreprefix",
+    "infolibrarytype",
+    "infolibrarytypelookup",
+    "inputfunction",
+    "inputmap",
     "ledhead",
+    "licencelookup",
+    "licencetype",
     "lvalueexpression",
     "lvaluename",
     "mdscript",
+    "moodtype",
+    "moodtypelookup",
     "onclosetag",
     "onopentag",
     "ontext",
     "opentag",
+    "productionmethod",
     "readtext",
-    "scriptproperties"
+    "relationrange",
+    "relationrangelookup",
+    "savegame",
+    "scriptproperties",
+    "trafficlevel"
   ],
   "ignoreWords": [],
   "import": []
