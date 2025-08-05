@@ -258,6 +258,7 @@ export class ScriptProperties {
     </keyword>
   `;
   private static readonly enumsReAssigned: Map<string, string> = new Map<string, string>([['isalertlevel.<alertlevel>', 'defensiblealertlevel']]);
+  private static readonly typesNotAssignableToVariable: Set<string> = new Set<string>(['cue', 'order']);
 
   private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
@@ -599,16 +600,6 @@ export class ScriptProperties {
     return item;
   }
 
-  private getPropertyDescriptionMultipleTypes(name: string, types: string[]): string[] {
-    const result: string[] = [`Properties prefixed by **${name}** are in the following types:`];
-    for (const type of types) {
-      if (this.typeDict.has(type)) {
-        result.push(...(this.typeDict.get(type)?.getDescription() || []));
-      }
-    }
-    return result;
-  }
-
   private getKeywords(schema: string): KeywordEntry[] {
     return this.keywordList.filter((entry) => !entry.script || entry.script === schema);
   }
@@ -775,16 +766,18 @@ export class ScriptProperties {
 
     // Step 1: First part must be a keyword
     const firstPart = parts[0];
-    const keyword = this.getKeyword(firstPart, schema);
-
-    if (!keyword) {
-      // First part not found as keyword - provide keyword suggestions
-      logger.debug(`First part "${firstPart}" not found as keyword, providing keyword suggestions`);
-      this.addKeywordCompletions(items, firstPart, schema);
-      return items;
+    const isVariableBased = firstPart.startsWith('@') || firstPart.startsWith('$');
+    let keyword: KeywordEntry | TypeEntry | undefined;
+    if (!isVariableBased) {
+      keyword = this.getKeyword(firstPart, schema);
+      if (!keyword) {
+        // First part not found as keyword - provide keyword suggestions
+        logger.debug(`First part "${firstPart}" not found as keyword, providing keyword suggestions`);
+        this.addKeywordCompletions(items, firstPart, schema);
+        return items;
+      }
+      logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
     }
-
-    logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
 
     // First part is identified and completed
     if (parts.length === 1) {
@@ -793,7 +786,6 @@ export class ScriptProperties {
       logger.debug(`Single part "${firstPart}" - no completion requested, returning empty`);
       return items;
     }
-
     // Continue with property steps
     let currentContentType: KeywordEntry | TypeEntry = keyword;
     let prefix = '';
@@ -802,7 +794,7 @@ export class ScriptProperties {
       const part = parts[i];
       const isLastPart = i === parts.length - 1;
 
-      logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType.name}"`);
+      logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType?.name}"`);
 
       const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema);
 
@@ -818,7 +810,7 @@ export class ScriptProperties {
         // Part was completed, update contentType and continue
         currentContentType = result.newContentType!;
         prefix = ''; // Reset prefix for clean property step
-        logger.debug(`Part "${part}" completed, new contentType: "${currentContentType.name}"`);
+        logger.debug(`Part "${part}" completed, new contentType: "${currentContentType?.name}"`);
       } else {
         // Part is identified but not completed - add to prefix and continue
         prefix = prefix ? `${prefix}.${part}` : part;
@@ -844,65 +836,81 @@ export class ScriptProperties {
     newContentType?: KeywordEntry | TypeEntry;
   } {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
+    const possibleTypes = contentType !== undefined ? [contentType] : Array.from(this.typeDict.values());
+    const completions = new Map<string, vscode.CompletionItem>();
+    for (const currentType of possibleTypes) {
+      if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
+        continue; // Skip types that are not assignable to variables
+      }
+      // Try to find exact property match
+      if (currentType.hasProperty(fullContentOnStep)) {
+        const property = currentType.getProperty(fullContentOnStep)!;
+        logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
 
-    // Try to find exact property match
-    if (contentType.hasProperty(fullContentOnStep)) {
-      const property = contentType.getProperty(fullContentOnStep)!;
-      logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
-
-      if (isLastPart) {
-        // Last part and found - provide next level completions if property has a type
-        const completions = new Map<string, vscode.CompletionItem>();
-        if (property.type) {
-          const typeEntry = this.typeDict.get(property.type);
-          if (typeEntry) {
-            typeEntry.prepareItems('', completions);
+        if (isLastPart) {
+          // Last part and found - provide next level completions if property has a type
+          const completions = new Map<string, vscode.CompletionItem>();
+          if (property.type) {
+            const typeEntry = this.typeDict.get(property.type);
+            if (typeEntry) {
+              typeEntry.prepareItems('', completions);
+            }
+          }
+          return { isCompleted: true, completions };
+        } else {
+          // Not last part - continue with the property's type
+          const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+          if (newContentType) {
+            return { isCompleted: true, newContentType };
+          } else {
+            // Property has no type - can't continue
+            // return { isCompleted: false };
+            continue; // Skip to next type
           }
         }
-        return { isCompleted: true, completions };
-      } else {
-        // Not last part - continue with the property's type
-        const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
-        if (newContentType) {
-          return { isCompleted: true, newContentType };
-        } else {
-          // Property has no type - can't continue
-          return { isCompleted: false };
+      }
+
+      // Property not found exactly - try filtering by prefix using enhanced method
+      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema);
+
+      if (filteredProperties.length > 0) {
+        logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
+
+        if (!isLastPart) {
+          // Not last part - this is a complex property, continue with same contentType
+          // return { isCompleted: false };
+          continue; // Skip to next type
+        }
+      }
+
+      // No properties found
+      if (isLastPart) {
+        // Last part and nothing found - try without dot one more time using enhanced method
+        const candidateProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, false, schema);
+        if (candidateProperties.length > 0) {
+          this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, completions, schema);
+          // return { isCompleted: false, completions };
+          continue; // Skip to next type
         }
       }
     }
-
-    // Property not found exactly - try filtering by prefix using enhanced method
-    const filteredProperties = this.filterPropertiesByPrefix(contentType, fullContentOnStep, true, schema);
-
-    if (filteredProperties.length > 0) {
-      logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
-
-      if (!isLastPart) {
-        // Not last part - this is a complex property, continue with same contentType
-        return { isCompleted: false };
-      }
+    if (completions.size > 0) {
+      return { isCompleted: false, completions };
+    } else {
+      return { isCompleted: false };
     }
-
-    // No properties found
-    if (isLastPart) {
-      // Last part and nothing found - try without dot one more time using enhanced method
-      const candidateProperties = this.filterPropertiesByPrefix(contentType, fullContentOnStep, false, schema);
-      if (candidateProperties.length > 0) {
-        const completions = this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, schema);
-        return { isCompleted: false, completions };
-      }
-    }
-
-    // Nothing found - error case
-    return { isCompleted: false };
   }
 
   /**
    * Generates completions from filtered properties by removing prefix and suffixes
    */
-  private generateCompletionsFromProperties(properties: PropertyEntry[], fullContentOnStep: string, schema?: string): Map<string, vscode.CompletionItem> {
-    const items = new Map<string, vscode.CompletionItem>();
+  private generateCompletionsFromProperties(
+    properties: PropertyEntry[],
+    fullContentOnStep: string,
+    items: Map<string, vscode.CompletionItem>,
+    schema?: string
+  ): void {
+    // const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
     const contentParts = fullContentOnStep.split('.');
@@ -928,7 +936,7 @@ export class ScriptProperties {
     }
 
     logger.debug(`Generated ${items.size} unique completions from ${properties.length} properties`);
-    return items;
+    // return items;
   }
 
   private addToUniqueCompletions(completion: string, items: Map<string, vscode.CompletionItem>, uniqueCompletions: Set<string>, description: string[]): void {
