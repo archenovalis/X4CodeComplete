@@ -424,10 +424,10 @@ export class ScriptProperties {
     const name = e.$.name;
     this.addNonPropertyLocation(rawData, name, 'datatype');
     logger.debug('Datatype read: ' + name);
+    this.addType(name, e.$.type, e.$.suffix);
     if (e.property === undefined) {
       return;
     }
-    this.addType(name, e.$.type, e.$.suffix);
     e.property.forEach((prop) => this.processProperty(rawData, name, 'datatype', prop));
   }
 
@@ -766,7 +766,7 @@ export class ScriptProperties {
 
     // Step 1: First part must be a keyword
     const firstPart = parts[0];
-    const isVariableBased = firstPart.startsWith('@') || firstPart.startsWith('$');
+    const isVariableBased = ScriptProperties.isItVariable(firstPart);
     let keyword: KeywordEntry | TypeEntry | undefined;
     if (!isVariableBased) {
       keyword = this.getKeyword(firstPart, schema);
@@ -829,11 +829,13 @@ export class ScriptProperties {
     contentType: KeywordEntry | TypeEntry,
     prefix: string,
     isLastPart: boolean,
-    schema: string
+    schema: string,
+    isCompletionMode: boolean = true
   ): {
     isCompleted: boolean;
     completions?: Map<string, vscode.CompletionItem>;
     newContentType?: KeywordEntry | TypeEntry;
+    property?: PropertyEntry;
   } {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
     const possibleTypes = contentType !== undefined ? [contentType] : Array.from(this.typeDict.values());
@@ -859,9 +861,13 @@ export class ScriptProperties {
           return { isCompleted: true, completions };
         } else {
           // Not last part - continue with the property's type
-          const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+          let newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+          if (newContentType && newContentType.getProperties().size === 0 && isCompletionMode) {
+            // No properties found - provide completions for the type
+            newContentType = undefined; // Reset to undefined to indicate no further properties
+          }
           if (newContentType) {
-            return { isCompleted: true, newContentType };
+            return { isCompleted: true, newContentType, property };
           } else {
             // Property has no type - can't continue
             // return { isCompleted: false };
@@ -1299,6 +1305,271 @@ export class ScriptProperties {
       }
     }
     return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
+  }
+
+  /**
+   * Enhanced hover provider using the step-by-step expression analysis
+   * This method leverages the same parsing logic as completion for more accurate hover information
+   */
+  public provideEnhancedHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
+    try {
+      const schema = getDocumentScriptType(document);
+      if (schema === '') {
+        return undefined;
+      }
+
+      // Get the expression at the cursor position
+      const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
+      const phraseRange = document.getWordRangeAtPosition(position, phraseRegex);
+      if (!phraseRange) {
+        return undefined;
+      }
+
+      const fullExpression = document.getText(phraseRange);
+      const cleanExpression = getSubStringByBreakSymbolForExpressions(fullExpression, true);
+
+      logger.debug('Enhanced hover - Full expression:', fullExpression);
+      logger.debug('Enhanced hover - Clean expression:', cleanExpression);
+
+      // Analyze the expression to get type information
+      const hoverInfo = this.analyzeExpressionForHover(cleanExpression, schema, position, phraseRange, fullExpression);
+
+      if (hoverInfo) {
+        return new vscode.Hover(hoverInfo.content, hoverInfo.range || phraseRange);
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.error('Error in provideEnhancedHover:', error);
+      return undefined;
+    }
+  }
+
+  private static isItVariable(expression: string): boolean {
+    return expression.startsWith('@$') || expression.startsWith('$');
+  }
+
+  /**
+   * Analyzes an expression for hover information using step-by-step parsing
+   */
+  private analyzeExpressionForHover(
+    expression: string,
+    schema: string,
+    position: vscode.Position,
+    phraseRange: vscode.Range,
+    fullExpression: string
+  ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
+    const parts = expression.split('.');
+
+    if (parts.length === 0) {
+      return undefined;
+    }
+
+    logger.debug(`Enhanced hover analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
+
+    const expressionIndex = fullExpression.indexOf(expression);
+    const expressionLength = expression.length;
+    const startPosition = phraseRange.start.translate(0, expressionIndex);
+    const endPosition = phraseRange.start.translate(0, expressionIndex + expressionLength);
+    const positionInExpression = position.character - startPosition.character;
+    // Step 1: Analyze the first part
+    const firstPart = parts[0];
+    const isVariableBased = ScriptProperties.isItVariable(firstPart);
+    let currentContentType: KeywordEntry | TypeEntry | undefined;
+    const hoverContent = new vscode.MarkdownString();
+    let fullContentOnStep = firstPart;
+
+    if (!isVariableBased) {
+      // Look for keyword
+      currentContentType = this.getKeyword(firstPart, schema);
+
+      if (currentContentType) {
+        // Add keyword/type information
+        hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
+        if (currentContentType instanceof KeywordEntry && currentContentType.details) {
+          hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+        }
+        hoverContent.appendMarkdown('\n\n');
+        const contentOnStepLength = fullContentOnStep.length;
+        if (positionInExpression < contentOnStepLength) {
+          return {
+            content: hoverContent,
+            range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + contentOnStepLength)),
+          };
+        }
+      } else {
+        return undefined; // Unknown first part
+      }
+    }
+
+    // If only one part, return keyword/variable information
+    if (parts.length === 1) {
+      if (currentContentType) {
+        this.addTypePropertiesToHover(currentContentType, hoverContent, schema);
+      }
+      return {
+        content: hoverContent,
+        range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + fullContentOnStep.length)),
+      };
+    }
+
+    // Step 2: Analyze property chain
+    let prefix = '';
+    let finalProperty: PropertyEntry | undefined;
+    // let finalContentType: KeywordEntry | TypeEntry | undefined = currentContentType;
+
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const isLastPart = i === parts.length - 1;
+      fullContentOnStep = fullContentOnStep ? `${fullContentOnStep}.${part}` : part;
+      const contentOnStepLength = fullContentOnStep.length;
+
+      logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
+
+      // if (!finalContentType) {
+      //   break;
+      // }
+
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, false);
+      if (result.isCompleted && result.property) {
+        hoverContent.appendMarkdown(`- *Property:* \n\n  - **${result.property.name}**`);
+        if (result.property.details) {
+          hoverContent.appendMarkdown(`: ${result.property.details}\n\n`);
+        }
+        if (positionInExpression < contentOnStepLength) {
+          return {
+            content: hoverContent,
+            range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + contentOnStepLength)),
+          };
+        }
+        if (!isLastPart) {
+          currentContentType = result.newContentType;
+          hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
+          if (currentContentType instanceof KeywordEntry && currentContentType.details) {
+            hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+          }
+          hoverContent.appendMarkdown('\n\n');
+          prefix = ''; // Reset prefix for next property step
+        }
+      } else {
+        prefix = prefix ? `${prefix}.${part}` : part;
+      }
+
+      // // Try to find exact property match
+      // if (finalContentType.hasProperty(fullContentOnStep)) {
+      //   const property = finalContentType.getProperty(fullContentOnStep)!;
+      //   finalProperty = property;
+
+      //   if (isLastPart) {
+      //     // This is the final property - add detailed information
+      //     this.addPropertyToHover(property, hoverContent, fullContentOnStep, finalContentType);
+      //     return { content: hoverContent };
+      //   } else {
+      //     // Continue with the property's type
+      //     if (property.type) {
+      //       finalContentType = this.typeDict.get(property.type);
+      //       prefix = ''; // Reset prefix
+      //     } else {
+      //       break; // No type information to continue
+      //     }
+      //   }
+      // } else {
+      //   // Try filtering by prefix for partial matches
+      //   const filteredProperties = this.filterPropertiesByPrefix(finalContentType, fullContentOnStep, false, schema);
+
+      //   if (filteredProperties.length > 0 && isLastPart) {
+      //     // Show information about partial matches
+      //     this.addPartialMatchesToHover(filteredProperties, hoverContent, fullContentOnStep, finalContentType);
+      //     return { content: hoverContent };
+      //   } else {
+      //     // Add to prefix and continue
+      //     prefix = prefix ? `${prefix}.${part}` : part;
+      //   }
+      // }
+    }
+
+    // If we have a final content type but no specific property, show type information
+    // if (finalContentType && !finalProperty) {
+    //   this.addTypePropertiesToHover(finalContentType, hoverContent, schema);
+    //   return { content: hoverContent };
+    // }
+
+    return undefined;
+  }
+
+  /**
+   * Adds property information to hover content
+   */
+  private addPropertyToHover(property: PropertyEntry, hoverContent: vscode.MarkdownString, fullPath: string, ownerType: KeywordEntry | TypeEntry): void {
+    hoverContent.appendMarkdown(`**Property: ${property.name}**\n\n`);
+
+    if (property.details) {
+      hoverContent.appendMarkdown(`*Description*: ${property.details}\n\n`);
+    }
+
+    if (property.type) {
+      hoverContent.appendMarkdown(`*Type*: \`${property.type}\`\n\n`);
+    }
+
+    hoverContent.appendMarkdown(`*Owner*: ${ownerType.name}\n\n`);
+
+    // Add placeholder expansion information if applicable
+    const placeholderMatch = property.name.match(ScriptProperties.regexLookupElement);
+    if (placeholderMatch) {
+      hoverContent.appendMarkdown(`*Note*: Contains placeholder \`<${placeholderMatch[1]}>\` that expands to actual values\n\n`);
+    }
+  }
+
+  /**
+   * Adds type properties overview to hover content
+   */
+  private addTypePropertiesToHover(contentType: KeywordEntry | TypeEntry, hoverContent: vscode.MarkdownString, schema: string): void {
+    const properties = contentType.getProperties();
+    const propertyCount = properties.size;
+
+    if (propertyCount > 0) {
+      hoverContent.appendMarkdown(`*Properties*: ${propertyCount} available\n\n`);
+
+      // Show first few properties as examples
+      const maxExamples = 5;
+      let count = 0;
+      for (const [name, prop] of properties) {
+        if (count >= maxExamples) {
+          hoverContent.appendMarkdown(`*...and ${propertyCount - maxExamples} more*\n`);
+          break;
+        }
+
+        const shortDesc = prop.details ? ` - ${prop.details.substring(0, 50)}${prop.details.length > 50 ? '...' : ''}` : '';
+        hoverContent.appendMarkdown(`- \`${name}\`${shortDesc}\n`);
+        count++;
+      }
+    } else {
+      hoverContent.appendMarkdown(`*No properties available*\n`);
+    }
+  }
+
+  /**
+   * Adds partial matches information to hover content
+   */
+  private addPartialMatchesToHover(
+    matches: PropertyEntry[],
+    hoverContent: vscode.MarkdownString,
+    searchTerm: string,
+    ownerType: KeywordEntry | TypeEntry
+  ): void {
+    hoverContent.appendMarkdown(`**Partial matches for "${searchTerm}"**\n\n`);
+    hoverContent.appendMarkdown(`*Found ${matches.length} properties matching the prefix*\n\n`);
+
+    const maxMatches = 10;
+    for (let i = 0; i < Math.min(matches.length, maxMatches); i++) {
+      const prop = matches[i];
+      const shortDesc = prop.details ? ` - ${prop.details.substring(0, 40)}${prop.details.length > 40 ? '...' : ''}` : '';
+      hoverContent.appendMarkdown(`- \`${prop.name}\`${shortDesc}\n`);
+    }
+
+    if (matches.length > maxMatches) {
+      hoverContent.appendMarkdown(`*...and ${matches.length - maxMatches} more matches*\n`);
+    }
   }
 }
 
