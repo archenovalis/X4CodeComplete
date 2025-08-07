@@ -486,7 +486,7 @@ export class ScriptProperties {
   addType(key: string, supertype?: string, suffix?: string): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
-    if (entry === undefined && k !== 'datatype') {
+    if (entry === undefined) {
       entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined, suffix);
       this.typeDict.set(k, entry);
     }
@@ -1150,8 +1150,8 @@ export class ScriptProperties {
         d.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord)) // Check if any property name includes hoverWord
     );
 
-    logger.debug('matchingKeyNames:', matchingKeyNames);
-    logger.debug('matchingDatatypes:', matchingDatatypes);
+    // logger.debug('matchingKeyNames:', matchingKeyNames);
+    // logger.debug('matchingDatatypes:', matchingDatatypes);
 
     // Define the type for the grouped matches
     interface GroupedMatch {

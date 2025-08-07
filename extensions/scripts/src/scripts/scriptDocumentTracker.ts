@@ -16,14 +16,17 @@ export class ScriptDocumentTracker {
   private variableTracker: VariableTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
-  constructor(xmlTracker: XmlStructureTracker, xsdReference: XsdReference, variableTracker: VariableTracker,
-    diagnosticCollection: vscode.DiagnosticCollection) {
+  constructor(
+    xmlTracker: XmlStructureTracker,
+    xsdReference: XsdReference,
+    variableTracker: VariableTracker,
+    diagnosticCollection: vscode.DiagnosticCollection
+  ) {
     this.xmlTracker = xmlTracker;
     this.xsdReference = xsdReference;
     this.variableTracker = variableTracker;
     this.diagnosticCollection = diagnosticCollection;
   }
-
 
   /**
    * Validates script references (labels and actions) in a document
@@ -76,12 +79,9 @@ export class ScriptDocumentTracker {
       if (offset.type === 'element') {
         const documentLine = document.lineAt(document.positionAt(offset.index).line);
         const tagStart = documentLine.text.lastIndexOf('<', offset.index);
-        if( tagStart !== -1 ) {
+        if (tagStart !== -1) {
           const diagnostic = new vscode.Diagnostic(
-            new vscode.Range(
-              documentLine.range.start.translate(0, tagStart),
-              documentLine.range.end
-            ),
+            new vscode.Range(documentLine.range.start.translate(0, tagStart), documentLine.range.end),
             'Unclosed XML tag',
             vscode.DiagnosticSeverity.Warning
           );
@@ -89,10 +89,7 @@ export class ScriptDocumentTracker {
         }
       } else if (offset.type === 'attribute') {
         const diagnostic = new vscode.Diagnostic(
-          new vscode.Range(
-            document.positionAt(offset.index),
-            document.positionAt(offset.index)
-          ),
+          new vscode.Range(document.positionAt(offset.index), document.positionAt(offset.index)),
           'Error in attribute',
           vscode.DiagnosticSeverity.Warning
         );
@@ -168,18 +165,11 @@ export class ScriptDocumentTracker {
             diagnostics.push(diagnostic);
           } else {
             const attrDefinition = schemaAttributes.find((a) => a.name === attr.name);
-            const attributeValue = text.substring(
-              document.offsetAt(attr.valueRange.start),
-              document.offsetAt(attr.valueRange.end)
-            );
+            const attributeValue = text.substring(document.offsetAt(attr.valueRange.start), document.offsetAt(attr.valueRange.end));
 
             // Validate attribute values (skip XML namespace attributes)
             if (!(attr.name.startsWith('xmlns:') || attr.name.startsWith('xsi:') || attr.name === 'xmlns')) {
-              const valueValidation = XsdReference.validateAttributeValueAgainstRules(
-                schemaAttributes,
-                attr.name,
-                attributeValue
-              );
+              const valueValidation = XsdReference.validateAttributeValueAgainstRules(schemaAttributes, attr.name, attributeValue);
               if (!valueValidation.isValid) {
                 const diagnostic = new vscode.Diagnostic(
                   attr.valueRange,
@@ -193,10 +183,7 @@ export class ScriptDocumentTracker {
             }
 
             // Extract attribute value for further processing
-            const attrValue = text.substring(
-              document.offsetAt(attr.valueRange.start),
-              document.offsetAt(attr.valueRange.end)
-            );
+            const attrValue = text.substring(document.offsetAt(attr.valueRange.start), document.offsetAt(attr.valueRange.end));
 
             // Check if this attribute contains label or action references
             const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
@@ -220,8 +207,13 @@ export class ScriptDocumentTracker {
             }
 
             // Special handling for parameter definitions in AI scripts
-            if (schema === aiScriptId && element.name === 'param' && attr.name === 'name' &&
-                element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
+            if (
+              schema === aiScriptId &&
+              element.name === 'param' &&
+              attr.name === 'name' &&
+              element.hierarchy.length > 0 &&
+              element.hierarchy[0] === 'params'
+            ) {
               this.variableTracker.addVariable(
                 'normal',
                 attrValue,
@@ -283,13 +275,7 @@ export class ScriptDocumentTracker {
                 );
               } else {
                 // This is a variable reference
-                this.variableTracker.addVariable(
-                  variableType,
-                  variableName,
-                  schema,
-                  document,
-                  variableRange
-                );
+                this.variableTracker.addVariable(variableType, variableName, schema, document, variableRange);
               }
             }
           }
@@ -305,6 +291,6 @@ export class ScriptDocumentTracker {
 
     // Update diagnostics for the document
     this.diagnosticCollection.set(document.uri, diagnostics);
-    logger.info(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
+    logger.debug(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
   }
 }

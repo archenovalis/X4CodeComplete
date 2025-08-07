@@ -83,6 +83,19 @@ let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
 
+/** Document change tracking for batched processing */
+interface DocumentChange {
+  uri: vscode.Uri;
+  version: number;
+  ranges: vscode.Range[];
+  timestamp: number;
+  cursorPosition?: vscode.Position;
+}
+
+const documentChanges = new Map<string, DocumentChange>();
+const urisToRefresh = new Set<string>();
+let refreshTimeoutId: NodeJS.Timeout | undefined;
+
 // ================================================================================================
 // 4. TRACKER INSTANCES
 // ================================================================================================
@@ -102,6 +115,140 @@ const variableTracker = new VariableTracker();
 
 const codeCompleteStartupDone = new vscode.EventEmitter<void>();
 export const onCodeCompleteStartupProcessed = codeCompleteStartupDone.event;
+
+/**
+ * Converts content changes to ranges for tracking
+ */
+function changesToRanges(contentChanges: readonly vscode.TextDocumentContentChangeEvent[]): vscode.Range[] {
+  return contentChanges.filter((change) => 'range' in change && change.range).map((change) => change.range as vscode.Range);
+}
+
+/**
+ * Finds the active editor for a given document URI
+ */
+function findEditor(uri: vscode.Uri): vscode.TextEditor | undefined {
+  return vscode.window.visibleTextEditors.find((editor) => editor.document.uri.toString() === uri.toString());
+}
+
+/**
+ * Adds a URI to the refresh queue and schedules processing
+ */
+function addUriToRefreshTimeout(uri: vscode.Uri): void {
+  if (uri.scheme !== 'file') {
+    logger.debug(`Skipping non-file URI: ${uri.toString()}`);
+    return;
+  }
+  if (urisToRefresh.has(uri.toString())) {
+    logger.debug(`URI already in refresh queue: ${uri.toString()}`);
+    return;
+  }
+  const editor = findEditor(uri);
+  if (!editor) {
+    logger.debug(`No active editor found for URI: ${uri.toString()}`);
+    return;
+  }
+  const document = editor.document;
+  if (scriptsMetadataSet(document, true)) {
+    urisToRefresh.add(uri.toString());
+    scheduleUriRefresh();
+  }
+}
+
+/**
+ * Schedules batched processing of document changes
+ */
+function scheduleUriRefresh(): void {
+  if (refreshTimeoutId || urisToRefresh.size < 1) {
+    logger.debug('No pending document changes to process');
+    return;
+  }
+
+  refreshTimeoutId = setTimeout(() => {
+    if (documentChanges.size > 0) processQueuedDocumentChanges();
+    refreshTimeoutId = undefined; // Clear the timeout ID
+    scheduleUriRefresh();
+  }, 200); // 200ms debounce delay
+}
+
+/**
+ * Processes all queued document changes in batch
+ */
+function processQueuedDocumentChanges(): void {
+  const urisToProcess = Array.from(urisToRefresh);
+
+  // logger.debug(`Processing ${urisToProcess.length} queued document changes`);
+
+  for (const uriString of urisToProcess) {
+    const change = documentChanges.get(uriString);
+    if (!change) {
+      continue;
+    }
+
+    if (!urisToRefresh.has(uriString)) {
+      documentChanges.delete(uriString);
+      logger.debug(`URI no longer in refresh queue: ${uriString}`);
+      continue;
+    }
+
+    const editor = findEditor(change.uri);
+    if (!editor) {
+      documentChanges.delete(uriString);
+      urisToRefresh.delete(uriString);
+      continue;
+    }
+
+    const document = editor.document;
+    if (document.version !== change.version) {
+      // Document has been modified since this change was recorded
+      documentChanges.delete(uriString);
+      continue;
+    }
+
+    const cursorPos = change.cursorPosition || editor.selection.active;
+
+    logger.debug(`Processing batched change for: ${document.uri.toString()}, ranges: ${change.ranges.length}`);
+
+    // Update the document structure
+    scriptDocumentTracker.trackScriptDocument(document, true, cursorPos);
+
+    // Clean up processed change
+    documentChanges.delete(uriString);
+  }
+}
+
+/**
+ * Handles document change events with batching and debouncing
+ */
+function onDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+  const { document, contentChanges } = event;
+  const uriKey = document.uri.toString();
+
+  const editor = findEditor(document.uri);
+  if (!editor) {
+    urisToRefresh.delete(uriKey);
+    documentChanges.delete(uriKey);
+    return;
+  }
+
+  if (!urisToRefresh.has(uriKey) && document.uri.scheme === 'file') {
+    addUriToRefreshTimeout(document.uri);
+  }
+  const ranges = changesToRanges(contentChanges);
+
+  if (!ranges.length) {
+    documentChanges.delete(uriKey);
+    return;
+  }
+
+  // Store the change for batched processing
+  documentChanges.set(uriKey, {
+    uri: document.uri,
+    version: document.version,
+    ranges,
+    timestamp: performance.now(),
+    cursorPosition: editor.selection.active,
+  });
+}
 
 // ================================================================================================
 // 6. EXTENSION ACTIVATION
@@ -328,17 +475,19 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor && scriptsMetadataSet(editor.document)) {
         scriptDocumentTracker.trackScriptDocument(editor.document, true);
+
+        // Process any pending document changes when switching editors
+        // This ensures immediate processing rather than waiting for next content change
+        addUriToRefreshTimeout(editor.document.uri);
       }
     })
   );
 
   context.subscriptions.push(
     vscode.window.onDidChangeVisibleTextEditors((editors) => {
-      // editors.forEach((editor) => {
-      //   if (scriptsMetadataSet(editor.document)) {
-      //    scriptDocumentTracker.trackScriptDocument(editor.document);
-      //   }
-      // });
+      editors.forEach((editor) => {
+        addUriToRefreshTimeout(editor.document.uri);
+      });
       logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
     })
   );
@@ -353,27 +502,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Update XML structure and trigger completion when documents change
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeTextDocument((event) => {
-      const activeEditor = vscode.window.activeTextEditor;
-      if (!activeEditor || event.document !== activeEditor.document) return;
-
-      if (scriptsMetadataSet(event.document, true)) {
-        if (event.contentChanges.length > 0) {
-          const cursorPos = activeEditor.selection.active;
-
-          // Update the document structure on change
-          scriptDocumentTracker.trackScriptDocument(event.document, true, cursorPos);
-
-          // Check if we're in a specialized completion context and trigger suggestions if needed
-          if (configManager.config.forcedCompletion && scriptCompletionProvider.prepareCompletion(event.document, cursorPos, true) !== undefined) {
-            logger.info(`Triggering suggestions for document: ${event.document.uri.toString()}`);
-            vscode.commands.executeCommand('editor.action.triggerSuggest');
-          }
-        }
-      }
-    })
-  );
+  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(onDocumentChange));
 
   // Update document structure when files are saved
   context.subscriptions.push(
@@ -607,6 +736,22 @@ export function deactivate() {
   logger.info('Extension deactivation started...');
 
   try {
+    // ================================================================================================
+    // DOCUMENT CHANGE CLEANUP
+    // ================================================================================================
+
+    // Clear any pending refresh timeout
+    if (refreshTimeoutId) {
+      clearTimeout(refreshTimeoutId);
+      refreshTimeoutId = undefined;
+      logger.debug('Cleared pending refresh timeout');
+    }
+
+    // Clear document change tracking data
+    documentChanges.clear();
+    urisToRefresh.clear();
+    logger.debug('Cleared document change tracking data');
+
     // ================================================================================================
     // DIAGNOSTIC COLLECTION CLEANUP
     // ================================================================================================
