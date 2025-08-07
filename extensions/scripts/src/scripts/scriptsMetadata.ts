@@ -3,15 +3,15 @@ import { logger } from '../logger/logger';
 
 type ScriptMetadata = {
   schema: string;
-}
+};
 type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
 
-const SCRIPT_REGEX = /^\s*<\?xml[^>]*\?>\s*(?:<!--[\s\S]*?-->\s*)*<(mdscript|aiscript)[^>]*?\s+xsi:noNamespaceSchemaLocation="[^"]*?(aiscripts|md).xsd"/mi;
+const SCRIPT_REGEX = /^\s*<\?xml[^>]*\?>\s*(?:<!--[\s\S]*?-->\s*)*<(mdscript|aiscript)[^>]*?\s+xsi:noNamespaceSchemaLocation="[^"]*?(aiscripts|md).xsd"/im;
 
 export let scriptsMetadata: ScriptsMetadata = new WeakMap();
 
 export function scriptsMetadataSet(document: vscode.TextDocument, reSet: boolean = false): ScriptMetadata | undefined {
-  if (document.languageId === 'xml') {
+  if (document.uri.scheme === 'file' && document.languageId === 'xml') {
     if (reSet) {
       logger.debug(`Re-initializing script metadata for document: ${document.uri.toString()}`);
       scriptsMetadata.delete(document); // Clear metadata if re-initializing
@@ -34,8 +34,8 @@ export function scriptsMetadataClearAll(): void {
 export const aiScriptId = 'aiscripts';
 export const mdScriptId = 'md';
 export const scriptIdDescription = {
-  'aiscripts': 'AI Script',
-  'md': 'Mission Director Script',
+  aiscripts: 'AI Script',
+  md: 'Mission Director Script',
 };
 
 export function getDocumentScriptType(document: vscode.TextDocument): string {
@@ -69,7 +69,7 @@ export function getDocumentScriptType(document: vscode.TextDocument): string {
     if (!scriptsMetadata.has(document)) {
       scriptsMetadata.set(document, { schema: languageSubId });
     } else {
-        scriptMetaData.schema = languageSubId;
+      scriptMetaData.schema = languageSubId;
     }
     logger.debug(`Cached languageSubId: ${languageSubId} for document: ${document.uri.toString()}`);
   }

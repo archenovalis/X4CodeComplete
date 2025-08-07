@@ -63,6 +63,7 @@ import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
+import { log } from 'console';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
@@ -551,6 +552,21 @@ export function activate(context: vscode.ExtensionContext) {
       ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
       logger.info(`Doing post-startup work now`);
       const documentsUris: vscode.Uri[] = [];
+
+      const openDocument = () => {
+        const uri = documentsUris.shift();
+        if (uri) {
+          logger.debug(`Reading document on startup: ${uri.toString()}`);
+          vscode.workspace.openTextDocument(uri).then((doc) => {
+            logger.debug(`Document found on startup: ${doc.uri.toString()}`);
+            if (doc.languageId === 'xml') {
+              scriptDocumentTracker.trackScriptDocument(doc, true);
+            }
+            openDocument();
+          });
+        }
+      };
+
       for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs) {
           if (tab.input && (tab.input as any).uri) {
@@ -562,22 +578,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
       }
-      const openDocument = () => {
-        const uri = documentsUris.shift();
-        if (uri) {
-          vscode.workspace.openTextDocument(uri).then((doc) => {
-            openDocument();
-          });
-        } else {
-          // Initialize by parsing the currently active document
-          vscode.workspace.textDocuments.forEach((doc) => {
-            logger.debug(`Document found on startup: ${doc.uri.toString()}`);
-            if (doc.languageId === 'xml') {
-              scriptDocumentTracker.trackScriptDocument(doc, true);
-            }
-          });
-        }
-      };
+      logger.debug(`Documents URIs collected on startup: ${documentsUris.length}`);
       openDocument();
     } catch (error) {
       logger.error('Error during heavy services initialization:', error);
