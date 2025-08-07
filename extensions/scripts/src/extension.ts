@@ -103,6 +103,8 @@ let refreshTimeoutId: NodeJS.Timeout | undefined;
 /** Global tracker instances for document analysis */
 const variableTracker = new VariableTracker();
 
+// Register language providers
+const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
 // ================================================================================================
@@ -309,270 +311,278 @@ export function activate(context: vscode.ExtensionContext) {
   diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
 
-  // Initialize language processor and load language files
-  languageProcessor = new LanguageFileProcessor();
-  languageProcessor
-    .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
-    .then(() => {
-      logger.info('Language files loaded successfully.');
-    })
-    .catch((error) => {
-      logger.error('Error loading language files:', error);
-      vscode.window.showErrorMessage('Error loading language files: ' + error);
-    });
-
-  // Initialize script analysis services
-
-  xsdReference = new XsdReference(configManager.librariesPath);
-  scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
-  scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
-  scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
-
-  // ================================================================================================
-  // 7. LANGUAGE PROVIDER REGISTRATIONS
-  // ================================================================================================
-
-  // Register language providers
-  const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
-
-  // Register completion provider with trigger characters
-  const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '$');
-  context.subscriptions.push(disposableCompleteProvider);
-
-  // Register definition provider for go-to-definition functionality
-  context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(xmlSelector, {
-      /**
-       * Provides definition locations for symbols at a given position
-       * Handles variables, actions, labels, and script properties
-       */
-      provideDefinition: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Definition | undefined> => {
-        const schema = getDocumentScriptType(document);
-        if (schema === '') {
-          return undefined;
-        }
-
-        // Check if cursor is on a variable
-        const variableDefinition = variableTracker.getVariableDefinition(document, position);
-        if (variableDefinition) {
-          logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
-          return variableDefinition.definition;
-        }
-
-        // AI script specific features
-        if (schema === aiScriptId) {
-          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-            const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
-            if (itemDefinition) {
-              logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
-              return itemDefinition.definition;
-            }
-          }
-        }
-
-        // Fallback to script properties
-        return scriptProperties.provideDefinition(document, position);
-      },
-    })
-  );
-
-  // Register hover provider for displaying tooltips and documentation
-  context.subscriptions.push(
-    vscode.languages.registerHoverProvider(xmlSelector, {
-      /**
-       * Provides hover information for symbols at a given position
-       * Shows documentation for elements, attributes, variables, labels, and actions
-       */
-      provideHover: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> => {
-        const schema = getDocumentScriptType(document);
-        if (schema === '') {
-          return undefined;
-        }
-
-        // Check for language constructs first
-        const languageConstructsHover = languageProcessor.provideHover(document, position);
-        if (languageConstructsHover) {
-          return languageConstructsHover;
-        }
-
-        // Check if we're in an XML element's start tag
-        const element = xmlTracker.elementWithPosInStartTag(document, position);
-        if (element) {
-          // Check if hovering over an attribute name
-          const attribute = xmlTracker.attributeWithPosInName(document, position);
-          if (attribute) {
-            const hoverText = new vscode.MarkdownString();
-            const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
-              schema,
-              attribute.element.name,
-              attribute.element.hierarchy
-            );
-            const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
-
-            if (attributeInfo) {
-              hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '`' + attributeInfo.annotation + '`' : ''}  \n`);
-              hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`  \n`);
-              hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`  \n`);
-            } else {
-              hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`  \n`);
-            }
-            return new vscode.Hover(hoverText, attribute.nameRange);
-          }
-          // Check if hovering over an element name
-          else if (xmlTracker.elementWithPosInName(document, position)) {
-            const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
-            const hoverText = new vscode.MarkdownString();
-
-            if (elementInfo) {
-              const annotationText = XsdReference.extractAnnotationText(elementInfo);
-              hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
-            } else {
-              hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`  \n`);
-            }
-            return new vscode.Hover(hoverText, element.nameRange);
-          }
-        }
-
-        // AI script specific hover information
-        if (schema === aiScriptId) {
-          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-            // Check for action definitions
-            const itemHover = trackerInfo.tracker.getItemHover(document, position);
-            if (itemHover) {
-              return itemHover;
-            }
-          }
-        }
-
-        // Check for variable hover
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition) {
-          logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
-          const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
-          return new vscode.Hover(hoverText, variableAtPosition.location.range);
-        }
-
-        // Fallback to script properties - try enhanced hover first, then original
-        const enhancedHover = scriptProperties.provideEnhancedHover(document, position);
-        if (enhancedHover) {
-          return enhancedHover;
-        }
-
-        // Final fallback to original hover implementation
-        return scriptProperties.provideHover(document, position);
-      },
-    })
-  );
-
-  // ================================================================================================
-  // 8. DOCUMENT EVENT HANDLERS
-  // ================================================================================================
-
-  logger.info('XSD schemas loaded successfully.');
-
-  // Listen for editor changes to parse documents as they become active
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor && scriptsMetadataSet(editor.document)) {
-        scriptDocumentTracker.trackScriptDocument(editor.document, true);
-
-        // Process any pending document changes when switching editors
-        // This ensures immediate processing rather than waiting for next content change
-        addUriToRefreshTimeout(editor.document.uri);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.window.onDidChangeVisibleTextEditors((editors) => {
-      editors.forEach((editor) => {
-        addUriToRefreshTimeout(editor.document.uri);
-      });
-      logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
-    })
-  );
-
-  // Parse newly opened documents only if they become the active document
-  context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      if (scriptsMetadataSet(document)) {
-        scriptDocumentTracker.trackScriptDocument(document, true);
-      }
-    })
-  );
-
-  // Update XML structure and trigger completion when documents change
-  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(onDocumentChange));
-
-  // Update document structure when files are saved
-  context.subscriptions.push(
-    vscode.workspace.onDidSaveTextDocument((document) => {
-      if (scriptsMetadataSet(document, true)) {
-        scriptDocumentTracker.trackScriptDocument(document, true);
-      }
-    })
-  );
-
-  // Clean up cached data when documents are closed
-  context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument((document) => {
-      const uri = document.uri;
-
-      const stillOpenInTab = vscode.window.tabGroups.all
-        .flatMap((group) => group.tabs)
-        .some((tab) => {
-          const input = tab.input as any;
-          return input?.uri?.toString() === uri.toString();
-        });
-
-      if (!stillOpenInTab) {
-        diagnosticCollection.delete(uri);
-        scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-          trackerInfo.tracker.clearItemsForDocument(document);
-        });
-        logger.debug(`Removed cached data for document: ${uri.toString()}`);
-      } else {
-        logger.debug(`Skipped removing diagnostics for: ${uri.toString()} (still open in a tab)`);
-      }
-    })
-  );
-
   // ================================================================================================
   // 9. EXTENSION STARTUP HANDLER
   // ================================================================================================
 
-  onCodeCompleteStartupProcessed(() => {
-    ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
-    logger.info(`Doing post-startup work now`);
-    const documentsUris: vscode.Uri[] = [];
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input && (tab.input as any).uri) {
-          const uri = (tab.input as any).uri as vscode.Uri;
-          if (uri.fsPath.endsWith('.xml') && uri.scheme === 'file') {
-            logger.debug(`Tab found on startup: ${uri.toString()}`);
-            documentsUris.push(uri);
+  onCodeCompleteStartupProcessed(async () => {
+    try {
+      logger.info('Starting deferred heavy services initialization...');
+
+      // Initialize language processor and load language files
+      languageProcessor = new LanguageFileProcessor();
+      await languageProcessor
+        .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
+        .then(() => {
+          logger.info('Language files loaded successfully.');
+        })
+        .catch((error) => {
+          logger.error('Error loading language files:', error);
+          vscode.window.showErrorMessage('Error loading language files: ' + error);
+        });
+
+      // Reinitialize script analysis services with fresh data
+      // Note: These replace the minimal instances created during activation
+      xsdReference = new XsdReference(configManager.librariesPath);
+      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
+
+      // Update the completion provider with the fully loaded services
+      scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
+      scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
+
+      logger.info('Heavy services initialization completed.');
+
+      // ================================================================================================
+      // 7. LANGUAGE PROVIDER REGISTRATIONS
+      // ================================================================================================
+
+      // Register completion provider with trigger characters
+      const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '$');
+      context.subscriptions.push(disposableCompleteProvider);
+
+      // Register definition provider for go-to-definition functionality
+      context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider(xmlSelector, {
+          /**
+           * Provides definition locations for symbols at a given position
+           * Handles variables, actions, labels, and script properties
+           */
+          provideDefinition: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Definition | undefined> => {
+            const schema = getDocumentScriptType(document);
+            if (schema === '') {
+              return undefined;
+            }
+
+            // Check if cursor is on a variable
+            const variableDefinition = variableTracker.getVariableDefinition(document, position);
+            if (variableDefinition) {
+              logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
+              return variableDefinition.definition;
+            }
+
+            // AI script specific features
+            if (schema === aiScriptId) {
+              for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
+                if (itemDefinition) {
+                  logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
+                  return itemDefinition.definition;
+                }
+              }
+            }
+
+            // Fallback to script properties
+            return scriptProperties.provideDefinition(document, position);
+          },
+        })
+      );
+
+      // Register hover provider for displaying tooltips and documentation
+      context.subscriptions.push(
+        vscode.languages.registerHoverProvider(xmlSelector, {
+          /**
+           * Provides hover information for symbols at a given position
+           * Shows documentation for elements, attributes, variables, labels, and actions
+           */
+          provideHover: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> => {
+            const schema = getDocumentScriptType(document);
+            if (schema === '') {
+              return undefined;
+            }
+
+            // Check for language constructs first
+            const languageConstructsHover = languageProcessor.provideHover(document, position);
+            if (languageConstructsHover) {
+              return languageConstructsHover;
+            }
+
+            // Check if we're in an XML element's start tag
+            const element = xmlTracker.elementWithPosInStartTag(document, position);
+            if (element) {
+              // Check if hovering over an attribute name
+              const attribute = xmlTracker.attributeWithPosInName(document, position);
+              if (attribute) {
+                const hoverText = new vscode.MarkdownString();
+                const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
+                  schema,
+                  attribute.element.name,
+                  attribute.element.hierarchy
+                );
+                const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
+
+                if (attributeInfo) {
+                  hoverText.appendMarkdown(`**${attribute.name}**: ${attributeInfo.annotation ? '`' + attributeInfo.annotation + '`' : ''}  \n`);
+                  hoverText.appendMarkdown(`**Type**: \`${attributeInfo.type}\`  \n`);
+                  hoverText.appendMarkdown(`**Required**: \`${attributeInfo.required ? 'Yes' : 'No'}\`  \n`);
+                } else {
+                  hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`  \n`);
+                }
+                return new vscode.Hover(hoverText, attribute.nameRange);
+              }
+              // Check if hovering over an element name
+              else if (xmlTracker.elementWithPosInName(document, position)) {
+                const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+                const hoverText = new vscode.MarkdownString();
+
+                if (elementInfo) {
+                  const annotationText = XsdReference.extractAnnotationText(elementInfo);
+                  hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
+                } else {
+                  hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`  \n`);
+                }
+                return new vscode.Hover(hoverText, element.nameRange);
+              }
+            }
+
+            // AI script specific hover information
+            if (schema === aiScriptId) {
+              for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                // Check for action definitions
+                const itemHover = trackerInfo.tracker.getItemHover(document, position);
+                if (itemHover) {
+                  return itemHover;
+                }
+              }
+            }
+
+            // Check for variable hover
+            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+            if (variableAtPosition) {
+              logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
+              const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
+              return new vscode.Hover(hoverText, variableAtPosition.location.range);
+            }
+
+            // Fallback to script properties - try enhanced hover first, then original
+            const enhancedHover = scriptProperties.provideEnhancedHover(document, position);
+            if (enhancedHover) {
+              return enhancedHover;
+            }
+
+            // Final fallback to original hover implementation
+            return scriptProperties.provideHover(document, position);
+          },
+        })
+      );
+
+      // ================================================================================================
+      // 8. DOCUMENT EVENT HANDLERS
+      // ================================================================================================
+
+      logger.info('XSD schemas loaded successfully.');
+
+      // Listen for editor changes to parse documents as they become active
+      context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
+          if (editor && scriptsMetadataSet(editor.document)) {
+            scriptDocumentTracker.trackScriptDocument(editor.document, true);
+
+            // Process any pending document changes when switching editors
+            // This ensures immediate processing rather than waiting for next content change
+            addUriToRefreshTimeout(editor.document.uri);
+          }
+        })
+      );
+
+      context.subscriptions.push(
+        vscode.window.onDidChangeVisibleTextEditors((editors) => {
+          editors.forEach((editor) => {
+            addUriToRefreshTimeout(editor.document.uri);
+          });
+          logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
+        })
+      );
+
+      // Parse newly opened documents only if they become the active document
+      context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+          if (scriptsMetadataSet(document)) {
+            scriptDocumentTracker.trackScriptDocument(document, true);
+          }
+        })
+      );
+
+      // Update XML structure and trigger completion when documents change
+      context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(onDocumentChange));
+
+      // Update document structure when files are saved
+      context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument((document) => {
+          if (scriptsMetadataSet(document, true)) {
+            scriptDocumentTracker.trackScriptDocument(document, true);
+          }
+        })
+      );
+
+      // Clean up cached data when documents are closed
+      context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+          const uri = document.uri;
+
+          const stillOpenInTab = vscode.window.tabGroups.all
+            .flatMap((group) => group.tabs)
+            .some((tab) => {
+              const input = tab.input as any;
+              return input?.uri?.toString() === uri.toString();
+            });
+
+          if (!stillOpenInTab) {
+            diagnosticCollection.delete(uri);
+            scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+              trackerInfo.tracker.clearItemsForDocument(document);
+            });
+            logger.debug(`Removed cached data for document: ${uri.toString()}`);
+          } else {
+            logger.debug(`Skipped removing diagnostics for: ${uri.toString()} (still open in a tab)`);
+          }
+        })
+      );
+
+      ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
+      logger.info(`Doing post-startup work now`);
+      const documentsUris: vscode.Uri[] = [];
+      for (const group of vscode.window.tabGroups.all) {
+        for (const tab of group.tabs) {
+          if (tab.input && (tab.input as any).uri) {
+            const uri = (tab.input as any).uri as vscode.Uri;
+            if (uri.fsPath.endsWith('.xml') && uri.scheme === 'file') {
+              logger.debug(`Tab found on startup: ${uri.toString()}`);
+              documentsUris.push(uri);
+            }
           }
         }
       }
+      const openDocument = () => {
+        const uri = documentsUris.shift();
+        if (uri) {
+          vscode.workspace.openTextDocument(uri).then((doc) => {
+            openDocument();
+          });
+        } else {
+          // Initialize by parsing the currently active document
+          vscode.workspace.textDocuments.forEach((doc) => {
+            logger.debug(`Document found on startup: ${doc.uri.toString()}`);
+            if (doc.languageId === 'xml') {
+              scriptDocumentTracker.trackScriptDocument(doc, true);
+            }
+          });
+        }
+      };
+      openDocument();
+    } catch (error) {
+      logger.error('Error during heavy services initialization:', error);
+      vscode.window.showErrorMessage('Error initializing X4CodeComplete services: ' + error);
     }
-    const openDocument = () => {
-      const uri = documentsUris.shift();
-      if (uri) {
-        vscode.workspace.openTextDocument(uri).then((doc) => {
-          openDocument();
-        });
-      } else {
-        // Initialize by parsing the currently active document
-        vscode.workspace.textDocuments.forEach((doc) => {
-          logger.debug(`Document found on startup: ${doc.uri.toString()}`);
-          if (doc.languageId === 'xml') {
-            scriptDocumentTracker.trackScriptDocument(doc, true);
-          }
-        });
-      }
-    };
-    openDocument();
   });
 
   context.subscriptions.push(codeCompleteStartupDone);
@@ -719,9 +729,9 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  codeCompleteStartupDone.fire();
-
   logger.info('X4CodeComplete extension activated successfully.');
+  logger.info('Heavy services will be initialized asynchronously...');
+  codeCompleteStartupDone.fire();
 }
 
 // ================================================================================================
