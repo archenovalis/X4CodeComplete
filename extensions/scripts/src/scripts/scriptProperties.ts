@@ -7,7 +7,7 @@ import * as xpath from 'xpath';
 import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
 import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
-import { XsdReference } from 'xsd-lookup';
+import { LanguageFileProcessor } from '../languageFiles/languageFiles';
 
 class PropertyEntry {
   name: string;
@@ -262,19 +262,19 @@ export class ScriptProperties {
 
   private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
+  private languageProcessor: LanguageFileProcessor;
   private scriptPropertiesPath: string;
   private keywords: Keyword[] = [];
   private datatypes: Datatype[] = [];
-  private dict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
+  private locationDict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   private keywordList: KeywordEntry[] = [];
-  private allProp: Map<string, string[]> = new Map<string, string[]>();
-  private keywordItems: vscode.CompletionItem[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
 
-  constructor(librariesFolder: string) {
+  constructor(librariesFolder: string, languageProcessor: LanguageFileProcessor) {
     this.librariesFolder = librariesFolder;
     this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
+    this.languageProcessor = languageProcessor;
     this.readScriptProperties(this.scriptPropertiesPath);
   }
 
@@ -282,11 +282,9 @@ export class ScriptProperties {
     this.domParser = undefined;
     this.keywords = [];
     this.datatypes = [];
-    this.dict.clear();
+    this.locationDict.clear();
     this.typeDict.clear();
     this.keywordList = [];
-    this.allProp.clear();
-    this.keywordItems = [];
     this.descriptions.clear();
   }
 
@@ -314,8 +312,6 @@ export class ScriptProperties {
       // this.addTypeLiteral('boolean', '==false');
       logger.info('Parsed scriptproperties.xml');
     }
-
-    this.makeKeywords();
   }
 
   /**
@@ -334,6 +330,13 @@ export class ScriptProperties {
       logger.warn('Could not find closing scriptproperties tag - additional keywords not injected');
       return rawData;
     }
+  }
+
+  private processTextPatterns(text: string): string {
+    if (this.languageProcessor) {
+      return this.languageProcessor.replaceSimplePatternsByText(text);
+    }
+    return text;
   }
 
   private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty, script?: string) {
@@ -398,9 +401,7 @@ export class ScriptProperties {
             }
 
             // Try to get comment/description
-            if (element.hasAttribute('comment')) {
-              description = element.getAttribute('comment') || '';
-            } else if (result && result[0] === '@') {
+            if (result && result[0] === '@') {
               description = element.getAttribute(result.substring(1)) || '';
             } else if (result) {
               const descriptionMatches = process(result, item);
@@ -411,8 +412,11 @@ export class ScriptProperties {
                   .join('. ');
               }
             }
+            if (description === '' && element.hasAttribute('comment')) {
+              description = element.getAttribute('comment') || '';
+            }
           }
-          this.addKeywordProperty(name, value, script, type, description, ignorePrefix);
+          this.addKeywordProperty(name, value, script, type, this.processTextPatterns(description), ignorePrefix);
         }
       } else {
         logger.warn('No matches found for import: ' + select + '/' + targetName + ' in ' + src);
@@ -454,7 +458,7 @@ export class ScriptProperties {
   addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
     const range = new vscode.Range(start, end);
     const uri = vscode.Uri.file(file);
-    this.dict.set(cleanStr(name), new vscode.Location(uri, range));
+    this.locationDict.set(cleanStr(name), new vscode.Location(uri, range));
   }
 
   addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
@@ -501,22 +505,6 @@ export class ScriptProperties {
     }
   }
 
-  addTypeLiteral(key: string, val: string): void {
-    const k = cleanStr(key);
-    let v = cleanStr(val);
-    if (v.indexOf(k) === 0) {
-      v = v.slice(k.length + 1);
-    }
-    if (!this.typeDict.has(k)) {
-      this.addType(k);
-    }
-    const entry = this.typeDict.get(k);
-    if (entry === undefined) {
-      return;
-    }
-    // entry.addLiteral(v);
-  }
-
   addTypeProperty(key: string, prop: string, type?: string, details?: string): void {
     const k = cleanStr(key);
     if (!this.typeDict.has(k)) {
@@ -527,8 +515,6 @@ export class ScriptProperties {
       return;
     }
     entry.addProperty(prop, type, details);
-    const shortProp = prop.split('.')[0];
-    this.addToAllProp(shortProp, key);
   }
 
   addKeywordProperty(key: string, prop: string, script?: string, type?: string, details?: string, ignorePrefix: boolean = false): void {
@@ -542,22 +528,6 @@ export class ScriptProperties {
       prop = prop.substring(k.length + 1);
     }
     entry.addProperty(prop, type, details);
-  }
-
-  addToAllProp(value: string, type: string): void {
-    const v = cleanStr(value);
-    if ('$&<[{'.indexOf(v.slice(0, 1)) === -1) {
-      const types = this.allProp.get(v);
-      if (types && types.includes(type)) {
-        return;
-      } else if (types) {
-        types.push(type);
-      } else {
-        this.allProp.set(v, [type]);
-      }
-      // const item = ScriptProperties.createItem(v, ScriptProperties.getPropertyDescription(v, type));
-      // this.allPropItems.push(item);
-    }
   }
 
   addDescription(name: string, description: string): void {
@@ -620,17 +590,6 @@ export class ScriptProperties {
       items = [];
     }
     return new vscode.CompletionList(items, isIncomplete);
-  }
-
-  private makeKeywords(): void {
-    this.keywordItems = Array.from(this.typeDict.keys()).map((key) => {
-      const item = new vscode.CompletionItem(key, vscode.CompletionItemKind.Keyword);
-      if (this.descriptions.has(key)) {
-        item.documentation = new vscode.MarkdownString(this.descriptions.get(key));
-      }
-      this.keywordItems.push(item);
-      return item;
-    });
   }
 
   private static findRelevantPortion(text: string) {
@@ -1127,8 +1086,8 @@ export class ScriptProperties {
     const end = line.indexOf('"', position.character);
     let relevant = line.substring(start, end).trim().replace('"', '');
     do {
-      if (this.dict.has(relevant)) {
-        return this.dict.get(relevant);
+      if (this.locationDict.has(relevant)) {
+        return this.locationDict.get(relevant);
       }
       relevant = relevant.substring(relevant.indexOf('.') + 1);
     } while (relevant.length > 0);

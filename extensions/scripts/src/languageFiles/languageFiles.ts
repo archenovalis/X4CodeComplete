@@ -155,10 +155,10 @@ export class LanguageFileProcessor {
    * @param textId The text ID to search for
    * @returns The formatted language text string
    */
-  public findLanguageText(pageId: string, textId: string): string {
+  public findLanguageText(pageId: string, textId: string, getOnlyText: boolean = false): string {
     const config = vscode.workspace.getConfiguration('x4CodeComplete');
     let preferredLanguage: string = config.get('languageNumber') || '44';
-    const limitLanguage: boolean = config.get('limitLanguageOutput') || false;
+    const limitLanguage: boolean = config.get('limitLanguageOutput') || getOnlyText || false;
 
     const textData: Map<string, string> = this.languageData.get(`${pageId}:${textId}`);
     let result: string = '';
@@ -178,11 +178,32 @@ export class LanguageFileProcessor {
 
       for (const language of textDataKeys) {
         if (!limitLanguage || language == preferredLanguage) {
-          result += (result == '' ? '' : `  \n`) + `${language}: ${textData.get(language)}`;
+          result += (result == '' ? '' : `  \n`) + `${getOnlyText ? '' : language + ': '}${textData.get(language)}`;
         }
       }
     }
     return result;
+  }
+
+  private textReplacer(match, pageId, textId) {
+    const languageText = this.findLanguageText(pageId, textId, true);
+    return languageText || match;
+  }
+
+  private textHideComment(text: string): string {
+    // Remove comments from the text
+    const commentPattern = /\([^)]+\)/g;
+    return text.replace(commentPattern, '').trim();
+  }
+
+  public replaceSimplePatternsByText(text: string): string {
+    // Replace all simple {pageId,textId} patterns in the text with their language text
+    const tPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}/g;
+    let result = text;
+    while (tPattern.test(result)) {
+      result = result.replace(tPattern, (match, pageId, textId) => this.textReplacer(match, pageId, textId));
+    }
+    return this.textHideComment(result);
   }
 
   public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.ProviderResult<vscode.Hover> {

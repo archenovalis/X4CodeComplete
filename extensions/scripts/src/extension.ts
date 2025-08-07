@@ -1,17 +1,5 @@
 /**
  * X4CodeComplete VS Code Extension
- * 1. Imports and Dependencies
- * 2. Type Definitions and Constants
- * 3. Global Variables and Configuration
- * 4. Tracker Instances
- * 5. Utility Functions (Extension-specific)
- * 6. Extension Activation
- * 7. Language Provider Registrations
- * 8. Document Event Handlers
- * 9. Extension Startup Handler
- * 10. Configuration Change Handler
- * 11. Advanced Language Providers
- * 12. Extension Deactivation
  *
  * This extension provides intelligent code completion, diagnostics, and navigation
  * for X4: Foundations script files (AI Scripts and Mission Director Scripts).
@@ -63,7 +51,6 @@ import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
-import { log } from 'console';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
@@ -83,6 +70,10 @@ let languageProcessor: LanguageFileProcessor;
 let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
+let refreshTimeoutId: NodeJS.Timeout | undefined;
+
+/** Document selector for XML files */
+const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
 /** Document change tracking for batched processing */
 interface DocumentChange {
@@ -95,7 +86,6 @@ interface DocumentChange {
 
 const documentChanges = new Map<string, DocumentChange>();
 const urisToRefresh = new Set<string>();
-let refreshTimeoutId: NodeJS.Timeout | undefined;
 
 // ================================================================================================
 // 4. TRACKER INSTANCES
@@ -104,8 +94,6 @@ let refreshTimeoutId: NodeJS.Timeout | undefined;
 /** Global tracker instances for document analysis */
 const variableTracker = new VariableTracker();
 
-// Register language providers
-const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
 // ================================================================================================
@@ -277,7 +265,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
-      await languageProcessor
+      languageProcessor
         .loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
         .then(() => {
           logger.info('Language files reloaded successfully.');
@@ -335,7 +323,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Reinitialize script analysis services with fresh data
       // Note: These replace the minimal instances created during activation
       xsdReference = new XsdReference(configManager.librariesPath);
-      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
+      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
 
       // Update the completion provider with the fully loaded services
       scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
@@ -486,7 +474,7 @@ export function activate(context: vscode.ExtensionContext) {
       context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
           if (editor && scriptsMetadataSet(editor.document)) {
-            scriptDocumentTracker.trackScriptDocument(editor.document, true);
+            scriptDocumentTracker.trackScriptDocument(editor.document, false);
 
             // Process any pending document changes when switching editors
             // This ensures immediate processing rather than waiting for next content change
