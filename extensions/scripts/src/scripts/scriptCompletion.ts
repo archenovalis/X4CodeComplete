@@ -253,10 +253,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
       // If we're in an attribute value, check if it's a single-quoted string
       if (
-        attribute.name === 'comment' &&
-        !isSingleQuoteExclusion(element.name, attribute.name) &&
-        isInsideSingleQuotedString(document.getText(attribute.valueRange), document.offsetAt(position) - document.offsetAt(attribute.valueRange.start))
+        attribute.name === 'comment' ||
+        (!isSingleQuoteExclusion(element.name, attribute.name) &&
+          isInsideSingleQuotedString(document.getText(attribute.valueRange), document.offsetAt(position) - document.offsetAt(attribute.valueRange.start)))
       ) {
+        logger.debug(`Completion requested in comment or single-quoted attribute value: ${attribute.element.name}.${attribute.name}`);
         return undefined;
       }
 

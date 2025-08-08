@@ -457,13 +457,14 @@ export function activate(context: vscode.ExtensionContext) {
                   if (token.isCancellationRequested) return undefined;
                   // Check if it inside a single quoted string
                   if (
-                    attribute.name === 'comment' &&
-                    !isSingleQuoteExclusion(element.name, attribute.name) &&
-                    isInsideSingleQuotedString(
-                      document.getText(attribute.valueRange),
-                      document.offsetAt(position) - document.offsetAt(attribute.valueRange.start)
-                    )
+                    attribute.name === 'comment' ||
+                    (!isSingleQuoteExclusion(element.name, attribute.name) &&
+                      isInsideSingleQuotedString(
+                        document.getText(attribute.valueRange),
+                        document.offsetAt(position) - document.offsetAt(attribute.valueRange.start)
+                      ))
                   ) {
+                    logger.debug(`Hover will not be generated in comment or single-quoted attribute value: ${attribute.element.name}.${attribute.name}`);
                     return undefined;
                   }
 
