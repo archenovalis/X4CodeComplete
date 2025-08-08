@@ -206,7 +206,10 @@ export class LanguageFileProcessor {
     return this.textHideComment(result);
   }
 
-  public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.ProviderResult<vscode.Hover> {
+  public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.ProviderResult<vscode.Hover> {
+    if (token?.isCancellationRequested) {
+      return undefined;
+    }
     const tPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
     // matches:
     // {1015,7} or {1015, 7}
@@ -215,6 +218,9 @@ export class LanguageFileProcessor {
 
     const range = document.getWordRangeAtPosition(position, tPattern);
     if (range) {
+      if (token?.isCancellationRequested) {
+        return undefined;
+      }
       const text = document.getText(range);
       const matches = tPattern.exec(text);
       tPattern.lastIndex = 0; // Reset regex state
@@ -237,6 +243,9 @@ export class LanguageFileProcessor {
         }
 
         if (pageId && textId) {
+          if (token?.isCancellationRequested) {
+            return undefined;
+          }
           logger.debug(`Matched pattern: ${text}, pageId: ${pageId}, textId: ${textId}`);
           const languageText = this.findLanguageText(pageId, textId);
           if (languageText) {

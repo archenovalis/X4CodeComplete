@@ -588,15 +588,20 @@ export class ScriptProperties {
     textToProcessAfter: string,
     type: string,
     schema: string,
-    position: vscode.Position
-  ): vscode.CompletionList {
+    position: vscode.Position,
+    token?: vscode.CancellationToken
+  ): vscode.CompletionList | undefined {
     logger.debug('Processing expression: ', textToProcessBefore, ' Type: ', type, ' Schema: ', schema);
 
     // Clean the input text
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
 
+    if (token?.isCancellationRequested) return undefined;
+
     // Use step-by-step analysis
-    const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema);
+    const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema, token);
+
+    if (completions === undefined || token?.isCancellationRequested) return undefined;
 
     return this.makeCompletionList(completions);
   }
@@ -606,7 +611,7 @@ export class ScriptProperties {
    * Each part is either "identified & completed" or "identified & not completed"
    * Tracks contentType through the analysis
    */
-  private analyzeExpressionStepByStep(expression: string, schema: string): Map<string, vscode.CompletionItem> {
+  private analyzeExpressionStepByStep(expression: string, schema: string, token?: vscode.CancellationToken): Map<string, vscode.CompletionItem> | undefined {
     const items = new Map<string, vscode.CompletionItem>();
 
     // Split expression into parts (empty parts are valid and should be processed)
@@ -617,6 +622,8 @@ export class ScriptProperties {
     if (parts.length === 0) {
       return items;
     }
+
+    if (token?.isCancellationRequested) return undefined;
 
     // Step 1: First part must be a keyword
     const firstPart = parts[0];
@@ -632,6 +639,8 @@ export class ScriptProperties {
       }
       logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
     }
+
+    if (token?.isCancellationRequested) return undefined;
 
     // First part is identified and completed
     if (parts.length === 1) {
@@ -650,7 +659,11 @@ export class ScriptProperties {
 
       logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType?.name}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema);
+      if (token?.isCancellationRequested) return undefined;
+
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema, token);
+
+      if (result === undefined || token?.isCancellationRequested) return undefined;
 
       if (result.completions) {
         // Add completions and stop analysis
@@ -684,15 +697,21 @@ export class ScriptProperties {
     prefix: string,
     isLastPart: boolean,
     schema: string,
+    token?: vscode.CancellationToken,
     isCompletionMode: boolean = true
-  ): {
-    isCompleted: boolean;
-    completions?: Map<string, vscode.CompletionItem>;
-    newContentType?: KeywordEntry | TypeEntry;
-    property?: PropertyEntry;
-  } {
+  ):
+    | {
+        isCompleted: boolean;
+        completions?: Map<string, vscode.CompletionItem>;
+        newContentType?: KeywordEntry | TypeEntry;
+        property?: PropertyEntry;
+      }
+    | undefined {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
     const possibleTypes = contentType !== undefined ? [contentType] : Array.from(this.typeDict.values());
+
+    if (token?.isCancellationRequested) return undefined;
+
     const completions = new Map<string, vscode.CompletionItem>();
     for (const currentType of possibleTypes) {
       // if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
@@ -722,8 +741,13 @@ export class ScriptProperties {
         }
       }
 
+      if (token?.isCancellationRequested) return undefined;
+
       // Property not found exactly - try filtering by prefix using enhanced method
       const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema);
+
+      if (token?.isCancellationRequested) return undefined;
+
       if (filteredProperties.length === 1) {
         const property = filteredProperties[0];
         if (fullContentOnStep.split('.').length === property.name.split('.').length && !isCompletionMode) {
@@ -742,12 +766,20 @@ export class ScriptProperties {
         }
       }
 
+      if (token?.isCancellationRequested) return undefined;
+
       // No properties found
       if (isLastPart) {
         // Last part and nothing found - try without dot one more time using enhanced method
         const candidateProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, false, schema);
+
+        if (token?.isCancellationRequested) return undefined;
+
         if (candidateProperties.length > 0) {
           this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, completions, schema);
+
+          if (token?.isCancellationRequested) return undefined;
+
           // return { isCompleted: false, completions };
           continue; // Skip to next type
         }
@@ -999,8 +1031,9 @@ export class ScriptProperties {
    * Enhanced hover provider using the step-by-step expression analysis
    * This method leverages the same parsing logic as completion for more accurate hover information
    */
-  public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
+  public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.Hover | undefined {
     try {
+      if (token?.isCancellationRequested) return undefined;
       const schema = getDocumentScriptType(document);
       if (schema === '') {
         return undefined;
@@ -1014,12 +1047,13 @@ export class ScriptProperties {
 
       const fullExpression = document.getText(phraseRange);
       const cleanExpression = getSubStringByBreakSymbolForExpressions(fullExpression, true);
+      if (token?.isCancellationRequested) return undefined;
 
       logger.debug('Enhanced hover - Full expression:', fullExpression);
       logger.debug('Enhanced hover - Clean expression:', cleanExpression);
 
       // Analyze the expression to get type information
-      const hoverInfo = this.analyzeExpressionForHover(cleanExpression, schema, position, phraseRange, fullExpression);
+      const hoverInfo = this.analyzeExpressionForHover(cleanExpression, schema, position, phraseRange, fullExpression, token);
 
       if (hoverInfo) {
         return new vscode.Hover(hoverInfo.content, hoverInfo.range || phraseRange);
@@ -1044,7 +1078,8 @@ export class ScriptProperties {
     schema: string,
     position: vscode.Position,
     phraseRange: vscode.Range,
-    fullExpression: string
+    fullExpression: string,
+    token?: vscode.CancellationToken
   ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
     const parts = expression.split('.');
 
@@ -1053,6 +1088,7 @@ export class ScriptProperties {
     }
 
     logger.debug(`Enhanced hover analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
+    if (token?.isCancellationRequested) return undefined;
 
     const expressionIndex = fullExpression.indexOf(expression);
     const expressionLength = expression.length;
@@ -1091,6 +1127,8 @@ export class ScriptProperties {
       }
     }
 
+    if (token?.isCancellationRequested) return undefined;
+
     // If only one part, return keyword/variable information
     if (parts.length === 1) {
       if (currentContentType) {
@@ -1102,6 +1140,8 @@ export class ScriptProperties {
       };
     }
 
+    if (token?.isCancellationRequested) return undefined;
+
     // Step 2: Analyze property chain
     let prefix = '';
     let finalProperty: PropertyEntry | undefined;
@@ -1112,10 +1152,12 @@ export class ScriptProperties {
       const isLastPart = i === parts.length - 1;
       fullContentOnStep = fullContentOnStep ? `${fullContentOnStep}.${part}` : part;
       const contentOnStepLength = fullContentOnStep.length;
+      if (token?.isCancellationRequested) return undefined;
 
       logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, false);
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, token, false);
+      if (result === undefined || token?.isCancellationRequested) return undefined;
       if (result.isCompleted && result.property) {
         hoverContent.appendMarkdown(`- *Property`);
         if (!currentContentType && result.property.owner) {

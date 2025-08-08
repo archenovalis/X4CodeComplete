@@ -108,7 +108,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     const currentElement: XmlElement | undefined = element || parent;
     let previousElement: XmlElement | undefined = undefined;
     if (currentElement !== undefined) {
-      let elementName = this.xmlTracker.elementWithPosInName(document, position);
+      let elementName = this.xmlTracker.elementWithPosInName(document, position, element);
       let newPosition = elementName ? elementName.nameRange.start : position;
       let foundElement = currentElement;
       while (foundElement.range.isEqual(currentElement.range)) {
@@ -121,7 +121,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         if (foundElement === undefined || !foundElement.range.isEqual(currentElement.range)) {
           break; // No more elements found, exit the loop
         }
-        elementName = this.xmlTracker.elementWithPosInName(document, newPosition);
+        elementName = this.xmlTracker.elementWithPosInName(document, newPosition, foundElement);
         if (elementName) {
           break; // Found the element name, exit the loop
         }
@@ -193,10 +193,12 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
   public prepareCompletion(
     document: vscode.TextDocument,
     position: vscode.Position,
-    checkOnly: boolean,
     token?: vscode.CancellationToken,
     context?: vscode.CompletionContext
   ): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+    if (token?.isCancellationRequested) {
+      return undefined;
+    }
     const schema = getDocumentScriptType(document);
     if (schema == '') {
       return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
@@ -213,14 +215,10 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (element) {
       logger.debug(`Completion requested in element: ${element.name}`);
 
-      const elementByName = this.xmlTracker.elementWithPosInName(document, position);
+      const elementByName = this.xmlTracker.elementWithPosInName(document, position, element);
       if (elementByName) {
-        if (checkOnly) {
-          return []; // Return empty list if only checking
-        } else {
-          if (element.parent !== undefined) {
-            return this.elementNameCompletion(schema, document, position, element, element.parent, element.nameRange);
-          }
+        if (element.parent !== undefined) {
+          return this.elementNameCompletion(schema, document, position, element, element.parent, element.nameRange);
         }
       }
 
@@ -231,9 +229,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         logger.debug(`Completion requested in attribute name: ${attribute.element.name}.${attribute.name}`);
       }
       if (attribute) {
-        if (checkOnly) {
-          return []; // Return empty list if only checking
-        }
         if (elementAttributes !== undefined) {
           let prefix = document.getText(new vscode.Range(attribute.nameRange.start, position));
           if (prefix === '' && attribute.name !== '') {
@@ -249,15 +244,14 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         logger.debug(`Completion requested in attribute value: ${attribute.element.name}.${attribute.name}`);
       }
       if (attribute === undefined) {
-        if (checkOnly) {
-          return undefined; // Return undefined if only checking
-        }
         if (characterAtPosition !== '=' && elementAttributes !== undefined) {
           return ScriptCompletion.attributeNameCompletion(element, elementAttributes);
         } else {
           return ScriptCompletion.emptyCompletion; // Skip if not in an attribute value
         }
       }
+
+      // If we're in an attribute value, check if it's a single-quoted string
       if (
         !isSingleQuoteExclusion(element.name, attribute.name) &&
         isInsideSingleQuotedString(document.getText(attribute.valueRange), document.offsetAt(position) - document.offsetAt(attribute.valueRange.start))
@@ -265,12 +259,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         return undefined;
       }
 
-      if (checkOnly) {
-        return []; // Return empty list if only checking
-      }
-
       const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
-
       const attributeValue = document.getText(attribute.valueRange);
 
       // If we're in an attribute value, we need to check for possible values
@@ -284,6 +273,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
         }
         for (const [value, info] of attributeValues.entries()) {
+          if (token?.isCancellationRequested) return undefined;
           if (prefix == '' || value.startsWith(prefix)) {
             // Only add the item if it matches the prefix
             ScriptCompletion.addItem(items, 'value', value, new vscode.MarkdownString(info), attribute.valueRange);
@@ -311,6 +301,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
         if (valueCompletion.size > 0) {
           for (const [value, info] of valueCompletion.entries()) {
+            if (token?.isCancellationRequested) return undefined;
             ScriptCompletion.addItem(items, referencedItemAttributeDetected.type, value, info, attribute.valueRange);
           }
           return ScriptCompletion.makeCompletionList(items, prefix);
@@ -360,9 +351,15 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           position.translate(0, textToProcessAfter.length)
         );
         const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, position, prefix);
+
+        if (token?.isCancellationRequested) return undefined;
+
         for (const [variableName, info] of variableCompletion.entries()) {
           ScriptCompletion.addItem(items, 'variable', variableName, info, variableRange);
         }
+
+        if (token?.isCancellationRequested) return undefined;
+
         return ScriptCompletion.makeCompletionList(items, prefix);
       } else {
         // If cursor is inside a single-quoted string, don't provide script properties completions
@@ -383,27 +380,22 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           textToProcessAfter,
           attributeInfo?.type || 'undefined',
           schema,
-          position
+          position,
+          token
         );
       }
-      return ScriptCompletion.emptyCompletion; // Skip if no valid prefix found
     } else {
-      if (checkOnly) {
-        return undefined; // Return empty list if only checking
-      }
       const element = this.xmlTracker.elementWithPosIn(document, position);
+      if (token?.isCancellationRequested) return undefined;
       if (element) {
         logger.debug(`Completion requested in element range: ${element.name}`);
         return this.elementNameCompletion(schema, document, position, undefined, element);
       }
     }
-    if (checkOnly) {
-      return undefined; // Return empty list if only checking
-    }
     return ScriptCompletion.emptyCompletion; // Skip if not in an element range
   }
 
   public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context?: vscode.CompletionContext) {
-    return this.prepareCompletion(document, position, false, token, context);
+    return this.prepareCompletion(document, position, token, context);
   }
 }

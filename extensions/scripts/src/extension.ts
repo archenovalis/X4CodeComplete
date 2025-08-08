@@ -350,7 +350,12 @@ export function activate(context: vscode.ExtensionContext) {
            * Provides definition locations for symbols at a given position
            * Handles variables, actions, labels, and script properties
            */
-          provideDefinition: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Definition | undefined> => {
+          provideDefinition: async (
+            document: vscode.TextDocument,
+            position: vscode.Position,
+            token: vscode.CancellationToken
+          ): Promise<vscode.Definition | undefined> => {
+            if (token.isCancellationRequested) return undefined;
             const schema = getDocumentScriptType(document);
             if (schema === '') {
               return undefined;
@@ -366,6 +371,7 @@ export function activate(context: vscode.ExtensionContext) {
             // AI script specific features
             if (schema === aiScriptId) {
               for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                if (token.isCancellationRequested) return undefined;
                 const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
                 if (itemDefinition) {
                   logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
@@ -387,26 +393,34 @@ export function activate(context: vscode.ExtensionContext) {
            * Provides hover information for symbols at a given position
            * Shows documentation for elements, attributes, variables, labels, and actions
            */
-          provideHover: async (document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> => {
+          provideHover: async (
+            document: vscode.TextDocument,
+            position: vscode.Position,
+            token: vscode.CancellationToken
+          ): Promise<vscode.Hover | undefined> => {
+            if (token.isCancellationRequested) return undefined;
             const schema = getDocumentScriptType(document);
             if (schema === '') {
               return undefined;
             }
 
             // Check for language constructs first
-            const languageConstructsHover = languageProcessor.provideHover(document, position);
+            const languageConstructsHover = languageProcessor.provideHover(document, position, token);
             if (languageConstructsHover) {
               return languageConstructsHover;
             }
 
             // Check if we're in an XML element's start tag
             const element = xmlTracker.elementWithPosInStartTag(document, position);
+            if (token.isCancellationRequested) return undefined;
             if (element) {
               // Check if hovering over an element name
-              if (xmlTracker.elementWithPosInName(document, position)) {
+              if (xmlTracker.elementWithPosInName(document, position, element)) {
+                if (token.isCancellationRequested) return undefined;
                 const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
-                const hoverText = new vscode.MarkdownString();
+                if (token.isCancellationRequested) return undefined;
 
+                const hoverText = new vscode.MarkdownString();
                 if (elementInfo) {
                   const annotationText = XsdReference.extractAnnotationText(elementInfo);
                   hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
@@ -417,6 +431,7 @@ export function activate(context: vscode.ExtensionContext) {
               }
               // Check if hovering over an attribute name
               const attribute = xmlTracker.attributeWithPosInName(document, position, element);
+              if (token.isCancellationRequested) return undefined;
               if (attribute) {
                 const hoverText = new vscode.MarkdownString();
                 const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
@@ -424,6 +439,7 @@ export function activate(context: vscode.ExtensionContext) {
                   attribute.element.name,
                   attribute.element.hierarchy
                 );
+                if (token.isCancellationRequested) return undefined;
                 const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
 
                 if (attributeInfo) {
@@ -436,7 +452,9 @@ export function activate(context: vscode.ExtensionContext) {
                 return new vscode.Hover(hoverText, attribute.nameRange);
               } else {
                 const attribute = xmlTracker.attributeWithPosInValue(document, position, element);
+                if (token.isCancellationRequested) return undefined;
                 if (attribute) {
+                  if (token.isCancellationRequested) return undefined;
                   // Check if it inside a single quoted string
                   if (
                     isSingleQuoteExclusion(element.name, attribute.name) ||
@@ -448,6 +466,7 @@ export function activate(context: vscode.ExtensionContext) {
                     // AI script specific hover information
                     if (schema === aiScriptId) {
                       for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                        if (token.isCancellationRequested) return undefined;
                         // Check for action definitions
                         const itemHover = trackerInfo.tracker.getItemHover(document, position);
                         if (itemHover) {
@@ -458,6 +477,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                     // Check for variable hover
                     const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+                    if (token.isCancellationRequested) return undefined;
                     if (variableAtPosition) {
                       logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
                       const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
@@ -465,7 +485,8 @@ export function activate(context: vscode.ExtensionContext) {
                     }
 
                     // Final fallback to complex expressions hover implementation
-                    return scriptProperties.provideHover(document, position);
+                    if (token.isCancellationRequested) return undefined;
+                    return scriptProperties.provideHover(document, position, token);
                   }
                 }
               }
@@ -618,10 +639,12 @@ export function activate(context: vscode.ExtensionContext) {
         context: vscode.CodeActionContext,
         token: vscode.CancellationToken
       ): vscode.ProviderResult<(vscode.Command | vscode.CodeAction)[]> {
+        if (token.isCancellationRequested) return undefined;
         const actions: vscode.CodeAction[] = [];
 
         // Process each diagnostic to provide appropriate quick fixes
         for (const diagnostic of context.diagnostics) {
+          if (token.isCancellationRequested) return actions;
           if (diagnostic.source === 'X4CodeComplete') {
             // Handle undefined label errors
             if (diagnostic.code.toString().startsWith('undefined-')) {
@@ -632,6 +655,7 @@ export function activate(context: vscode.ExtensionContext) {
                   const itemName = diagnostic.message.match(/'(.+)'/)?.[1];
                   const similarItems = trackerInfo.tracker.getSimilarItems(document, itemName);
                   similarItems.forEach((similarItem) => {
+                    if (token.isCancellationRequested) return;
                     if (similarItem === itemName) {
                       return; // Skip if the item is the same as the one causing the error
                     }
@@ -658,7 +682,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Add reference provider for actions in AIScript
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider(xmlSelector, {
-      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext) {
+      provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext, token: vscode.CancellationToken) {
+        if (token.isCancellationRequested) return undefined;
         const schema = getDocumentScriptType(document);
         if (schema == '') {
           return undefined;
@@ -672,6 +697,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         if (schema == aiScriptId) {
           for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+            if (token.isCancellationRequested) return undefined;
             const itemReferences = trackerInfo.tracker.getItemReferences(document, position);
             if (itemReferences) {
               logger.debug(`References found for ${itemType}: ${itemReferences.name}`);
@@ -687,7 +713,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Register rename provider for symbols (variables, actions, labels)
   context.subscriptions.push(
     vscode.languages.registerRenameProvider(xmlSelector, {
-      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string) {
+      provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string, token: vscode.CancellationToken) {
+        if (token.isCancellationRequested) return undefined;
         const schema = getDocumentScriptType(document);
         if (schema == '') {
           return undefined; // Skip if the document is not valid
@@ -708,6 +735,7 @@ export function activate(context: vscode.ExtensionContext) {
           logger.debug(`Locations to update:`, locations);
           const workspaceEdit = new vscode.WorkspaceEdit();
           locations.forEach((location) => {
+            if (token.isCancellationRequested) return;
             // Debug log: Print each edit
             const rangeText = location.range ? document.getText(location.range) : '';
             const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;

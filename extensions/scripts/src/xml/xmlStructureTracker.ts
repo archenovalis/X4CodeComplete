@@ -461,22 +461,35 @@ export class XmlStructureTracker {
     return elements.length > 0 ? elements[0] : undefined;
   }
 
-  public elementWithPosInStartTag(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
+  public elementWithPosInStartTag(document: vscode.TextDocument, position: vscode.Position, element?: XmlElement): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
 
-    return rootElements.find((element) => element.startTagRange.contains(position));
+    if (element) {
+      // If an element is provided, check its start tag range
+      if (element.startTagRange.contains(position)) {
+        return element;
+      }
+    } else {
+      return rootElements.find((element) => element.startTagRange.contains(position));
+    }
   }
 
-  public elementWithPosInName(document: vscode.TextDocument, position: vscode.Position): XmlElement | undefined {
+  public elementWithPosInName(document: vscode.TextDocument, position: vscode.Position, element?: XmlElement): XmlElement | undefined {
     const documentInfo = this.documentInfoMap.get(document);
     if (!documentInfo) return undefined;
     const rootElements = documentInfo.elements;
     if (!rootElements) return undefined;
-
-    return rootElements.find((element) => element.nameRange.contains(position));
+    if (element) {
+      // If an element is provided, check its name range
+      if (element.nameRange.contains(position)) {
+        return element;
+      }
+    } else {
+      return rootElements.find((element) => element.nameRange.contains(position));
+    }
   }
 
   public getOffsets(document: vscode.TextDocument): Offsets | undefined {
