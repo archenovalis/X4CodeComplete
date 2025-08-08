@@ -5,7 +5,7 @@ import { getDocumentScriptType } from './scriptsMetadata';
 import { ScriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
-import { getNearestBreakSymbolIndexForVariables } from './scriptUtilities';
+import { getNearestBreakSymbolIndexForVariables, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
 import { logger } from '../logger/logger';
 
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
@@ -258,6 +258,13 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           return ScriptCompletion.emptyCompletion; // Skip if not in an attribute value
         }
       }
+      if (
+        !isSingleQuoteExclusion(element.name, attribute.name) &&
+        isInsideSingleQuotedString(document.getText(attribute.valueRange), document.offsetAt(position) - document.offsetAt(attribute.valueRange.start))
+      ) {
+        return undefined;
+      }
+
       if (checkOnly) {
         return []; // Return empty list if only checking
       }
@@ -358,6 +365,19 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       } else {
+        // If cursor is inside a single-quoted string, don't provide script properties completions
+        const lineText = document.lineAt(position.line).text;
+        const upto = lineText.slice(0, position.character);
+        let inSingle = false,
+          inDouble = false;
+        for (let i = 0; i < upto.length; i++) {
+          const ch = upto[i];
+          if (ch === '"' && !inSingle) inDouble = !inDouble;
+          else if (ch === "'" && !inDouble) inSingle = !inSingle;
+        }
+        if (inSingle) {
+          return ScriptCompletion.emptyCompletion;
+        }
         return this.scriptProperties.makeCompletionsFromExpression(
           textToProcessBefore,
           textToProcessAfter,

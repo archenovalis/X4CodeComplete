@@ -1,11 +1,13 @@
 // This file contains utility functions for handling string breakouts in X4 scripting.
-export const breakoutsForExpressions: string[] = [' ', "'", '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
+export const breakoutsForExpressions: string[] = [' ', '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
 export const breakoutsForExpressionsBefore: string[] = ['[', '('];
 export const breakoutsForExpressionsAfter: string[] = [']', ')'];
 
 export const breakoutsForVariables: string[] = ['.'].concat(breakoutsForExpressions);
 export const breakoutsForVariablesBefore: string[] = ['{'].concat(breakoutsForExpressionsBefore);
 export const breakoutsForVariablesAfter: string[] = ['}'].concat(breakoutsForExpressionsAfter);
+
+const singleQuoteExclusionSet: Set<string> = new Set(['create_order.id']);
 
 export function getNearestBreakSymbolIndex(text: string, breakouts: string[], before: boolean): number {
   const searchRange = before ? text.length - 1 : 0;
@@ -43,4 +45,32 @@ export function getNearestBreakSymbolIndexForExpressions(text: string, before: b
 export function getSubStringByBreakSymbolForExpressions(text: string, before: boolean): string {
   const breakouts = before ? breakoutsForExpressions.concat(breakoutsForExpressionsBefore) : breakoutsForExpressions.concat(breakoutsForExpressionsAfter);
   return getSubStringByBreakSymbol(text, breakouts, before);
+}
+
+/**
+ * Checks if the caret is currently inside a single-quoted string on the given line.
+ * Double quotes toggle a separate state and block single-quote toggling while active.
+ *
+ * Example:
+ *   line: foo="bar" baz='qux|'
+ *   caret at | -> returns true
+ */
+export function isInsideSingleQuotedString(line: string, caret: number): boolean {
+  const upto = line.slice(0, Math.max(0, caret));
+  // Count raw single quotes before the caret. If odd -> inside, if even -> outside.
+  // This skips scanning non-quote chars one-by-one and avoids regex allocations.
+  let count = 0;
+  let idx = -1;
+  while ((idx = upto.indexOf("'", idx + 1)) !== -1) {
+    count++;
+  }
+  return (count & 1) === 1;
+}
+
+export function isSingleQuoteExclusion(element: string, attribute: string): boolean {
+  // Exclude single-quoted strings in attributes
+  if (singleQuoteExclusionSet.has([element, attribute].join('.'))) {
+    return true;
+  }
+  return false;
 }

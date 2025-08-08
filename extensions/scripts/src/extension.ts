@@ -51,6 +51,7 @@ import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
+import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
@@ -401,8 +402,21 @@ export function activate(context: vscode.ExtensionContext) {
             // Check if we're in an XML element's start tag
             const element = xmlTracker.elementWithPosInStartTag(document, position);
             if (element) {
+              // Check if hovering over an element name
+              if (xmlTracker.elementWithPosInName(document, position)) {
+                const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+                const hoverText = new vscode.MarkdownString();
+
+                if (elementInfo) {
+                  const annotationText = XsdReference.extractAnnotationText(elementInfo);
+                  hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
+                } else {
+                  hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`  \n`);
+                }
+                return new vscode.Hover(hoverText, element.nameRange);
+              }
               // Check if hovering over an attribute name
-              const attribute = xmlTracker.attributeWithPosInName(document, position);
+              const attribute = xmlTracker.attributeWithPosInName(document, position, element);
               if (attribute) {
                 const hoverText = new vscode.MarkdownString();
                 const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(
@@ -420,43 +434,42 @@ export function activate(context: vscode.ExtensionContext) {
                   hoverText.appendMarkdown(`**${attribute.name}**: \`Wrong attribute!\`  \n`);
                 }
                 return new vscode.Hover(hoverText, attribute.nameRange);
-              }
-              // Check if hovering over an element name
-              else if (xmlTracker.elementWithPosInName(document, position)) {
-                const elementInfo = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
-                const hoverText = new vscode.MarkdownString();
+              } else {
+                const attribute = xmlTracker.attributeWithPosInValue(document, position, element);
+                if (attribute) {
+                  // Check if it inside a single quoted string
+                  if (
+                    isSingleQuoteExclusion(element.name, attribute.name) ||
+                    !isInsideSingleQuotedString(
+                      document.getText(attribute.valueRange),
+                      document.offsetAt(position) - document.offsetAt(attribute.valueRange.start)
+                    )
+                  ) {
+                    // AI script specific hover information
+                    if (schema === aiScriptId) {
+                      for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                        // Check for action definitions
+                        const itemHover = trackerInfo.tracker.getItemHover(document, position);
+                        if (itemHover) {
+                          return itemHover;
+                        }
+                      }
+                    }
 
-                if (elementInfo) {
-                  const annotationText = XsdReference.extractAnnotationText(elementInfo);
-                  hoverText.appendMarkdown(`**${element.name}**: ${annotationText ? '`' + annotationText + '`' : ''}  \n`);
-                } else {
-                  hoverText.appendMarkdown(`**${element.name}**: \`Wrong element!\`  \n`);
+                    // Check for variable hover
+                    const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+                    if (variableAtPosition) {
+                      logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
+                      const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
+                      return new vscode.Hover(hoverText, variableAtPosition.location.range);
+                    }
+
+                    // Final fallback to complex expressions hover implementation
+                    return scriptProperties.provideHover(document, position);
+                  }
                 }
-                return new vscode.Hover(hoverText, element.nameRange);
               }
             }
-
-            // AI script specific hover information
-            if (schema === aiScriptId) {
-              for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-                // Check for action definitions
-                const itemHover = trackerInfo.tracker.getItemHover(document, position);
-                if (itemHover) {
-                  return itemHover;
-                }
-              }
-            }
-
-            // Check for variable hover
-            const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-            if (variableAtPosition) {
-              logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
-              const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
-              return new vscode.Hover(hoverText, variableAtPosition.location.range);
-            }
-
-            // Final fallback to complex expressions hover implementation
-            return scriptProperties.provideHover(document, position);
           },
         })
       );

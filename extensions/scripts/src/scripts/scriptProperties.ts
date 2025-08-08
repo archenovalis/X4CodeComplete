@@ -1005,7 +1005,6 @@ export class ScriptProperties {
       if (schema === '') {
         return undefined;
       }
-
       // Get the expression at the cursor position
       const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
       const phraseRange = document.getWordRangeAtPosition(position, phraseRegex);
