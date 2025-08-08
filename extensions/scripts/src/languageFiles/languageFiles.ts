@@ -55,18 +55,43 @@ export class LanguageFileProcessor {
       }
     }
 
+    // Build allowed language set when limiting output
+    const allowedLanguageIds: Set<string> = new Set<string>(['*']);
+    if (preferredLanguage) {
+      allowedLanguageIds.add(preferredLanguage);
+      if (preferredLanguage !== '44') allowedLanguageIds.add('44');
+    } else {
+      allowedLanguageIds.add('44');
+    }
+
     // Gather files to parse
     const filesToParse: string[] = [];
     for (const tDir of tDirectories) {
       try {
         const files = await fsp.readdir(tDir);
+        // Detect wildcard file presence in this directory (0001.xml -> '*')
+        let hasWildcardInDir = false;
+        for (const f of files) {
+          if (!f.startsWith('0001') || !f.endsWith('.xml')) continue;
+          const langId = this.getLanguageIdFromFileName(f);
+          if (langId === '*') {
+            hasWildcardInDir = true;
+            break;
+          }
+        }
+
+        // Build allowed set for this directory
+        let allowedForDir = allowedLanguageIds;
+        if (limitLanguage && preferredLanguage !== '44' && hasWildcardInDir && allowedLanguageIds.has('44')) {
+          // If wildcard exists and 44 was only added implicitly, skip 44 in this dir
+          allowedForDir = new Set(allowedLanguageIds);
+          allowedForDir.delete('44');
+        }
         for (const file of files) {
           if (!file.startsWith('0001') || !file.endsWith('.xml')) continue;
           const languageId = this.getLanguageIdFromFileName(file);
-          if (limitLanguage && languageId !== preferredLanguage && languageId !== '*' && languageId !== '44') {
-            // always show 0001.xml and 0001-0044.xml (any language and english, to assist with creating translations)
-            continue;
-          }
+          // If the user enabled limiting, only include configured language and 44 (plus '*')
+          if (limitLanguage && !allowedForDir.has(languageId)) continue;
           filesToParse.push(path.join(tDir, file));
         }
       } catch (err) {
