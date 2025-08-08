@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
 import * as sax from 'sax';
 import { logger } from '../logger/logger';
@@ -21,73 +22,88 @@ export class LanguageFileProcessor {
     this.languageData.clear();
     logger.info('Loading Language Files.');
 
-    return new Promise((resolve, reject) => {
+    const tDirectories: string[] = [];
+    const rootTPath = path.join(basePath || '', 't');
+
+    const pathIsDir = async (p: string): Promise<boolean> => {
       try {
-        const tDirectories: string[] = [];
-        let pendingFiles = 0; // Counter to track pending file parsing operations
-        let countProcessed = 0; // Counter to track processed files
-
-        // Collect all valid 't' directories
-        const rootTPath = path.join(basePath, 't');
-        if (fs.existsSync(rootTPath) && fs.statSync(rootTPath).isDirectory()) {
-          tDirectories.push(rootTPath);
-        }
-
-        // Check 't' directories under languageFilesFolder subdirectories
-        if (fs.existsSync(extensionsFolder) && fs.statSync(extensionsFolder).isDirectory()) {
-          const subdirectories = fs
-            .readdirSync(extensionsFolder, { withFileTypes: true })
-            .filter((item) => item.isDirectory())
-            .map((item) => item.name);
-
-          for (const subdir of subdirectories) {
-            const tPath = path.join(extensionsFolder, subdir, 't');
-            if (fs.existsSync(tPath) && fs.statSync(tPath).isDirectory()) {
-              tDirectories.push(tPath);
-            }
-          }
-        }
-
-        // Process all found 't' directories
-        for (const tDir of tDirectories) {
-          const files = fs.readdirSync(tDir).filter((file) => file.startsWith('0001') && file.endsWith('.xml'));
-
-          for (const file of files) {
-            const languageId = this.getLanguageIdFromFileName(file);
-            if (limitLanguage && languageId !== preferredLanguage && languageId !== '*' && languageId !== '44') {
-              // always show 0001.xml and 0001-0044.xml (any language and english, to assist with creating translations)
-              continue;
-            }
-            const filePath = path.join(tDir, file);
-            pendingFiles++; // Increment the counter for each file being processed
-
-            try {
-              this.parseLanguageFile(filePath, () => {
-                pendingFiles--; // Decrement the counter when a file is processed
-                countProcessed++; // Increment the counter for processed files
-                if (pendingFiles === 0) {
-                  logger.info(`Loaded ${countProcessed} language files from ${tDirectories.length} 't' directories.`);
-                  resolve(); // Resolve the promise when all files are processed
-                }
-              });
-            } catch (fileError) {
-              logger.info(`Error reading ${file} in ${tDir}: ${fileError}`);
-              pendingFiles--; // Decrement the counter even if there's an error
-              if (pendingFiles === 0) {
-                resolve(); // Resolve the promise when all files are processed
-              }
-            }
-          }
-        }
-
-        if (pendingFiles === 0) {
-          resolve(); // Resolve immediately if no files are found
-        }
-      } catch (error) {
-        logger.info(`Error loading language files: ${error}`);
-        reject(error); // Reject the promise if there's an error
+        const stat = await fsp.stat(p);
+        return stat.isDirectory();
+      } catch {
+        return false;
       }
-    });
+    };
+
+    // Collect root t directory
+    if (basePath && (await pathIsDir(rootTPath))) {
+      tDirectories.push(rootTPath);
+    }
+
+    // Collect all sub-extension t directories
+    if (extensionsFolder && (await pathIsDir(extensionsFolder))) {
+      try {
+        const entries = await fsp.readdir(extensionsFolder, { withFileTypes: true });
+        for (const dirent of entries) {
+          if (!dirent.isDirectory()) continue;
+          const tPath = path.join(extensionsFolder, dirent.name, 't');
+          if (await pathIsDir(tPath)) {
+            tDirectories.push(tPath);
+          }
+        }
+      } catch (err) {
+        logger.info(`Error reading extensions folder '${extensionsFolder}': ${err}`);
+      }
+    }
+
+    // Gather files to parse
+    const filesToParse: string[] = [];
+    for (const tDir of tDirectories) {
+      try {
+        const files = await fsp.readdir(tDir);
+        for (const file of files) {
+          if (!file.startsWith('0001') || !file.endsWith('.xml')) continue;
+          const languageId = this.getLanguageIdFromFileName(file);
+          if (limitLanguage && languageId !== preferredLanguage && languageId !== '*' && languageId !== '44') {
+            // always show 0001.xml and 0001-0044.xml (any language and english, to assist with creating translations)
+            continue;
+          }
+          filesToParse.push(path.join(tDir, file));
+        }
+      } catch (err) {
+        logger.info(`Error reading directory '${tDir}': ${err}`);
+      }
+      // Yield to the event loop to keep host responsive between directories
+      await Promise.resolve();
+    }
+
+    if (filesToParse.length === 0) {
+      logger.info(`No language files found across ${tDirectories.length} 't' directories.`);
+      return;
+    }
+
+    // Parse files with moderate concurrency to avoid I/O bursts
+    const concurrency = 8;
+    let processed = 0;
+    const runWorker = async (index: number) => {
+      while (index < filesToParse.length) {
+        const filePath = filesToParse[index];
+        try {
+          await this.parseLanguageFileAsync(filePath);
+        } catch (e) {
+          logger.info(`Error parsing language file '${filePath}': ${e}`);
+        } finally {
+          processed++;
+        }
+        index += concurrency;
+        // Yield occasionally
+        if (processed % 10 === 0) await Promise.resolve();
+      }
+    };
+
+    // Launch workers
+    await Promise.all(Array.from({ length: Math.min(concurrency, filesToParse.length) }, (_, i) => runWorker(i)));
+
+    logger.info(`Loaded ${processed} language files from ${tDirectories.length} 't' directories.`);
   }
 
   /**
@@ -147,6 +163,13 @@ export class LanguageFileProcessor {
     });
 
     fs.createReadStream(filePath).pipe(parser);
+  }
+
+  // Promise-based wrapper around parseLanguageFile for async/await usage
+  private parseLanguageFileAsync(filePath: string): Promise<void> {
+    return new Promise((resolve) => {
+      this.parseLanguageFile(filePath, () => resolve());
+    });
   }
 
   /**
