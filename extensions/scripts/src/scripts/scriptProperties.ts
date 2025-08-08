@@ -35,10 +35,6 @@ class PropertyEntry {
   }
 
   public putAsCompletionItem(items: Map<string, vscode.CompletionItem>, range?: vscode.Range) {
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(this.name) > -1) {
-      return;
-    }
-
     if (items.has(this.name)) {
       logger.debug('\t\tSkipped existing completion: ', this.name);
       return;
@@ -98,9 +94,6 @@ class TypeEntry {
   }
 
   public prepareItems(prefix: string, items: Map<string, vscode.CompletionItem>, range?: vscode.Range): void {
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype', 'undefined'].indexOf(this.name) > -1) {
-      return;
-    }
     logger.debug('Building Type: ', this.name, 'prefix: ', prefix);
 
     if (items.size > 1000) {
@@ -173,7 +166,7 @@ interface Datatype {
 
 export class ScriptProperties {
   private static readonly typesToIgnore: string[] = ['undefined', 'expression'];
-  private static readonly regexLookupElement = /<([^>]+)>/;
+  private static readonly regexLookupElement = /^<([^>]+)>$/;
   // Removed the incorrect lookup mapping for class->classlookup
   // Define additional keywords to inject
   private static readonly additionalKeywords: string = `
@@ -541,11 +534,6 @@ export class ScriptProperties {
   }
 
   addElement(items: Map<string, vscode.CompletionItem>, complete: string, info?: string, range?: vscode.Range): void {
-    // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(complete) > -1) {
-      return;
-    }
-
     if (items.has(complete)) {
       logger.debug('\t\tSkipped existing completion: ', complete);
       return;
@@ -914,7 +902,7 @@ export class ScriptProperties {
       if (propName !== `<${placeholderName}>`) {
         description.push(`*Expanded from*: \`${keyword.name} for <${placeholderName}>\` → \`${propName}\``);
         if (prop.details) {
-          description.push(`**${propName}**: ${prop.details}`);
+          description.push(`**${propName.replace(/([<>])/g, '\\$1')}**: ${prop.details}`);
         }
       }
       this.addToUniqueCompletions(expandedCompletion, items, uniqueCompletions, description);
