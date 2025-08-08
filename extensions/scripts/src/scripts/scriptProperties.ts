@@ -1127,6 +1127,7 @@ export class ScriptProperties {
           hoverContent.appendMarkdown(`: ${result.property.details}\n\n`);
         }
         if (positionInExpression < contentOnStepLength) {
+          hoverContent.appendMarkdown(`**Result**: *${result.newContentType?.name || 'any'}*\n\n`);
           return {
             content: hoverContent,
             range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + contentOnStepLength)),
