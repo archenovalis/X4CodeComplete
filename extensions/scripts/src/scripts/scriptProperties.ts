@@ -8,6 +8,7 @@ import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
 import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
 import { LanguageFileProcessor } from '../languageFiles/languageFiles';
+import { variablePatternExact } from './scriptVariables';
 
 class PropertyEntry {
   name: string;
@@ -717,7 +718,6 @@ export class ScriptProperties {
     const parts = expression.split('.');
 
     logger.warn(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
-    console.log(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
 
     if (parts.length === 0) {
       return items;
@@ -808,35 +808,30 @@ export class ScriptProperties {
         const property = currentType.getProperty(fullContentOnStep)!;
         logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
 
-        if (isLastPart) {
+        if (isLastPart && isCompletionMode) {
           // Last part and found - provide next level completions if property has a type
           const completions = new Map<string, vscode.CompletionItem>();
           if (property.type) {
             const typeEntry = this.typeDict.get(property.type);
             if (typeEntry) {
               typeEntry.prepareItems('', completions);
+            } else {
+              logger.warn(`Type entry not found for property type: "${property.type}"`);
             }
           }
           return { isCompleted: true, completions };
         } else {
           // Not last part - continue with the property's type
-          let newContentType = property.type ? this.typeDict.get(property.type) : undefined;
-          if (newContentType && newContentType.getProperties().size === 0 && isCompletionMode) {
-            // No properties found - provide completions for the type
-            newContentType = undefined; // Reset to undefined to indicate no further properties
-          }
-          if (newContentType) {
-            return { isCompleted: true, newContentType, property };
-          } else {
-            // Property has no type - can't continue
-            // return { isCompleted: false };
-            continue; // Skip to next type
-          }
+          const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+          return { isCompleted: true, newContentType, property };
         }
       }
 
       // Property not found exactly - try filtering by prefix using enhanced method
       const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema);
+      if (filteredProperties.length === 1 && filteredProperties[0].name === '$<variable>') {
+        return { isCompleted: true, newContentType: undefined, property: filteredProperties[0] };
+      }
 
       if (filteredProperties.length > 0) {
         logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
@@ -1027,7 +1022,7 @@ export class ScriptProperties {
       const nameSplitted = name.split('.');
       if (nameSplitted.length >= countItems) {
         const maxItems = appendDot ? countItems : countItems - 1;
-        let matched = true;
+        let matched = maxItems > 0;
 
         for (let i = 0; i < maxItems; i++) {
           const prefixPart = prefixSplitted[i];
@@ -1047,6 +1042,10 @@ export class ScriptProperties {
             prefixPart.endsWith('}') &&
             namePart.endsWith('}')
           ) {
+            continue;
+          }
+
+          if (variablePatternExact.test(prefixPart) && namePart === '$<variable>') {
             continue;
           }
 
@@ -1385,10 +1384,6 @@ export class ScriptProperties {
 
       logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
 
-      // if (!finalContentType) {
-      //   break;
-      // }
-
       const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, false);
       if (result.isCompleted && result.property) {
         hoverContent.appendMarkdown(`- *Property:* \n\n  - **${result.property.name}**`);
@@ -1403,55 +1398,19 @@ export class ScriptProperties {
         }
         if (!isLastPart) {
           currentContentType = result.newContentType;
-          hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
-          if (currentContentType instanceof KeywordEntry && currentContentType.details) {
-            hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+          if (currentContentType) {
+            hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
+            if (currentContentType instanceof KeywordEntry && currentContentType.details) {
+              hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+            }
+            hoverContent.appendMarkdown('\n\n');
           }
-          hoverContent.appendMarkdown('\n\n');
           prefix = ''; // Reset prefix for next property step
         }
       } else {
         prefix = prefix ? `${prefix}.${part}` : part;
       }
-
-      // // Try to find exact property match
-      // if (finalContentType.hasProperty(fullContentOnStep)) {
-      //   const property = finalContentType.getProperty(fullContentOnStep)!;
-      //   finalProperty = property;
-
-      //   if (isLastPart) {
-      //     // This is the final property - add detailed information
-      //     this.addPropertyToHover(property, hoverContent, fullContentOnStep, finalContentType);
-      //     return { content: hoverContent };
-      //   } else {
-      //     // Continue with the property's type
-      //     if (property.type) {
-      //       finalContentType = this.typeDict.get(property.type);
-      //       prefix = ''; // Reset prefix
-      //     } else {
-      //       break; // No type information to continue
-      //     }
-      //   }
-      // } else {
-      //   // Try filtering by prefix for partial matches
-      //   const filteredProperties = this.filterPropertiesByPrefix(finalContentType, fullContentOnStep, false, schema);
-
-      //   if (filteredProperties.length > 0 && isLastPart) {
-      //     // Show information about partial matches
-      //     this.addPartialMatchesToHover(filteredProperties, hoverContent, fullContentOnStep, finalContentType);
-      //     return { content: hoverContent };
-      //   } else {
-      //     // Add to prefix and continue
-      //     prefix = prefix ? `${prefix}.${part}` : part;
-      //   }
-      // }
     }
-
-    // If we have a final content type but no specific property, show type information
-    // if (finalContentType && !finalProperty) {
-    //   this.addTypePropertiesToHover(finalContentType, hoverContent, schema);
-    //   return { content: hoverContent };
-    // }
 
     return undefined;
   }

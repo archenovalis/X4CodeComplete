@@ -75,6 +75,9 @@ let refreshTimeoutId: NodeJS.Timeout | undefined;
 /** Document selector for XML files */
 const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
+/** Completion trigger characters for script completion */
+const completionTriggerCharacters = ['.', '"', '{', ' ', '$'];
+
 /** Document change tracking for batched processing */
 interface DocumentChange {
   uri: vscode.Uri;
@@ -164,7 +167,7 @@ function scheduleUriRefresh(): void {
 /**
  * Processes all queued document changes in batch
  */
-function processQueuedDocumentChanges(): void {
+const processQueuedDocumentChanges = (): void => {
   const urisToProcess = Array.from(urisToRefresh);
 
   // logger.debug(`Processing ${urisToProcess.length} queued document changes`);
@@ -205,7 +208,7 @@ function processQueuedDocumentChanges(): void {
     // Clean up processed change
     documentChanges.delete(uriString);
   }
-}
+};
 
 /**
  * Handles document change events with batching and debouncing
@@ -326,7 +329,7 @@ export function activate(context: vscode.ExtensionContext) {
       scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
 
       // Update the completion provider with the fully loaded services
-      scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker);
+      scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker, processQueuedDocumentChanges);
       scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
 
       logger.info('Heavy services initialization completed.');
@@ -336,7 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
       // ================================================================================================
 
       // Register completion provider with trigger characters
-      const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, '.', '"', '{', ' ', '$');
+      const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, ...completionTriggerCharacters);
       context.subscriptions.push(disposableCompleteProvider);
 
       // Register definition provider for go-to-definition functionality

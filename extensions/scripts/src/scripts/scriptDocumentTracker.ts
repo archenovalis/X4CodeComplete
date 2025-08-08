@@ -1,14 +1,9 @@
 import * as vscode from 'vscode';
 import { XsdReference } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
-import { VariableTracker } from './scriptVariables';
+import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId } from './scriptsMetadata';
-import { log } from 'console';
-
-/** Regular expressions and constants for pattern matching */
-const VARIABLE_PATTERN = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
-const TABLE_KEY_PATTERN = /table\[/;
 
 export class ScriptDocumentTracker {
   private xmlTracker: XmlStructureTracker;
@@ -226,9 +221,8 @@ export class ScriptDocumentTracker {
             }
 
             // Process variables within attribute values
-            const tableIsFound = TABLE_KEY_PATTERN.test(attrValue);
+            const tableIsFound = tableKeyPattern.test(attrValue);
             let match: RegExpExecArray | null;
-            const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
             let priority = -1;
 
             // Determine variable definition priority based on script section

@@ -25,12 +25,20 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
   private xmlTracker: XmlStructureTracker;
   private scriptProperties: ScriptProperties;
   private variablesTracker: VariableTracker;
+  private processQueuedDocumentChanges: () => void;
 
-  constructor(xsdReference: XsdReference, xmlStructureTracker: XmlStructureTracker, scriptProperties: ScriptProperties, variablesTracker: VariableTracker) {
+  constructor(
+    xsdReference: XsdReference,
+    xmlStructureTracker: XmlStructureTracker,
+    scriptProperties: ScriptProperties,
+    variablesTracker: VariableTracker,
+    processQueuedDocumentChanges: () => void
+  ) {
     this.xsdReference = xsdReference;
     this.xmlTracker = xmlStructureTracker;
     this.scriptProperties = scriptProperties;
     this.variablesTracker = variablesTracker;
+    this.processQueuedDocumentChanges = processQueuedDocumentChanges;
   }
 
   private static getType(type: string): vscode.CompletionItemKind {
@@ -193,6 +201,9 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (schema == '') {
       return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
     }
+    if (this.processQueuedDocumentChanges) {
+      this.processQueuedDocumentChanges();
+    }
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;
 
@@ -215,7 +226,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
       const elementAttributes: EnhancedAttributeInfo[] = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
 
-      let attribute = this.xmlTracker.attributeWithPosInName(document, position);
+      let attribute = this.xmlTracker.attributeWithPosInName(document, position, element);
       if (attribute) {
         logger.debug(`Completion requested in attribute name: ${attribute.element.name}.${attribute.name}`);
       }

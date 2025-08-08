@@ -409,10 +409,10 @@ export class XmlStructureTracker {
     }
   }
 
-  public attributeWithPosInName(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
+  public attributeWithPosInName(document: vscode.TextDocument, position: vscode.Position, element?: XmlElement): XmlElementAttribute | undefined {
     try {
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
+      const elementContainingPosition: XmlElement | undefined = element || this.elementWithPosInStartTag(document, position);
 
       if (!elementContainingPosition) return undefined;
 
@@ -429,10 +429,10 @@ export class XmlStructureTracker {
     return undefined;
   }
 
-  public attributeWithPosInValue(document: vscode.TextDocument, position: vscode.Position): XmlElementAttribute | undefined {
+  public attributeWithPosInValue(document: vscode.TextDocument, position: vscode.Position, element?: XmlElement): XmlElementAttribute | undefined {
     try {
       // Step 1: Find all elements containing the position
-      const elementContainingPosition: XmlElement | undefined = this.elementWithPosInStartTag(document, position);
+      const elementContainingPosition: XmlElement | undefined = element || this.elementWithPosInStartTag(document, position);
 
       if (!elementContainingPosition) return undefined;
 
