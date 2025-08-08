@@ -93,7 +93,7 @@ class TypeEntry {
     return result;
   }
 
-  public prepareItems(prefix: string, items: Map<string, vscode.CompletionItem>, range?: vscode.Range): void {
+  public prepareItems(prefix: string, items: Map<string, vscode.CompletionItem>, range?: vscode.Range, token?: vscode.CancellationToken): void {
     logger.debug('Building Type: ', this.name, 'prefix: ', prefix);
 
     if (items.size > 1000) {
@@ -101,9 +101,16 @@ class TypeEntry {
       return;
     }
 
+    let i = 0;
     for (const prop of this.getProperties().entries()) {
       if (prefix === '' || prop[0].startsWith(prefix)) {
         prop[1].putAsCompletionItem(items, range);
+      }
+      i++;
+      // Check cancellation periodically to keep UI responsive
+      if (i % 32 === 0 && token?.isCancellationRequested) {
+        logger.warning('Operation canceled');
+        return;
       }
     }
   }
@@ -722,11 +729,10 @@ export class ScriptProperties {
 
         if (isLastPart && isCompletionMode) {
           // Last part and found - provide next level completions if property has a type
-          const completions = new Map<string, vscode.CompletionItem>();
           if (property.type) {
             const typeEntry = this.typeDict.get(property.type);
             if (typeEntry) {
-              typeEntry.prepareItems('', completions);
+              typeEntry.prepareItems('', completions, undefined, token);
             } else {
               logger.warn(`Type entry not found for property type: "${property.type}"`);
             }
