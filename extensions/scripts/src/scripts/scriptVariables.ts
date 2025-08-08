@@ -3,7 +3,7 @@ import { getDocumentScriptType, scriptIdDescription } from './scriptsMetadata';
 
 /** Regular expressions and constants for pattern matching */
 export const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
-export const variablePatternExact = /^\$[a-zA-Z_][a-zA-Z0-9_]*$/;
+export const variablePatternExact = /^@?\$[a-zA-Z_][a-zA-Z0-9_]*$/;
 export const tableKeyPattern = /table\[/;
 
 export type ScriptVariableInfo = {

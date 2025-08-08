@@ -800,9 +800,9 @@ export class ScriptProperties {
     const possibleTypes = contentType !== undefined ? [contentType] : Array.from(this.typeDict.values());
     const completions = new Map<string, vscode.CompletionItem>();
     for (const currentType of possibleTypes) {
-      if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
-        continue; // Skip types that are not assignable to variables
-      }
+      // if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
+      //   continue; // Skip types that are not assignable to variables
+      // }
       // Try to find exact property match
       if (currentType.hasProperty(fullContentOnStep)) {
         const property = currentType.getProperty(fullContentOnStep)!;
@@ -829,8 +829,12 @@ export class ScriptProperties {
 
       // Property not found exactly - try filtering by prefix using enhanced method
       const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema);
-      if (filteredProperties.length === 1 && filteredProperties[0].name === '$<variable>') {
-        return { isCompleted: true, newContentType: undefined, property: filteredProperties[0] };
+      if (filteredProperties.length === 1) {
+        const property = filteredProperties[0];
+        if (fullContentOnStep.split('.').length === property.name.split('.').length && !isCompletionMode) {
+          const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+          return { isCompleted: true, newContentType, property };
+        }
       }
 
       if (filteredProperties.length > 0) {
@@ -1052,6 +1056,9 @@ export class ScriptProperties {
           // Check for placeholder expansion in middle parts
           const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
           if (placeholderMatch && schema) {
+            if (prefixPart.length > 0 && ['mdscriptname', 'cuename'].includes(placeholderMatch[1])) {
+              continue; // Stub for md scripts
+            }
             // Get the keyword item from the property's result attribute or directly from the placeholder name
             const keyword = this.getKeywordForPlaceholder(prop, placeholderMatch[1], schema);
 
@@ -1304,7 +1311,7 @@ export class ScriptProperties {
   }
 
   private static isItVariable(expression: string): boolean {
-    return expression.startsWith('@$') || expression.startsWith('$');
+    return variablePatternExact.test(expression);
   }
 
   /**
@@ -1337,7 +1344,9 @@ export class ScriptProperties {
     const hoverContent = new vscode.MarkdownString();
     let fullContentOnStep = firstPart;
 
-    if (!isVariableBased) {
+    if (isVariableBased) {
+      hoverContent.appendMarkdown(`**${firstPart}**:\n\n`);
+    } else {
       // Look for keyword
       currentContentType = this.getKeyword(firstPart, schema);
 
@@ -1386,7 +1395,11 @@ export class ScriptProperties {
 
       const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, false);
       if (result.isCompleted && result.property) {
-        hoverContent.appendMarkdown(`- *Property:* \n\n  - **${result.property.name}**`);
+        hoverContent.appendMarkdown(`- *Property`);
+        if (!currentContentType && result.property.owner) {
+          hoverContent.appendMarkdown(` of ${result.property.owner.name}`);
+        }
+        hoverContent.appendMarkdown(`:*\n\n  - **${result.property.name.replace(/([<>])/g, '\\$1')}**`);
         if (result.property.details) {
           hoverContent.appendMarkdown(`: ${result.property.details}\n\n`);
         }
@@ -1404,6 +1417,8 @@ export class ScriptProperties {
               hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
             }
             hoverContent.appendMarkdown('\n\n');
+          } else if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
+            hoverContent.appendMarkdown(`**${part}**:\n\n`);
           }
           prefix = ''; // Reset prefix for next property step
         }
