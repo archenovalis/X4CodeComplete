@@ -457,37 +457,40 @@ export function activate(context: vscode.ExtensionContext) {
                   if (token.isCancellationRequested) return undefined;
                   // Check if it inside a single quoted string
                   if (
-                    isSingleQuoteExclusion(element.name, attribute.name) ||
-                    !isInsideSingleQuotedString(
+                    attribute.name === 'comment' &&
+                    !isSingleQuoteExclusion(element.name, attribute.name) &&
+                    isInsideSingleQuotedString(
                       document.getText(attribute.valueRange),
                       document.offsetAt(position) - document.offsetAt(attribute.valueRange.start)
                     )
                   ) {
-                    // AI script specific hover information
-                    if (schema === aiScriptId) {
-                      for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-                        if (token.isCancellationRequested) return undefined;
-                        // Check for action definitions
-                        const itemHover = trackerInfo.tracker.getItemHover(document, position);
-                        if (itemHover) {
-                          return itemHover;
-                        }
+                    return undefined;
+                  }
+
+                  // AI script specific hover information
+                  if (schema === aiScriptId) {
+                    for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                      if (token.isCancellationRequested) return undefined;
+                      // Check for action definitions
+                      const itemHover = trackerInfo.tracker.getItemHover(document, position);
+                      if (itemHover) {
+                        return itemHover;
                       }
                     }
-
-                    // Check for variable hover
-                    const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-                    if (token.isCancellationRequested) return undefined;
-                    if (variableAtPosition) {
-                      logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
-                      const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
-                      return new vscode.Hover(hoverText, variableAtPosition.location.range);
-                    }
-
-                    // Final fallback to complex expressions hover implementation
-                    if (token.isCancellationRequested) return undefined;
-                    return scriptProperties.provideHover(document, position, token);
                   }
+
+                  // Check for variable hover
+                  const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
+                  if (token.isCancellationRequested) return undefined;
+                  if (variableAtPosition) {
+                    logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
+                    const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
+                    return new vscode.Hover(hoverText, variableAtPosition.location.range);
+                  }
+
+                  // Final fallback to complex expressions hover implementation
+                  if (token.isCancellationRequested) return undefined;
+                  return scriptProperties.provideHover(document, position, token);
                 }
               }
             }
