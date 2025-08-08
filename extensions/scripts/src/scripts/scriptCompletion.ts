@@ -190,7 +190,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     return this.emptyCompletion;
   }
 
-  public prepareCompletion(
+  public provideCompletionItems(
     document: vscode.TextDocument,
     position: vscode.Position,
     token?: vscode.CancellationToken,
@@ -395,9 +395,5 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
     }
     return ScriptCompletion.emptyCompletion; // Skip if not in an element range
-  }
-
-  public provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken, context?: vscode.CompletionContext) {
-    return this.prepareCompletion(document, position, token, context);
   }
 }
