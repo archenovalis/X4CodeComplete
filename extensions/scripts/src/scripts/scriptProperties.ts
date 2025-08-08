@@ -1178,6 +1178,9 @@ export class ScriptProperties {
           hoverContent.appendMarkdown(`: ${result.property.details}\n\n`);
         }
         if (positionInExpression < contentOnStepLength) {
+          if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
+            hoverContent.appendMarkdown(`**${part}**:\n\n`);
+          }
           hoverContent.appendMarkdown(`**Result**: *${result.newContentType?.name || 'any'}*\n\n`);
           return {
             content: hoverContent,
