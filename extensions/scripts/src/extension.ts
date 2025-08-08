@@ -455,13 +455,7 @@ export function activate(context: vscode.ExtensionContext) {
               return new vscode.Hover(hoverText, variableAtPosition.location.range);
             }
 
-            // Fallback to script properties - try enhanced hover first, then original
-            const enhancedHover = scriptProperties.provideEnhancedHover(document, position);
-            if (enhancedHover) {
-              return enhancedHover;
-            }
-
-            // Final fallback to original hover implementation
+            // Final fallback to complex expressions hover implementation
             return scriptProperties.provideHover(document, position);
           },
         })

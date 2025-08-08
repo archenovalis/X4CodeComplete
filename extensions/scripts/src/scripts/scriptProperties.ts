@@ -265,8 +265,6 @@ export class ScriptProperties {
   private librariesFolder: string;
   private languageProcessor: LanguageFileProcessor;
   private scriptPropertiesPath: string;
-  private keywords: Keyword[] = [];
-  private datatypes: Datatype[] = [];
   private locationDict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   private keywordList: KeywordEntry[] = [];
@@ -281,8 +279,6 @@ export class ScriptProperties {
 
   dispose(): void {
     this.domParser = undefined;
-    this.keywords = [];
-    this.datatypes = [];
     this.locationDict.clear();
     this.typeDict.clear();
     this.keywordList = [];
@@ -308,8 +304,8 @@ export class ScriptProperties {
 
     if (parsedData !== undefined) {
       // Process keywords and datatypes here, return the completed results
-      this.datatypes = this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
-      this.keywords = this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
+      this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
+      this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
       // this.addTypeLiteral('boolean', '==false');
       logger.info('Parsed scriptproperties.xml');
     }
@@ -437,23 +433,17 @@ export class ScriptProperties {
   }
 
   // Process all keywords in the XML
-  private processKeywords(rawData: string, keywords: any[]): Keyword[] {
-    const processedKeywords: Keyword[] = [];
+  private processKeywords(rawData: string, keywords: any[]): void {
     keywords.forEach((e: Keyword) => {
       this.processKeyword(rawData, e);
-      processedKeywords.push(e); // Add processed keyword to the array
     });
-    return processedKeywords;
   }
 
   // Process all datatypes in the XML
-  private processDatatypes(rawData: string, datatypes: any[]): Datatype[] {
-    const processedDatatypes: Datatype[] = [];
+  private processDatatypes(rawData: string, datatypes: any[]): void {
     datatypes.forEach((e: Datatype) => {
       this.processDatatype(rawData, e);
-      processedDatatypes.push(e); // Add processed datatype to the array
     });
-    return processedDatatypes;
   }
 
   addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
@@ -591,101 +581,6 @@ export class ScriptProperties {
       items = [];
     }
     return new vscode.CompletionList(items, isIncomplete);
-  }
-
-  private static findRelevantPortion(text: string) {
-    const bracketPos = text.lastIndexOf('{');
-    text = text.substring(bracketPos + 1).trim();
-    const quotePos = text.lastIndexOf(`'`);
-    text = text.substring(quotePos + 1).trim();
-    const pos = text.lastIndexOf('.');
-    if (pos === -1) {
-      return null;
-    }
-    const newToken = text.substring(pos + 1).trim();
-    const prevPos = Math.max(text.lastIndexOf('.', pos - 1), text.lastIndexOf(' ', pos - 1));
-    const prevToken = text.substring(prevPos + 1, pos).trim();
-    return [prevToken.indexOf('@') === 0 ? prevToken.slice(1) : prevToken, newToken.indexOf('@') === 0 ? newToken.slice(1) : newToken];
-  }
-
-  private generateKeywordText(keyword: any, datatypes: Datatype[], parts: string[]): string {
-    // Ensure keyword is valid
-    if (!keyword || !keyword.$) {
-      return '';
-    }
-
-    const description = keyword.$.description;
-    const pseudo = keyword.$.pseudo;
-    const suffix = keyword.$.suffix;
-    const result = keyword.$.result;
-
-    let hoverText = `Keyword: ${keyword.$.name}\n
-    ${description ? 'Description: ' + description + '\n' : ''}
-    ${pseudo ? 'Pseudo: ' + pseudo + '\n' : ''}
-    ${result ? 'Result: ' + result + '\n' : ''}
-    ${suffix ? 'Suffix: ' + suffix + '\n' : ''}`;
-    let name = keyword.$.name;
-    let currentPropertyList: ScriptProperty[] = Array.isArray(keyword.property) ? keyword.property : [];
-    let updated = false;
-
-    // Iterate over parts of the path (excluding the first part which is the keyword itself)
-    for (let i = 1; i < parts.length; i++) {
-      let properties: ScriptProperty[] = [];
-
-      // Ensure currentPropertyList is iterable
-      if (!Array.isArray(currentPropertyList)) {
-        currentPropertyList = [];
-      }
-
-      // For the last part, use 'includes' to match the property
-      if (i === parts.length - 1) {
-        properties = currentPropertyList.filter((p: ScriptProperty) => {
-          // Safely access p.$.name
-          const propertyName = p && p.$ && p.$.name ? p.$.name : '';
-          const pattern = new RegExp(`\\{\\$${parts[i]}\\}`, 'i');
-          return propertyName.includes(parts[i]) || pattern.test(propertyName);
-        });
-      } else {
-        // For intermediate parts, exact match
-        properties = currentPropertyList.filter((p: ScriptProperty) => p && p.$ && p.$.name === parts[i]);
-
-        if (properties.length === 0 && currentPropertyList.length > 0) {
-          // Try to find properties via type lookup
-          currentPropertyList.forEach((property) => {
-            if (property && property.$ && property.$.type) {
-              const type = datatypes.find((d: Datatype) => d && d.$ && d.$.name === property.$.type);
-              if (type && Array.isArray(type.property)) {
-                properties.push(...type.property.filter((p: ScriptProperty) => p && p.$ && p.$.name === parts[i]));
-              }
-            }
-          });
-        }
-      }
-
-      if (properties.length > 0) {
-        properties.forEach((property) => {
-          // Safely access property attributes
-          if (property && property.$ && property.$.name && property.$.result) {
-            hoverText += `  \n- ${name}.${property.$.name}: ${property.$.result}`;
-            updated = true;
-
-            // Update currentPropertyList for the next part
-            if (property.$.type) {
-              const type = datatypes.find((d: Datatype) => d && d.$ && d.$.name === property.$.type);
-              currentPropertyList = type && Array.isArray(type.property) ? type.property : [];
-            }
-          }
-        });
-
-        // Append the current part to 'name' only if properties were found
-        name += `.${parts[i]}`;
-      } else {
-        // If no properties match, reset currentPropertyList to empty to avoid carrying forward invalid state
-        currentPropertyList = [];
-      }
-    }
-    hoverText = hoverText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return updated ? hoverText : '';
   }
 
   public makeCompletionsFromExpression(
@@ -1100,183 +995,11 @@ export class ScriptProperties {
     return undefined;
   }
 
-  private generateHoverWordText(hoverWord: string, keywords: Keyword[], datatypes: Datatype[]): string {
-    let hoverText = '';
-
-    // Find keywords that match the hoverWord either in their name or property names
-    const matchingKeyNames = keywords.filter(
-      (k: Keyword) => k.$.name.includes(hoverWord) || k.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord))
-    );
-
-    // Find datatypes that match the hoverWord either in their name or property names
-    const matchingDatatypes = datatypes.filter(
-      (d: Datatype) =>
-        d.$.name.includes(hoverWord) || // Check if datatype name includes hoverWord
-        d.property?.some((p: ScriptProperty) => p.$.name.includes(hoverWord)) // Check if any property name includes hoverWord
-    );
-
-    // logger.debug('matchingKeyNames:', matchingKeyNames);
-    // logger.debug('matchingDatatypes:', matchingDatatypes);
-
-    // Define the type for the grouped matches
-    interface GroupedMatch {
-      description: string[];
-      type: string[];
-      pseudo: string[];
-      suffix: string[];
-      properties: string[];
-    }
-
-    // A map to group matches by the header name
-    const groupedMatches: { [key: string]: GroupedMatch } = {};
-
-    // Process matching keywords
-    matchingKeyNames.forEach((k: Keyword) => {
-      const header = k.$.name;
-
-      // Initialize the header if not already present
-      if (!groupedMatches[header]) {
-        groupedMatches[header] = {
-          description: [],
-          type: [],
-          pseudo: [],
-          suffix: [],
-          properties: [],
-        };
-      }
-
-      // Add description, type, and pseudo if available
-      if (k.$.description) groupedMatches[header].description.push(k.$.description);
-      if (k.$.type) groupedMatches[header].type.push(`${k.$.type}`);
-      if (k.$.pseudo) groupedMatches[header].pseudo.push(`${k.$.pseudo}`);
-
-      // Collect matching properties
-      let properties: ScriptProperty[] = [];
-      if (k.$.name === hoverWord) {
-        properties = k.property || []; // Include all properties for exact match
-      } else {
-        properties = k.property?.filter((p: ScriptProperty) => p.$.name.includes(hoverWord)) || [];
-      }
-      if (properties && properties.length > 0) {
-        properties.forEach((p: ScriptProperty) => {
-          if (p.$.result) {
-            const resultText = `\n- ${k.$.name}.${p.$.name}: ${p.$.result}`;
-            groupedMatches[header].properties.push(resultText);
-          }
-        });
-      }
-    });
-
-    // Process matching datatypes
-    matchingDatatypes.forEach((d: Datatype) => {
-      const header = d.$.name;
-      if (!groupedMatches[header]) {
-        groupedMatches[header] = {
-          description: [],
-          type: [],
-          pseudo: [],
-          suffix: [],
-          properties: [],
-        };
-      }
-      if (d.$.type) groupedMatches[header].type.push(`${d.$.type}`);
-      if (d.$.suffix) groupedMatches[header].suffix.push(`${d.$.suffix}`);
-
-      let properties: ScriptProperty[] = [];
-      if (d.$.name === hoverWord) {
-        properties = d.property || []; // All properties for exact match
-      } else {
-        properties = d.property?.filter((p) => p.$.name.includes(hoverWord)) || [];
-      }
-
-      if (properties.length > 0) {
-        properties.forEach((p: ScriptProperty) => {
-          if (p.$.result) {
-            groupedMatches[header].properties.push(`\n- ${d.$.name}.${p.$.name}: ${p.$.result}`);
-          }
-        });
-      }
-    });
-
-    let matches = '';
-    // Sort and build the final hoverText string
-    Object.keys(groupedMatches)
-      .sort()
-      .forEach((header) => {
-        const group = groupedMatches[header];
-
-        // Sort the contents for each group
-        if (group.description.length > 0) group.description.sort();
-        if (group.type.length > 0) group.type.sort();
-        if (group.pseudo.length > 0) group.pseudo.sort();
-        if (group.suffix.length > 0) group.suffix.sort();
-        if (group.properties.length > 0) group.properties.sort();
-
-        // Only add the header if there are any matches in it
-        let groupText = `\n\n${header}`;
-
-        // Append the sorted results for each category
-        if (group.description.length > 0) groupText += `: ${group.description.join(' | ')}`;
-        if (group.type.length > 0) groupText += ` (type: ${group.type.join(' | ')})`;
-        if (group.pseudo.length > 0) groupText += ` (pseudo: ${group.pseudo.join(' | ')})`;
-        if (group.suffix.length > 0) groupText += ` (suffix: ${group.suffix.join(' | ')})`;
-        if (group.properties.length > 0) {
-          groupText += '\n' + `${group.properties.join('\n')}`;
-          // Append the groupText to matches
-          matches += groupText;
-        }
-      });
-
-    // Escape < and > for HTML safety and return the result
-    if (matches !== '') {
-      matches = matches.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      hoverText += `\n\nMatches for '${hoverWord}':\n${matches}`;
-    }
-
-    return hoverText; // Return the constructed hoverText
-  }
-
-  public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
-    const hoverWord = document.getText(document.getWordRangeAtPosition(position));
-    const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
-    const phrase = document.getText(document.getWordRangeAtPosition(position, phraseRegex));
-    const hoverWordIndex = phrase.lastIndexOf(hoverWord);
-    const slicedPhrase = phrase.slice(0, hoverWordIndex + hoverWord.length);
-    const parts = slicedPhrase.split('.');
-    let firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-
-    logger.debug('Hover word: ', hoverWord);
-    logger.debug('Phrase: ', phrase);
-    logger.debug('Sliced phrase: ', slicedPhrase);
-    logger.debug('Parts: ', parts);
-    logger.debug('First part: ', firstPart);
-
-    let hoverText = '';
-    while (hoverText === '' && parts.length > 0) {
-      let keyword = this.keywords.find((k: Keyword) => k.$.name === firstPart);
-      if (!keyword || keyword.import) {
-        keyword = this.datatypes.find((d: Datatype) => d.$.name === firstPart);
-      }
-      if (keyword && firstPart !== hoverWord) {
-        hoverText += this.generateKeywordText(keyword, this.datatypes, parts);
-      }
-      // Always append hover word details, ensuring full datatype properties for exact matches
-      hoverText += this.generateHoverWordText(hoverWord, this.keywords, this.datatypes);
-      if (hoverText === '' && parts.length > 1) {
-        parts.shift();
-        firstPart = parts[0].startsWith('$') || parts[0].startsWith('@') ? parts[0].slice(1) : parts[0];
-      } else {
-        break;
-      }
-    }
-    return hoverText !== '' ? new vscode.Hover(hoverText) : undefined;
-  }
-
   /**
    * Enhanced hover provider using the step-by-step expression analysis
    * This method leverages the same parsing logic as completion for more accurate hover information
    */
-  public provideEnhancedHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
+  public provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
     try {
       const schema = getDocumentScriptType(document);
       if (schema === '') {
@@ -1431,29 +1154,6 @@ export class ScriptProperties {
   }
 
   /**
-   * Adds property information to hover content
-   */
-  private addPropertyToHover(property: PropertyEntry, hoverContent: vscode.MarkdownString, fullPath: string, ownerType: KeywordEntry | TypeEntry): void {
-    hoverContent.appendMarkdown(`**Property: ${property.name}**\n\n`);
-
-    if (property.details) {
-      hoverContent.appendMarkdown(`*Description*: ${property.details}\n\n`);
-    }
-
-    if (property.type) {
-      hoverContent.appendMarkdown(`*Type*: \`${property.type}\`\n\n`);
-    }
-
-    hoverContent.appendMarkdown(`*Owner*: ${ownerType.name}\n\n`);
-
-    // Add placeholder expansion information if applicable
-    const placeholderMatch = property.name.match(ScriptProperties.regexLookupElement);
-    if (placeholderMatch) {
-      hoverContent.appendMarkdown(`*Note*: Contains placeholder \`<${placeholderMatch[1]}>\` that expands to actual values\n\n`);
-    }
-  }
-
-  /**
    * Adds type properties overview to hover content
    */
   private addTypePropertiesToHover(contentType: KeywordEntry | TypeEntry, hoverContent: vscode.MarkdownString, schema: string): void {
@@ -1478,30 +1178,6 @@ export class ScriptProperties {
       }
     } else {
       hoverContent.appendMarkdown(`*No properties available*\n`);
-    }
-  }
-
-  /**
-   * Adds partial matches information to hover content
-   */
-  private addPartialMatchesToHover(
-    matches: PropertyEntry[],
-    hoverContent: vscode.MarkdownString,
-    searchTerm: string,
-    ownerType: KeywordEntry | TypeEntry
-  ): void {
-    hoverContent.appendMarkdown(`**Partial matches for "${searchTerm}"**\n\n`);
-    hoverContent.appendMarkdown(`*Found ${matches.length} properties matching the prefix*\n\n`);
-
-    const maxMatches = 10;
-    for (let i = 0; i < Math.min(matches.length, maxMatches); i++) {
-      const prop = matches[i];
-      const shortDesc = prop.details ? ` - ${prop.details.substring(0, 40)}${prop.details.length > 40 ? '...' : ''}` : '';
-      hoverContent.appendMarkdown(`- \`${prop.name}\`${shortDesc}\n`);
-    }
-
-    if (matches.length > maxMatches) {
-      hoverContent.appendMarkdown(`*...and ${matches.length - maxMatches} more matches*\n`);
     }
   }
 }
