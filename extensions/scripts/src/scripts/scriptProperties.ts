@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 import * as fs from 'fs';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
 import * as xml2js from 'xml2js';
 import * as xpath from 'xpath';
@@ -274,7 +275,14 @@ export class ScriptProperties {
     this.librariesFolder = librariesFolder;
     this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
     this.languageProcessor = languageProcessor;
-    this.readScriptProperties(this.scriptPropertiesPath);
+  }
+
+  /**
+   * Initialize ScriptProperties asynchronously to avoid blocking the extension host.
+   * Must be awaited before using properties/completions.
+   */
+  public async initialize(): Promise<void> {
+    await this.readScriptPropertiesAsync(this.scriptPropertiesPath);
   }
 
   dispose(): void {
@@ -285,29 +293,23 @@ export class ScriptProperties {
     this.descriptions.clear();
   }
 
-  private readScriptProperties(filepath: string): void {
+  private async readScriptPropertiesAsync(filepath: string): Promise<void> {
     logger.info('Attempting to read scriptproperties.xml');
-    // Can't move on until we do this so use sync version
-    let rawData = fs.readFileSync(filepath).toString();
+    try {
+      const rawDataOriginal = await fsp.readFile(filepath, 'utf8');
+      // Inject additional keyword definitions before processing
+      const rawData = this.injectAdditionalKeywords(rawDataOriginal);
 
-    // Inject additional keyword definitions before processing
-    rawData = this.injectAdditionalKeywords(rawData);
-
-    let parsedData: any;
-
-    xml2js.parseString(rawData, (err: any, result: any) => {
-      if (err !== null) {
-        vscode.window.showErrorMessage('Error during parsing of scriptproperties.xml:' + err);
+      const parser = new xml2js.Parser();
+      const parsedData: any = await parser.parseStringPromise(rawData);
+      if (parsedData !== undefined) {
+        this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
+        await this.processKeywordsAsync(rawData, parsedData['scriptproperties']['keyword']);
+        logger.info('Parsed scriptproperties.xml');
       }
-      parsedData = result;
-    });
-
-    if (parsedData !== undefined) {
-      // Process keywords and datatypes here, return the completed results
-      this.processDatatypes(rawData, parsedData['scriptproperties']['datatype']);
-      this.processKeywords(rawData, parsedData['scriptproperties']['keyword']);
-      // this.addTypeLiteral('boolean', '==false');
-      logger.info('Parsed scriptproperties.xml');
+    } catch (err) {
+      vscode.window.showErrorMessage('Error during parsing of scriptproperties.xml: ' + err);
+      logger.error('Error reading scriptproperties.xml', err as any);
     }
   }
 
@@ -347,7 +349,7 @@ export class ScriptProperties {
     }
   }
 
-  private processKeyword(rawData: string, e: Keyword) {
+  private async processKeyword(rawData: string, e: Keyword) {
     const name = e.$.name;
     this.addNonPropertyLocation(rawData, name, 'keyword');
     const type = this.typeDict.get(e.$.type || '');
@@ -358,22 +360,22 @@ export class ScriptProperties {
       const imp = e.import[0];
       const src = imp.$.source;
       const select = imp.$.select;
-      this.processKeywordImport(name, src, select, imp.property[0], e.$.script);
+      await this.processKeywordImportAsync(name, src, select, imp.property[0], e.$.script);
     }
     if (e.property !== undefined) {
       e.property.forEach((prop) => this.processProperty(rawData, name, 'keyword', prop, e.$.script));
     }
   }
 
-  private processKeywordImport(name: string, src: string, select: string, property: ScriptProperty, script?: string) {
+  private async processKeywordImportAsync(name: string, src: string, select: string, property: ScriptProperty, script?: string) {
     const srcPath = path.join(this.librariesFolder, src);
     const targetName = property?.$?.name || '';
     const ignorePrefix = property?.$?.ignoreprefix === 'true' || false;
     const result = property?.$?.result || '';
     const type = property?.$?.type || '';
     logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
-    // Can't move on until we do this so use sync version
-    const rawData = fs.readFileSync(srcPath).toString();
+    // Read the import file asynchronously
+    const rawData = await fsp.readFile(srcPath, 'utf8');
     const parsedData = this.domParser.parseFromString(rawData, 'text/xml');
     if (parsedData !== undefined) {
       const process = src.endsWith('.xsd') ? xpath.useNamespaces({ xs: 'http://www.w3.org/2001/XMLSchema' }) : xpath.useNamespaces({});
@@ -418,6 +420,14 @@ export class ScriptProperties {
       } else {
         logger.warn('No matches found for import: ' + select + '/' + targetName + ' in ' + src);
       }
+    }
+  }
+
+  private async processKeywordsAsync(rawData: string, keywords: Keyword[]) {
+    for (const e of keywords) {
+      await this.processKeyword(rawData, e);
+      // Yield to keep the event loop responsive during long imports
+      if ((e as any) && (e as any).import) await Promise.resolve();
     }
   }
 

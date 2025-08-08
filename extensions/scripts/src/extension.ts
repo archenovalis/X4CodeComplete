@@ -328,6 +328,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Note: These replace the minimal instances created during activation
       xsdReference = new XsdReference(configManager.librariesPath);
       scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
+      await scriptProperties.initialize();
 
       // Update the completion provider with the fully loaded services
       scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker, processQueuedDocumentChanges);
