@@ -77,15 +77,15 @@ export function isInsideSingleQuotedString(line: string, caret: number): boolean
  * - Then scan right from caret to find first closing bracket; if it is not found or previously "opened" - return []
  */
 export function getEnclosingBracketPairIndexes(line: string, caret: number, openChar: string, closeChar: string): number[] {
-  if (!line || caret <= 0 || caret >= line.length - 1) return [];
+  if (!line || caret <= 0 || caret >= line.length) return [];
 
   let openIndex = line.lastIndexOf(openChar, caret - 1);
   let closeIndex = line.lastIndexOf(closeChar, caret - 1);
   if (openIndex === -1 || (closeIndex > 0 && openIndex < closeIndex)) return [];
   const result = [openIndex];
 
-  openIndex = line.indexOf(openChar, caret + 1);
-  closeIndex = line.indexOf(closeChar, caret + 1);
+  openIndex = line.indexOf(openChar, caret);
+  closeIndex = line.indexOf(closeChar, caret);
   if (closeIndex === -1 || (openIndex > 0 && openIndex < closeIndex)) return [];
   result.push(closeIndex);
 

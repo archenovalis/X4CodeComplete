@@ -600,8 +600,14 @@ export class ScriptProperties {
 
     // Clean the input text
     textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
+    textToProcessAfter = getSubStringByBreakSymbolForExpressions(textToProcessAfter, false);
 
-    if (token?.isCancellationRequested) return undefined;
+    const inCurlyBraces = getEnclosingCurlyBracesIndexes(textToProcessBefore + textToProcessAfter, textToProcessBefore.length);
+    if (inCurlyBraces.length > 0) {
+      // If we're inside curly braces, we need to adjust the expression
+      textToProcessAfter = textToProcessAfter.substring(0, inCurlyBraces[1] - textToProcessBefore.length);
+      textToProcessBefore = textToProcessBefore.substring(inCurlyBraces[0] + 1);
+    }
 
     // Use step-by-step analysis
     const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema, token);
