@@ -620,7 +620,7 @@ export class ScriptProperties {
     const items = new Map<string, vscode.CompletionItem>();
 
     // Split expression into parts (empty parts are valid and should be processed)
-    const parts = expression.split('.');
+    const parts = ScriptProperties.splitExpressionPreserveBraces(expression);
 
     logger.warn(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
 
@@ -754,7 +754,7 @@ export class ScriptProperties {
 
       if (filteredProperties.length === 1) {
         const property = filteredProperties[0];
-        if (fullContentOnStep.split('.').length === property.name.split('.').length) {
+        if (ScriptProperties.splitExpressionPreserveBraces(fullContentOnStep).length === property.name.split('.').length) {
           const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
           return { isCompleted: true, newContentType, property };
         }
@@ -943,7 +943,7 @@ export class ScriptProperties {
   public filterPropertiesByPrefix(contentType: KeywordEntry | TypeEntry, prefix: string, appendDot: boolean = true, schema?: string): PropertyEntry[] {
     const result: PropertyEntry[] = [];
     const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
-    const prefixSplitted = prefix.split('.');
+    const prefixSplitted = ScriptProperties.splitExpressionPreserveBraces(prefix);
     const countItems = prefixSplitted.length;
 
     for (const [name, prop] of contentType.getProperties()) {
@@ -1085,7 +1085,7 @@ export class ScriptProperties {
     fullExpression: string,
     token?: vscode.CancellationToken
   ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
-    const parts = expression.split('.');
+    const parts = ScriptProperties.splitExpressionPreserveBraces(expression);
 
     if (parts.length === 0) {
       return undefined;
@@ -1228,6 +1228,38 @@ export class ScriptProperties {
     } else {
       hoverContent.appendMarkdown(`*No properties available*\n`);
     }
+  }
+
+  /**
+   * Split an expression by '.' characters while preserving dots inside single-level brace groups
+   * e.g. first.second.{some.thing}.four -> ["first","second","{some.thing}","four"]
+   * Keeps empty segments consistent with String.split('.') behavior.
+   */
+  private static splitExpressionPreserveBraces(expression: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let depth = 0;
+    for (let i = 0; i < expression.length; i++) {
+      const ch = expression[i];
+      if (ch === '{') {
+        depth++;
+        current += ch;
+        continue;
+      }
+      if (ch === '}') {
+        if (depth > 0) depth--;
+        current += ch;
+        continue;
+      }
+      if (ch === '.' && depth === 0) {
+        parts.push(current);
+        current = '';
+        continue;
+      }
+      current += ch;
+    }
+    parts.push(current);
+    return parts;
   }
 }
 
