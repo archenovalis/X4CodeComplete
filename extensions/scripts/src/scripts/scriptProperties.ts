@@ -7,7 +7,7 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xpath';
 import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
-import { getNearestBreakSymbolIndexForExpressions, getSubStringByBreakSymbolForExpressions } from './scriptUtilities';
+import { getSubStringByBreakSymbolForExpressions, getEnclosingCurlyBracesIndexes } from './scriptUtilities';
 import { LanguageFileProcessor } from '../languageFiles/languageFiles';
 import { variablePatternExact } from './scriptVariables';
 
@@ -1085,6 +1085,25 @@ export class ScriptProperties {
     fullExpression: string,
     token?: vscode.CancellationToken
   ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
+    let expressionIndex = fullExpression.indexOf(expression);
+    let expressionLength = expression.length;
+
+    if (
+      expressionIndex === -1 ||
+      phraseRange.start.character + expressionIndex >= position.character ||
+      phraseRange.start.character + expressionIndex + expressionLength < position.character
+    ) {
+      return undefined;
+    }
+
+    const inCurlyBraces = getEnclosingCurlyBracesIndexes(expression, position.character - phraseRange.start.character - expressionIndex);
+    if (inCurlyBraces.length > 0) {
+      // If we're inside curly braces, we need to adjust the expression
+      expression = expression.substring(inCurlyBraces[0] + 1, inCurlyBraces[1]);
+      expressionIndex += inCurlyBraces[0] + 1;
+      expressionLength = expression.length;
+    }
+
     const parts = ScriptProperties.splitExpressionPreserveBraces(expression);
 
     if (parts.length === 0) {
@@ -1094,8 +1113,6 @@ export class ScriptProperties {
     logger.debug(`Enhanced hover analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
     if (token?.isCancellationRequested) return undefined;
 
-    const expressionIndex = fullExpression.indexOf(expression);
-    const expressionLength = expression.length;
     const startPosition = phraseRange.start.translate(0, expressionIndex);
     const endPosition = phraseRange.start.translate(0, expressionIndex + expressionLength);
     const positionInExpression = position.character - startPosition.character;
