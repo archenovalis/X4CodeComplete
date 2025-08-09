@@ -69,15 +69,18 @@ class TypeEntry {
     this.properties.set(value, new PropertyEntry(value, type, details, this));
   }
 
-  public getProperties(): Map<string, PropertyEntry> {
-    return new Map(Array.from(this.properties.entries()).concat(Array.from(this.supertype ? this.supertype.getProperties().entries() : [])));
+  public getProperties(directOnly: boolean = false): Map<string, PropertyEntry> {
+    return new Map(Array.from(this.properties.entries()).concat(Array.from(!directOnly && this.supertype ? this.supertype.getProperties().entries() : [])));
   }
 
-  public hasProperty(name: string): boolean {
+  public hasProperty(name: string, directOnly: boolean = false): boolean {
     if (this.properties.has(name)) {
       return true;
     }
-    return this.supertype ? this.supertype.hasProperty(name) : false;
+    if (!directOnly && this.supertype) {
+      return this.supertype.hasProperty(name);
+    }
+    return false;
   }
 
   public getProperty(name: string): PropertyEntry | undefined {
@@ -716,6 +719,7 @@ export class ScriptProperties {
         completions?: Map<string, vscode.CompletionItem>;
         newContentType?: KeywordEntry | TypeEntry;
         property?: PropertyEntry;
+        properties?: PropertyEntry[];
       }
     | undefined {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
@@ -724,12 +728,13 @@ export class ScriptProperties {
     if (token?.isCancellationRequested) return undefined;
 
     const completions = new Map<string, vscode.CompletionItem>();
+    const properties = [];
     for (const currentType of possibleTypes) {
       // if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
       //   continue; // Skip types that are not assignable to variables
       // }
       // Try to find exact property match
-      if (currentType.hasProperty(fullContentOnStep)) {
+      if (currentType.hasProperty(fullContentOnStep, possibleTypes.length > 1)) {
         const property = currentType.getProperty(fullContentOnStep)!;
         logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
 
@@ -754,7 +759,7 @@ export class ScriptProperties {
       if (token?.isCancellationRequested) return undefined;
 
       // Property not found exactly - try filtering by prefix using enhanced method
-      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema);
+      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema, possibleTypes.length > 1);
 
       if (token?.isCancellationRequested) return undefined;
 
@@ -780,23 +785,32 @@ export class ScriptProperties {
 
       // No properties found
       if (isLastPart) {
-        // Last part and nothing found - try without dot one more time using enhanced method
-        const candidateProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, false, schema);
-
-        if (token?.isCancellationRequested) return undefined;
-
-        if (candidateProperties.length > 0) {
-          this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, completions, schema);
+        if (isCompletionMode) {
+          const candidateProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, false, schema);
 
           if (token?.isCancellationRequested) return undefined;
 
-          // return { isCompleted: false, completions };
-          continue; // Skip to next type
+          if (candidateProperties.length > 0) {
+            this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, completions, schema);
+
+            if (token?.isCancellationRequested) return undefined;
+
+            // return { isCompleted: false, completions };
+            continue; // Skip to next type
+          }
+        } else {
+          for (const property of filteredProperties) {
+            if (!properties.find((p) => p.name === property.name && p.owner?.name === property.owner?.name)) {
+              properties.push(property);
+            }
+          }
         }
       }
     }
-    if (completions.size > 0) {
+    if (isCompletionMode && completions.size > 0) {
       return { isCompleted: false, completions };
+    } else if (!isCompletionMode && properties.length > 0) {
+      return { isCompleted: true, properties };
     } else {
       return { isCompleted: false };
     }
@@ -946,13 +960,19 @@ export class ScriptProperties {
     return this.getKeyword(placeholderName, schema) || undefined;
   }
 
-  public filterPropertiesByPrefix(contentType: KeywordEntry | TypeEntry, prefix: string, appendDot: boolean = true, schema?: string): PropertyEntry[] {
+  public filterPropertiesByPrefix(
+    contentType: KeywordEntry | TypeEntry,
+    prefix: string,
+    appendDot: boolean = true,
+    schema?: string,
+    directOnly: boolean = false
+  ): PropertyEntry[] {
     const result: PropertyEntry[] = [];
     const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
     const prefixSplitted = ScriptProperties.splitExpressionPreserveBraces(prefix);
     const countItems = prefixSplitted.length;
 
-    for (const [name, prop] of contentType.getProperties()) {
+    for (const [name, prop] of contentType.getProperties(directOnly)) {
       // Check for exact prefix match first
       if (name.startsWith(workingPrefix)) {
         result.push(prop);
@@ -1183,39 +1203,51 @@ export class ScriptProperties {
 
       logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, false, schema, token, false);
+      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema, token, false);
       if (result === undefined || token?.isCancellationRequested) return undefined;
-      if (result.isCompleted && result.property) {
-        hoverContent.appendMarkdown(`- *Property`);
-        if (!currentContentType && result.property.owner) {
-          hoverContent.appendMarkdown(` of ${result.property.owner.name}`);
+      if (result.isCompleted && (result.property || (isLastPart && result.properties))) {
+        const properties = result.properties || [result.property];
+        const indent = properties.length > 0 ? '  ' : '';
+        if (properties.length > 0) {
+          hoverContent.appendMarkdown(`*Variations*:\n\n`);
         }
-        hoverContent.appendMarkdown(`:*\n\n  - **${result.property.name.replace(/([<>])/g, '\\$1')}**`);
-        if (result.property.details) {
-          hoverContent.appendMarkdown(`: ${result.property.details}\n\n`);
+        for (const property of properties) {
+          if (properties.length > 0) {
+            hoverContent.appendMarkdown(`- :\n\n`);
+          }
+          hoverContent.appendMarkdown(`${indent}- *Property`);
+          if (!currentContentType && property.owner) {
+            hoverContent.appendMarkdown(` of ${property.owner.name}`);
+          }
+          hoverContent.appendMarkdown(`:*\n\n  ${indent}- **${property.name.replace(/([<>])/g, '\\$1')}**`);
+          if (property.details) {
+            hoverContent.appendMarkdown(`: ${property.details}\n\n`);
+          }
+          if (positionInExpression < contentOnStepLength) {
+            if (property.name === '$<variable>' && variablePatternExact.test(part)) {
+              hoverContent.appendMarkdown(`${indent}**${part}**:\n\n`);
+            }
+            hoverContent.appendMarkdown(`${indent}**Result**: *${property.type || 'any'}*\n\n`);
+          }
+          if (!isLastPart) {
+            currentContentType = result.newContentType;
+            if (currentContentType) {
+              hoverContent.appendMarkdown(`${indent}**${currentContentType.name}**:`);
+              if (currentContentType instanceof KeywordEntry && currentContentType.details) {
+                hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+              }
+              hoverContent.appendMarkdown('\n\n');
+            } else if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
+              hoverContent.appendMarkdown(`${indent}**${part}**:\n\n`);
+            }
+            prefix = ''; // Reset prefix for next property step
+          }
         }
         if (positionInExpression < contentOnStepLength) {
-          if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
-            hoverContent.appendMarkdown(`**${part}**:\n\n`);
-          }
-          hoverContent.appendMarkdown(`**Result**: *${result.newContentType?.name || 'any'}*\n\n`);
           return {
             content: hoverContent,
             range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + contentOnStepLength)),
           };
-        }
-        if (!isLastPart) {
-          currentContentType = result.newContentType;
-          if (currentContentType) {
-            hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
-            if (currentContentType instanceof KeywordEntry && currentContentType.details) {
-              hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
-            }
-            hoverContent.appendMarkdown('\n\n');
-          } else if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
-            hoverContent.appendMarkdown(`**${part}**:\n\n`);
-          }
-          prefix = ''; // Reset prefix for next property step
         }
       } else {
         prefix = prefix ? `${prefix}.${part}` : part;
