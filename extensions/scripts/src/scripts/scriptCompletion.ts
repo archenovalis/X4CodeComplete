@@ -199,11 +199,12 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (token?.isCancellationRequested) {
       return undefined;
     }
+    logger.debug(`Providing completion items for document: ${document.uri} with context: ${JSON.stringify(context)}`);
     const schema = getDocumentScriptType(document);
     if (schema == '') {
       return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
     }
-    if (this.processQueuedDocumentChanges) {
+    if (context.triggerKind > vscode.CompletionTriggerKind.Invoke && this.processQueuedDocumentChanges) {
       this.processQueuedDocumentChanges();
     }
     const items = new Map<string, vscode.CompletionItem>();

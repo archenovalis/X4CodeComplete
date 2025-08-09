@@ -754,7 +754,7 @@ export class ScriptProperties {
 
       if (filteredProperties.length === 1) {
         const property = filteredProperties[0];
-        if (fullContentOnStep.split('.').length === property.name.split('.').length && !isCompletionMode) {
+        if (fullContentOnStep.split('.').length === property.name.split('.').length) {
           const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
           return { isCompleted: true, newContentType, property };
         }
