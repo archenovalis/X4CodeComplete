@@ -808,7 +808,7 @@ export class ScriptProperties {
     // const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
-    const contentParts = fullContentOnStep.split('.');
+    const contentParts = ScriptProperties.splitExpressionPreserveBraces(fullContentOnStep);
     const contentPartsCount = contentParts.length;
     const completionPosition = contentPartsCount - 1; // Exclude the last part
 
