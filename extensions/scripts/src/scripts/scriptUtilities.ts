@@ -67,6 +67,44 @@ export function isInsideSingleQuotedString(line: string, caret: number): boolean
   return (count & 1) === 1;
 }
 
+/**
+ * Returns the indices [openIndex, closeIndex] of the nearest enclosing bracket pair
+ * around the caret for the specified open/close characters. If caret is not inside
+ * such a pair, returns an empty array.
+ *
+ * Logic:
+ * - Scan left from caret to find the first open bracket; if it is not found or "closed" - return []
+ * - Then scan right from caret to find first closing bracket; if it is not found or previously "opened" - return []
+ */
+export function getEnclosingBracketPairIndexes(line: string, caret: number, openChar: string, closeChar: string): number[] {
+  if (!line || caret <= 0 || caret >= line.length - 1) return [];
+
+  let openIndex = line.lastIndexOf(openChar, caret - 1);
+  let closeIndex = line.lastIndexOf(closeChar, caret - 1);
+  if (openIndex === -1 || (closeIndex > 0 && openIndex < closeIndex)) return [];
+  const result = [openIndex];
+
+  openIndex = line.indexOf(openChar, caret + 1);
+  closeIndex = line.indexOf(closeChar, caret + 1);
+  if (closeIndex === -1 || (openIndex > 0 && openIndex < closeIndex)) return [];
+  result.push(closeIndex);
+
+  return result;
+}
+
+export function getEnclosingParenthesesIndexes(line: string, caret: number): number[] {
+  return getEnclosingBracketPairIndexes(line, caret, '(', ')');
+}
+export function getEnclosingCurlyBracesIndexes(line: string, caret: number): number[] {
+  return getEnclosingBracketPairIndexes(line, caret, '{', '}');
+}
+export function getEnclosingSquareBracketsIndexes(line: string, caret: number): number[] {
+  return getEnclosingBracketPairIndexes(line, caret, '[', ']');
+}
+export function getEnclosingAngleBracketsIndexes(line: string, caret: number): number[] {
+  return getEnclosingBracketPairIndexes(line, caret, '<', '>');
+}
+
 export function isSingleQuoteExclusion(element: string, attribute: string): boolean {
   // Exclude single-quoted strings in attributes
   if (singleQuoteExclusionSet.has([element, attribute].join('.'))) {
