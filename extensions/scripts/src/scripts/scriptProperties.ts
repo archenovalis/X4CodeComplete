@@ -666,6 +666,7 @@ export class ScriptProperties {
     // Continue with property steps
     let currentContentType: KeywordEntry | TypeEntry = keyword;
     let prefix = '';
+    let types = [];
 
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
@@ -675,7 +676,7 @@ export class ScriptProperties {
 
       if (token?.isCancellationRequested) return undefined;
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema, token);
+      const result = this.analyzePropertyStep(part, currentContentType, types, prefix, isLastPart, schema, token);
 
       if (result === undefined || token?.isCancellationRequested) return undefined;
 
@@ -691,10 +692,12 @@ export class ScriptProperties {
         // Part was completed, update contentType and continue
         currentContentType = result.newContentType!;
         prefix = ''; // Reset prefix for clean property step
+        types = [];
         logger.debug(`Part "${part}" completed, new contentType: "${currentContentType?.name}"`);
       } else {
         // Part is identified but not completed - add to prefix and continue
         prefix = prefix ? `${prefix}.${part}` : part;
+        types = result.newTypes || [];
         logger.debug(`Part "${part}" not completed, updated prefix: "${prefix}"`);
       }
     }
@@ -708,6 +711,7 @@ export class ScriptProperties {
   private analyzePropertyStep(
     part: string,
     contentType: KeywordEntry | TypeEntry,
+    types: TypeEntry[],
     prefix: string,
     isLastPart: boolean,
     schema: string,
@@ -718,13 +722,15 @@ export class ScriptProperties {
         isCompleted: boolean;
         completions?: Map<string, vscode.CompletionItem>;
         newContentType?: KeywordEntry | TypeEntry;
+        newTypes?: TypeEntry[];
         property?: PropertyEntry;
         properties?: PropertyEntry[];
       }
     | undefined {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
-    const possibleTypes = contentType !== undefined ? [contentType] : Array.from(this.typeDict.values());
-
+    const isTypeDefined = contentType !== undefined;
+    const possibleTypes = isTypeDefined ? [contentType] : types.length > 0 ? types : Array.from(this.typeDict.values());
+    const newTypes = [];
     if (token?.isCancellationRequested) return undefined;
 
     const completions = new Map<string, vscode.CompletionItem>();
@@ -734,7 +740,7 @@ export class ScriptProperties {
       //   continue; // Skip types that are not assignable to variables
       // }
       // Try to find exact property match
-      if (currentType.hasProperty(fullContentOnStep, possibleTypes.length > 1)) {
+      if (currentType.hasProperty(fullContentOnStep, !isTypeDefined)) {
         const property = currentType.getProperty(fullContentOnStep)!;
         logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
 
@@ -759,7 +765,7 @@ export class ScriptProperties {
       if (token?.isCancellationRequested) return undefined;
 
       // Property not found exactly - try filtering by prefix using enhanced method
-      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema, possibleTypes.length > 1);
+      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema, !isTypeDefined);
 
       if (token?.isCancellationRequested) return undefined;
 
@@ -776,7 +782,9 @@ export class ScriptProperties {
 
         if (!isLastPart) {
           // Not last part - this is a complex property, continue with same contentType
-          // return { isCompleted: false };
+          if (!newTypes.find((t) => t.name === currentType.name)) {
+            newTypes.push(currentType);
+          }
           continue; // Skip to next type
         }
       }
@@ -808,11 +816,11 @@ export class ScriptProperties {
       }
     }
     if (isCompletionMode && completions.size > 0) {
-      return { isCompleted: false, completions };
+      return { isCompleted: false, completions, newTypes };
     } else if (!isCompletionMode && properties.length > 0) {
       return { isCompleted: true, properties };
     } else {
-      return { isCompleted: false };
+      return { isCompleted: false, newTypes };
     }
   }
 
@@ -1191,6 +1199,7 @@ export class ScriptProperties {
 
     // Step 2: Analyze property chain
     let prefix = '';
+    let types = [];
     let finalProperty: PropertyEntry | undefined;
     // let finalContentType: KeywordEntry | TypeEntry | undefined = currentContentType;
 
@@ -1203,16 +1212,17 @@ export class ScriptProperties {
 
       logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, prefix, isLastPart, schema, token, false);
+      const result = this.analyzePropertyStep(part, currentContentType, types, prefix, isLastPart, schema, token, false);
       if (result === undefined || token?.isCancellationRequested) return undefined;
       if (result.isCompleted && (result.property || (isLastPart && result.properties))) {
         const properties = result.properties || [result.property];
-        const indent = properties.length > 0 ? '  ' : '';
-        if (properties.length > 0) {
+        const isVariations = result.properties !== undefined;
+        const indent = isVariations ? '  ' : '';
+        if (isVariations) {
           hoverContent.appendMarkdown(`*Variations*:\n\n`);
         }
         for (const property of properties) {
-          if (properties.length > 0) {
+          if (isVariations) {
             hoverContent.appendMarkdown(`- :\n\n`);
           }
           hoverContent.appendMarkdown(`${indent}- *Property`);
@@ -1241,6 +1251,7 @@ export class ScriptProperties {
               hoverContent.appendMarkdown(`${indent}**${part}**:\n\n`);
             }
             prefix = ''; // Reset prefix for next property step
+            types = [];
           }
         }
         if (positionInExpression < contentOnStepLength) {
@@ -1251,6 +1262,7 @@ export class ScriptProperties {
         }
       } else {
         prefix = prefix ? `${prefix}.${part}` : part;
+        types = result.newTypes || [];
       }
     }
 
