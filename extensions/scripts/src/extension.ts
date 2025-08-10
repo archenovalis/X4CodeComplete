@@ -327,6 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Reinitialize script analysis services with fresh data
       // Note: These replace the minimal instances created during activation
       xsdReference = new XsdReference(configManager.librariesPath);
+
       scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
       await scriptProperties.initialize();
 
@@ -380,9 +381,9 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
             }
-
+            return undefined;
             // Fallback to script properties
-            return scriptProperties.provideDefinition(document, position);
+            // return scriptProperties.provideDefinition(document, position);
           },
         })
       );
