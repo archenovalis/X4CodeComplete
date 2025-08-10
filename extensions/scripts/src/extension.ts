@@ -214,7 +214,7 @@ const processQueuedDocumentChanges = (): void => {
 /**
  * Handles document change events with batching and debouncing
  */
-function onDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+async function onDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
   const { document, contentChanges } = event;
   const uriKey = document.uri.toString();
 
