@@ -1,11 +1,11 @@
 // This file contains utility functions for handling string breakouts in X4 scripting.
-export const breakoutsForExpressions: string[] = [' ', '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
-export const breakoutsForExpressionsBefore: string[] = ['[', '('];
-export const breakoutsForExpressionsAfter: string[] = [']', ')'];
+export const breakoutsSymbolsCommon: string[] = [' ', '"', '=', ':', ';', ',', '&', '|', '/', '!', '*', '+', '-', '?', '%', '^', '~', '`', '@'];
+export const breakoutsSymbolsCommonBefore: string[] = ['[', '('];
+export const breakoutsSymbolsCommonAfter: string[] = [']', ')'];
 
-export const breakoutsForVariables: string[] = ['.'].concat(breakoutsForExpressions);
-export const breakoutsForVariablesBefore: string[] = ['{'].concat(breakoutsForExpressionsBefore);
-export const breakoutsForVariablesAfter: string[] = ['}'].concat(breakoutsForExpressionsAfter);
+export const breakoutsForExpressions: string[] = ['.'].concat(breakoutsSymbolsCommon);
+export const breakoutsForExpressionsBefore: string[] = ['{'].concat(breakoutsSymbolsCommonBefore);
+export const breakoutsForExpressionsAfter: string[] = ['}'].concat(breakoutsSymbolsCommonAfter);
 
 const singleQuoteExclusionSet: Set<string> = new Set(['create_order.id']);
 
@@ -27,16 +27,6 @@ export function getSubStringByBreakSymbol(text: string, breakouts: string[], bef
   return before ? text.substring(index + 1) : text.substring(0, index);
 }
 
-export function getNearestBreakSymbolIndexForVariables(text: string, before: boolean): number {
-  const breakouts = before ? breakoutsForVariables.concat(breakoutsForVariablesBefore) : breakoutsForVariables.concat(breakoutsForVariablesAfter);
-  return getNearestBreakSymbolIndex(text, breakouts, before);
-}
-
-export function getSubStringByBreakSymbolForVariables(text: string, before: boolean): string {
-  const breakouts = before ? breakoutsForVariables.concat(breakoutsForVariablesBefore) : breakoutsForVariables.concat(breakoutsForVariablesAfter);
-  return getSubStringByBreakSymbol(text, breakouts, before);
-}
-
 export function getNearestBreakSymbolIndexForExpressions(text: string, before: boolean): number {
   const breakouts = before ? breakoutsForExpressions.concat(breakoutsForExpressionsBefore) : breakoutsForExpressions.concat(breakoutsForExpressionsAfter);
   return getNearestBreakSymbolIndex(text, breakouts, before);
@@ -44,6 +34,16 @@ export function getNearestBreakSymbolIndexForExpressions(text: string, before: b
 
 export function getSubStringByBreakSymbolForExpressions(text: string, before: boolean): string {
   const breakouts = before ? breakoutsForExpressions.concat(breakoutsForExpressionsBefore) : breakoutsForExpressions.concat(breakoutsForExpressionsAfter);
+  return getSubStringByBreakSymbol(text, breakouts, before);
+}
+
+export function getNearestBreakCommonSymbolIndex(text: string, before: boolean): number {
+  const breakouts = before ? breakoutsSymbolsCommon.concat(breakoutsSymbolsCommonBefore) : breakoutsSymbolsCommon.concat(breakoutsSymbolsCommonAfter);
+  return getNearestBreakSymbolIndex(text, breakouts, before);
+}
+
+export function getSubStringByBreakCommonSymbol(text: string, before: boolean): string {
+  const breakouts = before ? breakoutsSymbolsCommon.concat(breakoutsSymbolsCommonBefore) : breakoutsSymbolsCommon.concat(breakoutsSymbolsCommonAfter);
   return getSubStringByBreakSymbol(text, breakouts, before);
 }
 

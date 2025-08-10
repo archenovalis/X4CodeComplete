@@ -5,7 +5,7 @@ import { getDocumentScriptType } from './scriptsMetadata';
 import { ScriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
-import { getNearestBreakSymbolIndexForVariables, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
+import { getNearestBreakSymbolIndexForExpressions, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
 import { logger } from '../logger/logger';
 
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
@@ -340,8 +340,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         textToProcessBefore = textToProcessBefore.substring(0, position.character);
       }
 
-      const lastBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessBefore, true);
-      const firstBreakIndex = getNearestBreakSymbolIndexForVariables(textToProcessAfter, false);
+      const lastBreakIndex = getNearestBreakSymbolIndexForExpressions(textToProcessBefore, true);
+      const firstBreakIndex = getNearestBreakSymbolIndexForExpressions(textToProcessAfter, false);
 
       const lastDollarIndex = textToProcessBefore.lastIndexOf('$');
       const prefix = lastDollarIndex < textToProcessBefore.length ? textToProcessBefore.substring(lastDollarIndex + 1) : '';

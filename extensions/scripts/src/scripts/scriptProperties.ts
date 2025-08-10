@@ -7,7 +7,7 @@ import * as xml2js from 'xml2js';
 import * as xpath from 'xpath';
 import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
-import { getSubStringByBreakSymbolForExpressions, getEnclosingCurlyBracesIndexes } from './scriptUtilities';
+import { getSubStringByBreakCommonSymbol, getEnclosingCurlyBracesIndexes, breakoutsForExpressions, breakoutsForExpressionsAfter } from './scriptUtilities';
 import { LanguageFileProcessor } from '../languageFiles/languageFiles';
 import { variablePatternExact } from './scriptVariables';
 
@@ -599,11 +599,18 @@ export class ScriptProperties {
     position: vscode.Position,
     token?: vscode.CancellationToken
   ): vscode.CompletionList | undefined {
-    logger.debug('Processing expression: ', textToProcessBefore, ' Type: ', type, ' Schema: ', schema);
+    logger.debug(`Processing expression: ${textToProcessBefore} Type: ${type} Schema: ${schema}`);
+
+    if (
+      textToProcessAfter.length > 0 &&
+      (breakoutsForExpressions.includes(textToProcessAfter[0]) || breakoutsForExpressionsAfter.includes(textToProcessAfter[0]))
+    ) {
+      return undefined;
+    }
 
     // Clean the input text
-    textToProcessBefore = getSubStringByBreakSymbolForExpressions(textToProcessBefore, true);
-    textToProcessAfter = getSubStringByBreakSymbolForExpressions(textToProcessAfter, false);
+    textToProcessBefore = getSubStringByBreakCommonSymbol(textToProcessBefore, true);
+    textToProcessAfter = getSubStringByBreakCommonSymbol(textToProcessAfter, false);
 
     const inCurlyBraces = getEnclosingCurlyBracesIndexes(textToProcessBefore + textToProcessAfter, textToProcessBefore.length);
     if (inCurlyBraces.length > 0) {
@@ -765,11 +772,11 @@ export class ScriptProperties {
       if (token?.isCancellationRequested) return undefined;
 
       // Property not found exactly - try filtering by prefix using enhanced method
-      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, true, schema, !isTypeDefined);
+      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, !isCompletionMode || !isLastPart, schema, !isTypeDefined);
 
       if (token?.isCancellationRequested) return undefined;
 
-      if (filteredProperties.length === 1) {
+      if (filteredProperties.length === 1 && !isCompletionMode) {
         const property = filteredProperties[0];
         if (ScriptProperties.splitExpressionPreserveBraces(fullContentOnStep).length === property.name.split('.').length) {
           const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
@@ -794,12 +801,10 @@ export class ScriptProperties {
       // No properties found
       if (isLastPart) {
         if (isCompletionMode) {
-          const candidateProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, false, schema);
-
           if (token?.isCancellationRequested) return undefined;
 
-          if (candidateProperties.length > 0) {
-            this.generateCompletionsFromProperties(candidateProperties, fullContentOnStep, completions, schema);
+          if (filteredProperties.length > 0) {
+            this.generateCompletionsFromProperties(filteredProperties, fullContentOnStep, completions, schema);
 
             if (token?.isCancellationRequested) return undefined;
 
@@ -1084,7 +1089,7 @@ export class ScriptProperties {
       }
 
       const fullExpression = document.getText(phraseRange);
-      const cleanExpression = getSubStringByBreakSymbolForExpressions(fullExpression, true);
+      const cleanExpression = getSubStringByBreakCommonSymbol(fullExpression, true);
       if (token?.isCancellationRequested) return undefined;
 
       logger.debug('Enhanced hover - Full expression:', fullExpression);
