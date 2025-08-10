@@ -1289,6 +1289,7 @@ export class ScriptProperties {
               hoverContent.appendMarkdown(`${indent}**${part}**:\n\n`);
             }
             hoverContent.appendMarkdown(`${indent}**Result**: *${property.type || 'any'}*\n\n`);
+            continue;
           }
           if (!isLastPart) {
             currentContentType = result.newContentType;
