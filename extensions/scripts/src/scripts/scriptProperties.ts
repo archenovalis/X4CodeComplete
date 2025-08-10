@@ -602,13 +602,6 @@ export class ScriptProperties {
   ): vscode.CompletionList | undefined {
     logger.debug(`Processing expression: ${textToProcessBefore} Type: ${type} Schema: ${schema}`);
 
-    // if (
-    //   textToProcessAfter.length > 0 &&
-    //   (context === undefined || context.triggerKind === vscode.CompletionTriggerKind.Invoke) &&
-    //   (textToProcessAfter[0] === '.' || breakoutsForExpressionsAfter.includes(textToProcessAfter[0]))
-    // ) {
-    //   return undefined;
-    // }
     if (token?.isCancellationRequested) {
       logger.debug(`Make completions cancelled.`);
       return undefined;
@@ -717,14 +710,6 @@ export class ScriptProperties {
         }
       }
 
-      if (result.completions) {
-        // Add completions and stop analysis
-        for (const [key, value] of result.completions) {
-          items.set(key, value);
-        }
-        break;
-      }
-
       if (result.isCompleted) {
         // Part was completed, update contentType and continue
         currentContentType = result.newContentType!;
@@ -733,6 +718,13 @@ export class ScriptProperties {
         properties = [];
         logger.debug(`Part "${part}" completed, new contentType: "${currentContentType?.name}"`);
       } else {
+        if (result.completions) {
+          // Add completions and stop analysis
+          for (const [key, value] of result.completions) {
+            items.set(key, value);
+          }
+          break;
+        }
         // Part is identified but not completed - add to prefix and continue
         prefix = prefix ? `${prefix}.${part}` : part;
         types = result.newTypes || [];
