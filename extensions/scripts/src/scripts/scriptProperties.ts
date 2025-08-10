@@ -597,17 +597,22 @@ export class ScriptProperties {
     type: string,
     schema: string,
     position: vscode.Position,
-    token?: vscode.CancellationToken
+    token?: vscode.CancellationToken,
+    context?: vscode.CompletionContext
   ): vscode.CompletionList | undefined {
     logger.debug(`Processing expression: ${textToProcessBefore} Type: ${type} Schema: ${schema}`);
 
-    if (
-      textToProcessAfter.length > 0 &&
-      (breakoutsForExpressions.includes(textToProcessAfter[0]) || breakoutsForExpressionsAfter.includes(textToProcessAfter[0]))
-    ) {
+    // if (
+    //   textToProcessAfter.length > 0 &&
+    //   (context === undefined || context.triggerKind === vscode.CompletionTriggerKind.Invoke) &&
+    //   (textToProcessAfter[0] === '.' || breakoutsForExpressionsAfter.includes(textToProcessAfter[0]))
+    // ) {
+    //   return undefined;
+    // }
+    if (token?.isCancellationRequested) {
+      logger.debug(`Make completions cancelled.`);
       return undefined;
     }
-
     // Clean the input text
     textToProcessBefore = getSubStringByBreakCommonSymbol(textToProcessBefore, true);
     textToProcessAfter = getSubStringByBreakCommonSymbol(textToProcessAfter, false);
@@ -618,11 +623,19 @@ export class ScriptProperties {
       textToProcessAfter = textToProcessAfter.substring(0, inCurlyBraces[1] - textToProcessBefore.length);
       textToProcessBefore = textToProcessBefore.substring(inCurlyBraces[0] + 1);
     }
-
+    if (token?.isCancellationRequested) {
+      logger.debug(`Make completions cancelled.`);
+      return undefined;
+    }
     // Use step-by-step analysis
     const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema, token);
 
-    if (completions === undefined || token?.isCancellationRequested) return undefined;
+    if (completions === undefined) return undefined;
+
+    if (token?.isCancellationRequested) {
+      logger.debug(`Make completions cancelled.`);
+      return undefined;
+    }
 
     return this.makeCompletionList(completions);
   }
@@ -644,7 +657,10 @@ export class ScriptProperties {
       return items;
     }
 
-    if (token?.isCancellationRequested) return undefined;
+    if (token?.isCancellationRequested) {
+      logger.debug(`Expression analysis cancelled: "${expression}"`);
+      return undefined;
+    }
 
     // Step 1: First part must be a keyword
     const firstPart = parts[0];
@@ -661,7 +677,10 @@ export class ScriptProperties {
       logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
     }
 
-    if (token?.isCancellationRequested) return undefined;
+    if (token?.isCancellationRequested) {
+      logger.debug(`Expression analysis cancelled: "${expression}"`);
+      return undefined;
+    }
 
     // First part is identified and completed
     if (parts.length === 1) {
@@ -674,6 +693,7 @@ export class ScriptProperties {
     let currentContentType: KeywordEntry | TypeEntry = keyword;
     let prefix = '';
     let types = [];
+    let properties = [];
 
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
@@ -681,11 +701,21 @@ export class ScriptProperties {
 
       logger.debug(`Property step ${i}: part="${part}", isLast=${isLastPart}, prefix="${prefix}", contentType="${currentContentType?.name}"`);
 
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Expression analysis cancelled: "${expression}"`);
+        return undefined;
+      }
 
-      const result = this.analyzePropertyStep(part, currentContentType, types, prefix, isLastPart, schema, token);
+      const result = this.analyzePropertyStep(part, currentContentType, types, properties, prefix, isLastPart, schema, token);
+      if (result === undefined) {
+        return undefined;
+      }
 
-      if (result === undefined || token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        if (logger.debug(`Expression analysis cancelled: "${expression}"`)) {
+          return undefined;
+        }
+      }
 
       if (result.completions) {
         // Add completions and stop analysis
@@ -700,11 +730,13 @@ export class ScriptProperties {
         currentContentType = result.newContentType!;
         prefix = ''; // Reset prefix for clean property step
         types = [];
+        properties = [];
         logger.debug(`Part "${part}" completed, new contentType: "${currentContentType?.name}"`);
       } else {
         // Part is identified but not completed - add to prefix and continue
         prefix = prefix ? `${prefix}.${part}` : part;
         types = result.newTypes || [];
+        properties = result.properties || [];
         logger.debug(`Part "${part}" not completed, updated prefix: "${prefix}"`);
       }
     }
@@ -718,7 +750,8 @@ export class ScriptProperties {
   private analyzePropertyStep(
     part: string,
     contentType: KeywordEntry | TypeEntry,
-    types: TypeEntry[],
+    typesPrevious: TypeEntry[],
+    propertiesPrevious: PropertyEntry[],
     prefix: string,
     isLastPart: boolean,
     schema: string,
@@ -732,13 +765,20 @@ export class ScriptProperties {
         newTypes?: TypeEntry[];
         property?: PropertyEntry;
         properties?: PropertyEntry[];
+        isCompletionsForNext?: boolean;
       }
     | undefined {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
+    const prefixParts = ScriptProperties.splitExpressionPreserveBraces(prefix);
+    const prefixPartsCount = prefix ? prefixParts.length : 0;
     const isTypeDefined = contentType !== undefined;
-    const possibleTypes = isTypeDefined ? [contentType] : types.length > 0 ? types : Array.from(this.typeDict.values());
+    const possibleTypes = isTypeDefined ? [contentType] : typesPrevious.length > 0 ? typesPrevious : Array.from(this.typeDict.values());
     const newTypes = [];
-    if (token?.isCancellationRequested) return undefined;
+    let isCompletionsForNext = false;
+    if (token?.isCancellationRequested) {
+      logger.debug(`Step cancelled: "${fullContentOnStep}"`);
+      return undefined;
+    }
 
     const completions = new Map<string, vscode.CompletionItem>();
     const properties = [];
@@ -754,6 +794,7 @@ export class ScriptProperties {
         if (isLastPart && isCompletionMode) {
           // Last part and found - provide next level completions if property has a type
           if (property.type) {
+            isCompletionsForNext = true;
             const typeEntry = this.typeDict.get(property.type);
             if (typeEntry) {
               typeEntry.prepareItems('', completions, undefined, token);
@@ -769,16 +810,21 @@ export class ScriptProperties {
         }
       }
 
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Step cancelled: "${fullContentOnStep}"`);
+        return undefined;
+      }
 
       // Property not found exactly - try filtering by prefix using enhanced method
-      const filteredProperties = this.filterPropertiesByPrefix(currentType, fullContentOnStep, !isCompletionMode || !isLastPart, schema, !isTypeDefined);
+      const filteredProperties = this.filterPropertiesByParts(currentType, part, prefixPartsCount, propertiesPrevious, schema, !isTypeDefined);
+      if (token?.isCancellationRequested) {
+        logger.debug(`Step cancelled: "${fullContentOnStep}"`);
+        return undefined;
+      }
 
-      if (token?.isCancellationRequested) return undefined;
-
-      if (filteredProperties.length === 1 && !isCompletionMode) {
+      if (filteredProperties.length === 1) {
         const property = filteredProperties[0];
-        if (ScriptProperties.splitExpressionPreserveBraces(fullContentOnStep).length === property.name.split('.').length) {
+        if (property.name.split('.').length === prefixPartsCount + 1 && part !== '') {
           const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
           return { isCompleted: true, newContentType, property };
         }
@@ -787,6 +833,11 @@ export class ScriptProperties {
       if (filteredProperties.length > 0) {
         logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
 
+        for (const property of filteredProperties) {
+          if (!properties.find((p) => p.name === property.name && p.owner?.name === property.owner?.name)) {
+            properties.push(property);
+          }
+        }
         if (!isLastPart) {
           // Not last part - this is a complex property, continue with same contentType
           if (!newTypes.find((t) => t.name === currentType.name)) {
@@ -796,26 +847,24 @@ export class ScriptProperties {
         }
       }
 
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Step cancelled: "${fullContentOnStep}"`);
+        return undefined;
+      }
 
       // No properties found
       if (isLastPart) {
         if (isCompletionMode) {
-          if (token?.isCancellationRequested) return undefined;
-
           if (filteredProperties.length > 0) {
-            this.generateCompletionsFromProperties(filteredProperties, fullContentOnStep, completions, schema);
+            this.generateCompletionsFromProperties(filteredProperties, prefixPartsCount + 1, completions, schema);
 
-            if (token?.isCancellationRequested) return undefined;
+            if (token?.isCancellationRequested) {
+              logger.debug(`Step cancelled: "${fullContentOnStep}"`);
+              return undefined;
+            }
 
             // return { isCompleted: false, completions };
             continue; // Skip to next type
-          }
-        } else {
-          for (const property of filteredProperties) {
-            if (!properties.find((p) => p.name === property.name && p.owner?.name === property.owner?.name)) {
-              properties.push(property);
-            }
           }
         }
       }
@@ -825,7 +874,7 @@ export class ScriptProperties {
     } else if (!isCompletionMode && properties.length > 0) {
       return { isCompleted: true, properties };
     } else {
-      return { isCompleted: false, newTypes };
+      return { isCompleted: false, newTypes, properties };
     }
   }
 
@@ -834,15 +883,13 @@ export class ScriptProperties {
    */
   private generateCompletionsFromProperties(
     properties: PropertyEntry[],
-    fullContentOnStep: string,
+    contentPartsCount: number,
     items: Map<string, vscode.CompletionItem>,
     schema?: string
   ): void {
     // const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
-    const contentParts = ScriptProperties.splitExpressionPreserveBraces(fullContentOnStep);
-    const contentPartsCount = contentParts.length;
     const completionPosition = contentPartsCount - 1; // Exclude the last part
 
     for (const property of properties) {
@@ -973,78 +1020,61 @@ export class ScriptProperties {
     return this.getKeyword(placeholderName, schema) || undefined;
   }
 
-  public filterPropertiesByPrefix(
+  public filterPropertiesByParts(
     contentType: KeywordEntry | TypeEntry,
-    prefix: string,
-    appendDot: boolean = true,
-    schema?: string,
-    directOnly: boolean = false
+    part: string,
+    prefixPartsCount: number,
+    propertiesPrevious: PropertyEntry[],
+    schema: string,
+    directOnly
   ): PropertyEntry[] {
     const result: PropertyEntry[] = [];
-    const workingPrefix = appendDot && !prefix.endsWith('.') ? prefix + '.' : prefix;
-    const prefixSplitted = ScriptProperties.splitExpressionPreserveBraces(prefix);
-    const countItems = prefixSplitted.length;
-
-    for (const [name, prop] of contentType.getProperties(directOnly)) {
-      // Check for exact prefix match first
-      if (name.startsWith(workingPrefix)) {
-        result.push(prop);
-        continue;
-      }
+    const properties = propertiesPrevious.length > 0 ? propertiesPrevious : contentType.getProperties(directOnly).values();
+    for (const prop of properties) {
+      const name = prop.name;
 
       // Check for placeholder expansion in middle parts
       const nameSplitted = name.split('.');
-      if (nameSplitted.length >= countItems) {
-        const maxItems = appendDot ? countItems : countItems - 1;
-        let matched = maxItems > 0;
+      const nameSplittedCount = nameSplitted.length;
 
-        for (let i = 0; i < maxItems; i++) {
-          const prefixPart = prefixSplitted[i];
-          const namePart = nameSplitted[i];
-
+      if (nameSplittedCount > prefixPartsCount) {
+        if (part === '') {
+          result.push(prop);
+          continue;
+        }
+        const namePart = nameSplitted[prefixPartsCount];
+        if (part == namePart || namePart.startsWith(part)) {
           // Direct match
-          if (prefixPart === namePart) {
-            continue;
-          }
-
-          // Check for parameter matching like {$component} and {$faction}
-          if (
-            prefixPart.length > 2 &&
-            namePart.length > 2 &&
-            prefixPart.startsWith('{') &&
-            namePart.startsWith('{') &&
-            prefixPart.endsWith('}') &&
-            namePart.endsWith('}')
-          ) {
-            continue;
-          }
-
-          if (variablePatternExact.test(prefixPart) && namePart === '$<variable>') {
-            continue;
-          }
-
-          // Check for placeholder expansion in middle parts
-          const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
-          if (placeholderMatch && schema) {
-            if (prefixPart.length > 0 && ['mdscriptname', 'cuename'].includes(placeholderMatch[1])) {
-              continue; // Stub for md scripts
-            }
-            // Get the keyword item from the property's result attribute or directly from the placeholder name
-            const keyword = this.getKeywordForPlaceholder(prop, placeholderMatch[1], schema);
-
-            if (keyword && keyword.hasProperty(prefixPart)) {
-              logger.debug(`Matched placeholder <${placeholderMatch[1]}> in "${namePart}" with prefix part "${prefixPart}"`);
-              continue;
-            }
-          }
-
-          // No match found
-          matched = false;
-          break;
+          result.push(prop);
+          continue;
+        }
+        // Check for parameter matching like {$component} and {$faction}
+        if (part.length > 2 && namePart.length > 2 && part.startsWith('{') && namePart.startsWith('{') && part.endsWith('}') && namePart.endsWith('}')) {
+          result.push(prop);
+          continue;
         }
 
-        if (matched) {
+        if (variablePatternExact.test(part) && namePart === '$<variable>') {
           result.push(prop);
+          continue;
+        }
+
+        // Check for placeholder expansion in middle parts
+        const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
+        if (placeholderMatch && schema) {
+          if (part.length > 0 && ['mdscriptname', 'cuename'].includes(placeholderMatch[1])) {
+            result.push(prop);
+            continue; // Stub for md scripts
+          }
+          // Get the keyword item from the property's result attribute or directly from the placeholder name
+          const keyword = this.getKeywordForPlaceholder(prop, placeholderMatch[1], schema);
+
+          if (keyword && keyword.hasProperty(part)) {
+            logger.debug(`Matched placeholder <${placeholderMatch[1]}> in "${namePart}" with prefix part "${part}"`);
+
+            result.push(prop);
+            continue;
+          }
         }
       }
     }
@@ -1076,7 +1106,10 @@ export class ScriptProperties {
    */
   public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.Hover | undefined {
     try {
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Hover request cancelled.`);
+        return undefined;
+      }
       const schema = getDocumentScriptType(document);
       if (schema === '') {
         return undefined;
@@ -1090,7 +1123,10 @@ export class ScriptProperties {
 
       const fullExpression = document.getText(phraseRange);
       const cleanExpression = getSubStringByBreakCommonSymbol(fullExpression, true);
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Hover request cancelled.`);
+        return undefined;
+      }
 
       logger.debug('Enhanced hover - Full expression:', fullExpression);
       logger.debug('Enhanced hover - Clean expression:', cleanExpression);
@@ -1124,6 +1160,10 @@ export class ScriptProperties {
     fullExpression: string,
     token?: vscode.CancellationToken
   ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      return undefined;
+    }
     let expressionIndex = fullExpression.indexOf(expression);
     let expressionLength = expression.length;
 
@@ -1150,7 +1190,11 @@ export class ScriptProperties {
     }
 
     logger.debug(`Enhanced hover analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
-    if (token?.isCancellationRequested) return undefined;
+
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      return undefined;
+    }
 
     const startPosition = phraseRange.start.translate(0, expressionIndex);
     const endPosition = phraseRange.start.translate(0, expressionIndex + expressionLength);
@@ -1187,7 +1231,10 @@ export class ScriptProperties {
       }
     }
 
-    if (token?.isCancellationRequested) return undefined;
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      return undefined;
+    }
 
     // If only one part, return keyword/variable information
     if (parts.length === 1) {
@@ -1200,33 +1247,40 @@ export class ScriptProperties {
       };
     }
 
-    if (token?.isCancellationRequested) return undefined;
-
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      return undefined;
+    }
     // Step 2: Analyze property chain
     let prefix = '';
     let types = [];
-    let finalProperty: PropertyEntry | undefined;
-    // let finalContentType: KeywordEntry | TypeEntry | undefined = currentContentType;
+    let properties = [];
 
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
       const isLastPart = i === parts.length - 1;
       fullContentOnStep = fullContentOnStep ? `${fullContentOnStep}.${part}` : part;
       const contentOnStepLength = fullContentOnStep.length;
-      if (token?.isCancellationRequested) return undefined;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+        return undefined;
+      }
 
       logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
 
-      const result = this.analyzePropertyStep(part, currentContentType, types, prefix, isLastPart, schema, token, false);
-      if (result === undefined || token?.isCancellationRequested) return undefined;
+      const result = this.analyzePropertyStep(part, currentContentType, types, properties, prefix, isLastPart, schema, token, false);
+      if (result === undefined || token?.isCancellationRequested) {
+        logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+        return undefined;
+      }
       if (result.isCompleted && (result.property || (isLastPart && result.properties))) {
-        const properties = result.properties || [result.property];
+        const resultProperties = result.properties || [result.property];
         const isVariations = result.properties !== undefined;
         const indent = isVariations ? '  ' : '';
         if (isVariations) {
           hoverContent.appendMarkdown(`*Variations*:\n\n`);
         }
-        for (const property of properties) {
+        for (const property of resultProperties) {
           if (isVariations) {
             hoverContent.appendMarkdown(`- :\n\n`);
           }
@@ -1257,6 +1311,7 @@ export class ScriptProperties {
             }
             prefix = ''; // Reset prefix for next property step
             types = [];
+            properties = [];
           }
         }
         if (positionInExpression < contentOnStepLength) {
@@ -1268,6 +1323,7 @@ export class ScriptProperties {
       } else {
         prefix = prefix ? `${prefix}.${part}` : part;
         types = result.newTypes || [];
+        properties = result.properties || [];
       }
     }
 

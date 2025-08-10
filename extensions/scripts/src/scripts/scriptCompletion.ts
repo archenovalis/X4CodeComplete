@@ -384,7 +384,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           attributeInfo?.type || 'undefined',
           schema,
           position,
-          token
+          token,
+          context
         );
       }
     } else {
