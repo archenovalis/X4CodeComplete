@@ -1324,14 +1324,14 @@ export class ScriptProperties {
     let fullContentOnStep = firstPart;
 
     if (isVariableBased) {
-      hoverContent.appendMarkdown(`**${firstPart}**:\n\n`);
+      hoverContent.appendMarkdown(`**${firstPart}**(*variable*):\n\n`);
     } else {
       // Look for keyword
       currentContentType = this.getKeyword(firstPart, schema);
 
       if (currentContentType) {
         // Add keyword/type information
-        hoverContent.appendMarkdown(`**${currentContentType.name}**:`);
+        hoverContent.appendMarkdown(`**${currentContentType.name}**(*keyword*):`);
         if (currentContentType instanceof KeywordEntry && currentContentType.details) {
           hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
         }
@@ -1399,13 +1399,10 @@ export class ScriptProperties {
         }
         for (const property of resultProperties) {
           if (isVariations) {
-            hoverContent.appendMarkdown(`- :\n\n`);
+            hoverContent.appendMarkdown(`- **${property.owner.name}**(*type*):\n\n`);
           }
-          hoverContent.appendMarkdown(`${indent}- *Property`);
-          if (!currentContentType && property.owner) {
-            hoverContent.appendMarkdown(` of ${property.owner.name}`);
-          }
-          hoverContent.appendMarkdown(`:*\n\n  ${indent}- **${property.name.replace(/([<>])/g, '\\$1')}**`);
+          hoverContent.appendMarkdown(`${indent}- *Property:*\n\n`);
+          hoverContent.appendMarkdown(`  ${indent}- **${property.name.replace(/([<>])/g, '\\$1')}**`);
           if (property.details) {
             hoverContent.appendMarkdown(`: ${property.details}\n\n`);
           }
@@ -1417,11 +1414,10 @@ export class ScriptProperties {
             continue;
           }
           if (!isLastPart) {
-            currentContentType = result.newContentType;
-            if (currentContentType) {
-              hoverContent.appendMarkdown(`${indent}**${currentContentType.name}**:`);
-              if (currentContentType instanceof KeywordEntry && currentContentType.details) {
-                hoverContent.appendMarkdown(` *${currentContentType.details}*:`);
+            if (result.newContentType) {
+              hoverContent.appendMarkdown(`${indent}**${result.newContentType.name}**(*type*):`);
+              if (result.newContentType instanceof KeywordEntry && result.newContentType.details) {
+                hoverContent.appendMarkdown(` *${result.newContentType.details}*:`);
               }
               hoverContent.appendMarkdown('\n\n');
             } else if (result.property.name === '$<variable>' && variablePatternExact.test(part)) {
@@ -1437,6 +1433,12 @@ export class ScriptProperties {
             content: hoverContent,
             range: new vscode.Range(startPosition, endPosition.translate(0, -expressionLength + contentOnStepLength)),
           };
+        }
+        if (!isLastPart) {
+          currentContentType = result.newContentType;
+          prefix = ''; // Reset prefix for next property step
+          types = [];
+          properties = [];
         }
       } else {
         prefix = prefix ? `${prefix}.${part}` : part;
