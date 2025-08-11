@@ -358,7 +358,7 @@ export class ScriptProperties {
 
   private async processKeyword(rawData: string, e: Keyword) {
     const name = e.$.name;
-    const location = this.addNonPropertyLocation(rawData, name, 'keyword');
+    const location = this.addNonPropertyLocation(rawData, name, 'keyword', e.$.script);
     const type = this.typeDict.get(e.$.type || '');
     this.addKeyword(name, type, e.$.script, e.$.description, location);
     logger.debug('Keyword read: ' + name);
@@ -479,8 +479,10 @@ export class ScriptProperties {
     return this.makeLocation(this.scriptPropertiesPath, start, end);
   }
 
-  addNonPropertyLocation(rawData: string, name: string, tagType: string): vscode.Location {
-    const rawIdx = rawData.search('<' + tagType + ' name="' + escapeRegex(name) + '"[^>]*>');
+  addNonPropertyLocation(rawData: string, name: string, tagType: string, script?: string): vscode.Location {
+    const rawIdx = rawData.search(
+      '<' + tagType + ' name="' + escapeRegex(name) + '"[^>]*' + (script ? ' script="' + escapeRegex(script) + '"[^>]*' : '') + '>'
+    );
     return this.addLocationForRegexMatch(rawData, rawIdx, name);
   }
 
