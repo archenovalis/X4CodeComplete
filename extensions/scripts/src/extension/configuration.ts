@@ -57,8 +57,6 @@ export interface ConfigChangeCallbacks {
   onDebugChanged?: (isDebugEnabled: boolean) => void;
   /** Called when language files need to be reloaded */
   onLanguageFilesReload?: (config: X4CodeCompleteConfig) => Promise<void>;
-  /** Called when reloadLanguageData flag needs to be reset */
-  onResetReloadFlag?: () => Promise<void>;
 }
 
 // ================================================================================================
@@ -89,7 +87,6 @@ export class X4ConfigurationManager {
     return { ...this._config };
   }
 
-
   /**
    * Gets the libraries path from current configuration
    */
@@ -108,7 +105,7 @@ export class X4ConfigurationManager {
       forcedCompletion: false,
       languageNumber: '44',
       limitLanguageOutput: false,
-      reloadLanguageData: false
+      reloadLanguageData: false,
     };
   }
 
@@ -124,7 +121,7 @@ export class X4ConfigurationManager {
       forcedCompletion: config.get('forcedCompletion') || false,
       languageNumber: config.get('languageNumber') || '44',
       limitLanguageOutput: config.get('limitLanguageOutput') || false,
-      reloadLanguageData: config.get('reloadLanguageData') || false
+      reloadLanguageData: config.get('reloadLanguageData') || false,
     };
   }
 
@@ -151,7 +148,6 @@ export class X4ConfigurationManager {
       'x4CodeComplete.extensionsFolder',
       'x4CodeComplete.languageNumber',
       'x4CodeComplete.limitLanguageOutput',
-      'x4CodeComplete.reloadLanguageData'
     ];
     return languageFileSettings.includes(settingName);
   }
@@ -188,25 +184,75 @@ export class X4ConfigurationManager {
       event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`);
 
     if (shouldReloadLanguageFiles) {
-      if (this._changeCallbacks.onLanguageFilesReload) {
-        try {
-          await this._changeCallbacks.onLanguageFilesReload(this._config);
-        } catch (error) {
-          logger.error('Failed to reload language files:', error);
+      if (!event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`) || this._config.reloadLanguageData) {
+        if (this._changeCallbacks.onLanguageFilesReload) {
+          try {
+            await this._changeCallbacks.onLanguageFilesReload(this._config);
+          } catch (error) {
+            logger.error('Failed to reload language files:', error);
+          }
         }
       }
 
       // Reset the reloadLanguageData flag to false after processing
       if (event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`)) {
-        if (this._changeCallbacks.onResetReloadFlag) {
-          try {
-            await this._changeCallbacks.onResetReloadFlag();
-          } catch (error) {
-            logger.error('Failed to reset reload flag:', error);
-          }
+        try {
+          await this.resetReloadLanguageDataFlag();
+        } catch (error) {
+          logger.error('Failed to reset reload flag (internal helper):', error);
         }
       }
     }
+  }
+
+  /**
+   * Resets a boolean flag to false in the most specific scope where it is currently set.
+   * Priority order:
+   * 1. Any workspace folder(s) where the value is true
+   * 2. Workspace
+   * 3. Global (user)
+   * If no scope has an explicit true (already false / undefined everywhere), nothing is written.
+   */
+  private async resetFlagInOriginalScope(key: keyof X4CodeCompleteConfig): Promise<void> {
+    const section = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const inspected = section.inspect<boolean>(key as string);
+    if (!inspected) return;
+
+    const updates: Array<Promise<void>> = [];
+
+    // 1. Workspace folder level: need to inspect each folder separately
+    const folders = vscode.workspace.workspaceFolders || [];
+    let folderReset = false;
+    for (const folder of folders) {
+      const folderConfig = vscode.workspace.getConfiguration(CONFIG_SECTION, folder.uri);
+      const folderInspect = folderConfig.inspect<boolean>(key as string);
+      if (folderInspect && folderInspect.workspaceFolderValue === true) {
+        folderReset = true;
+        updates.push(Promise.resolve(folderConfig.update(key, false, vscode.ConfigurationTarget.WorkspaceFolder)) as Promise<void>);
+      }
+    }
+    if (folderReset) {
+      await Promise.all(updates);
+      return; // Folder scope overrides others; done
+    }
+
+    // 2. Workspace level
+    if (inspected.workspaceValue === true) {
+      await section.update(key, false, vscode.ConfigurationTarget.Workspace);
+      return;
+    }
+
+    // 3. Global level
+    if (inspected.globalValue === true) {
+      await section.update(key, false, vscode.ConfigurationTarget.Global);
+      return;
+    }
+    // Nothing explicitly set to true; nothing to do
+  }
+
+  /** Convenience wrapper specifically for reloadLanguageData flag */
+  public async resetReloadLanguageDataFlag(): Promise<void> {
+    await this.resetFlagInOriginalScope('reloadLanguageData');
   }
 
   /**
@@ -254,7 +300,7 @@ export class X4ConfigurationManager {
 
     return {
       isValid: missingSettings.length === 0,
-      missingSettings
+      missingSettings,
     };
   }
 
@@ -262,8 +308,7 @@ export class X4ConfigurationManager {
    * Disposes of all resources
    */
   public dispose(): void {
-    this._disposables.forEach(disposable => disposable.dispose());
+    this._disposables.forEach((disposable) => disposable.dispose());
     this._disposables = [];
   }
 }
-

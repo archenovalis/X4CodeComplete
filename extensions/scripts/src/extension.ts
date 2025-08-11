@@ -278,11 +278,6 @@ export function activate(context: vscode.ExtensionContext) {
           logger.error('Failed to reload language files:', error);
         });
     },
-
-    onResetReloadFlag: async () => {
-      await vscode.workspace.getConfiguration().update('x4CodeComplete.reloadLanguageData', false, vscode.ConfigurationTarget.Global);
-      logger.debug('Reload language data flag reset to false');
-    },
   };
 
   // Initialize configuration manager
