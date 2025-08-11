@@ -55,11 +55,6 @@
           "type": "boolean",
           "default": false,
           "description": "Reloads the language data when toggled. Useful for refreshing language files without restarting the extension."
-        },
-        "x4CodeComplete.forcedCompletion": {
-          "type": "boolean",
-          "default": false,
-          "description": "Forces the extension to provide completions during the simple edits, similar to `Ctrl+Space` pressing."
         }
       }
     }
