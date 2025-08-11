@@ -562,6 +562,7 @@ export function activate(context: vscode.ExtensionContext) {
       disposables.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
           if (scriptsMetadataSet(document)) {
+            logger.debug(`Document is opened: ${document.uri.toString()}`);
             scriptDocumentTracker.trackScriptDocument(document, true);
           }
         })
@@ -613,7 +614,6 @@ export function activate(context: vscode.ExtensionContext) {
       const openDocument = () => {
         const uri = documentsUris.shift();
         if (uri) {
-          logger.debug(`Reading document on startup: ${uri.toString()}`);
           const openedDoc = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString());
           if (openedDoc) {
             logger.debug(`Document found on startup: ${openedDoc.uri.toString()}`);
@@ -621,8 +621,7 @@ export function activate(context: vscode.ExtensionContext) {
             openDocument();
           } else {
             vscode.workspace.openTextDocument(uri).then((doc) => {
-              logger.debug(`Document found on startup: ${doc.uri.toString()}`);
-              scriptDocumentTracker.trackScriptDocument(doc, isActivated);
+              logger.debug(`Document re-opened on startup: ${doc.uri.toString()}`);
               openDocument();
             });
           }
