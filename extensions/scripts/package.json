@@ -11,7 +11,7 @@
   "publisher": "X4CodeComplete",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.98.0"
+    "vscode": "^1.102.0"
   },
   "categories": [
     "Other"
