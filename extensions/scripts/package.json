@@ -22,6 +22,16 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "x4CodeComplete.reloadLanguageFiles",
+        "title": "X4 Code Complete: Reload Language Files"
+      },
+      {
+        "command": "x4CodeComplete.reloadExtractedFiles",
+        "title": "X4 Code Complete: Reload Extracted Files"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "X4 Code Complete Settings",

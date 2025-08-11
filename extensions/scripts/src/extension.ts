@@ -274,21 +274,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: refreshing language files...' }, async () => {
-        await languageProcessor
-          .loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
-          .then(() => {
-            logger.info('Language files reloaded successfully.');
-          })
-          .catch((error) => {
-            logger.error('Failed to reload language files:', error);
-          });
-      });
+      await vscode.commands.executeCommand('x4CodeComplete.reloadLanguageFiles');
     },
 
     onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
       logger.info('Unpacked file location changed.');
-      codeCompleteStartupDone.fire();
+      await vscode.commands.executeCommand('x4CodeComplete.reloadExtractedFiles');
     },
   };
 
@@ -668,6 +659,39 @@ export function activate(context: vscode.ExtensionContext) {
   // React to configuration changes and reload settings/data as needed
   const configChangeDisposable = configManager.registerConfigurationChangeListener();
   context.subscriptions.push(configChangeDisposable);
+
+  // Commands: Reload language files
+  context.subscriptions.push(
+    vscode.commands.registerCommand('x4CodeComplete.reloadLanguageFiles', async () => {
+      try {
+        if (!languageProcessor) {
+          languageProcessor = new LanguageFileProcessor();
+        }
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading language files...' }, async () => {
+          await languageProcessor
+            .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
+            .then(() => logger.info('Language files reloaded via command.'))
+            .catch((err) => {
+              logger.error('Failed to reload language files via command:', err);
+              vscode.window.showErrorMessage('Failed to reload language files: ' + err);
+            });
+        });
+      } catch (e) {
+        logger.error('Unexpected error reloading language files:', e);
+      }
+    })
+  );
+
+  // Commands: Reload extracted files (full heavy re-initialization)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('x4CodeComplete.reloadExtractedFiles', async () => {
+      try {
+        codeCompleteStartupDone.fire();
+      } catch (e) {
+        logger.error('Unexpected error triggering extracted files reload:', e);
+      }
+    })
+  );
 
   // // Update local references when configuration changes
   // context.subscriptions.push(
