@@ -113,16 +113,34 @@ export class X4ConfigurationManager {
    * Loads configuration from VS Code settings
    */
   private loadConfiguration(): void {
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    this._config = {
-      unpackedFileLocation: config.get('unpackedFileLocation') || '',
-      extensionsFolder: config.get('extensionsFolder') || '',
-      debug: config.get('debug') || false,
-      forcedCompletion: config.get('forcedCompletion') || false,
-      languageNumber: config.get('languageNumber') || '44',
-      limitLanguageOutput: config.get('limitLanguageOutput') || false,
-      reloadLanguageData: config.get('reloadLanguageData') || false,
+    const section = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const pick = <T>(key: keyof X4CodeCompleteConfig, fallback: T) => {
+      const inspected = section.inspect<T>(key as string);
+      if (!inspected) return fallback;
+      // Ignore workspaceFolderValue intentionally – only honor workspace and global scopes
+      if (inspected.workspaceValue !== undefined) return inspected.workspaceValue as T;
+      if (inspected.globalValue !== undefined) return inspected.globalValue as T;
+      return (inspected.defaultValue as T) ?? fallback;
     };
+
+    this._config = {
+      unpackedFileLocation: pick('unpackedFileLocation', ''),
+      extensionsFolder: pick('extensionsFolder', ''),
+      debug: pick('debug', false),
+      forcedCompletion: pick('forcedCompletion', false),
+      languageNumber: pick('languageNumber', '44'),
+      limitLanguageOutput: pick('limitLanguageOutput', false),
+      reloadLanguageData: pick('reloadLanguageData', false),
+    };
+  }
+
+  /**
+   * Returns true if a specific configuration item has changed compared to the provided previous snapshot.
+   * Usage: hasConfigItemChanged(previousConfig, 'debug')
+   * Only two parameters are required because the current value is taken from this._config.
+   */
+  public hasConfigItemChanged(prev: X4CodeCompleteConfig, key: keyof X4CodeCompleteConfig): boolean {
+    return prev[key] !== this._config[key];
   }
 
   /**
@@ -137,19 +155,6 @@ export class X4ConfigurationManager {
       }
     });
     return isValid;
-  }
-
-  /**
-   * Checks if configuration setting affects language file loading
-   */
-  public static affectsLanguageFiles(settingName: string): boolean {
-    const languageFileSettings = [
-      'x4CodeComplete.unpackedFileLocation',
-      'x4CodeComplete.extensionsFolder',
-      'x4CodeComplete.languageNumber',
-      'x4CodeComplete.limitLanguageOutput',
-    ];
-    return languageFileSettings.includes(settingName);
   }
 
   /**
@@ -169,7 +174,7 @@ export class X4ConfigurationManager {
     this.loadConfiguration();
 
     // Handle debug setting changes
-    if (this._config.debug !== previousConfig.debug) {
+    if (this.hasConfigItemChanged(previousConfig, 'debug')) {
       if (this._changeCallbacks.onDebugChanged) {
         this._changeCallbacks.onDebugChanged(this._config.debug);
       }
@@ -177,14 +182,14 @@ export class X4ConfigurationManager {
 
     // Check if language files need to be reloaded
     const shouldReloadLanguageFiles =
-      event.affectsConfiguration(`${CONFIG_SECTION}.unpackedFileLocation`) ||
-      event.affectsConfiguration(`${CONFIG_SECTION}.extensionsFolder`) ||
-      event.affectsConfiguration(`${CONFIG_SECTION}.languageNumber`) ||
-      event.affectsConfiguration(`${CONFIG_SECTION}.limitLanguageOutput`) ||
-      event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`);
+      this.hasConfigItemChanged(previousConfig, 'unpackedFileLocation') ||
+      this.hasConfigItemChanged(previousConfig, 'extensionsFolder') ||
+      this.hasConfigItemChanged(previousConfig, 'languageNumber') ||
+      this.hasConfigItemChanged(previousConfig, 'limitLanguageOutput') ||
+      this.hasConfigItemChanged(previousConfig, 'reloadLanguageData');
 
     if (shouldReloadLanguageFiles) {
-      if (!event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`) || this._config.reloadLanguageData) {
+      if (!this.hasConfigItemChanged(previousConfig, 'reloadLanguageData') || this._config.reloadLanguageData) {
         if (this._changeCallbacks.onLanguageFilesReload) {
           try {
             await this._changeCallbacks.onLanguageFilesReload(this._config);
@@ -195,7 +200,7 @@ export class X4ConfigurationManager {
       }
 
       // Reset the reloadLanguageData flag to false after processing
-      if (event.affectsConfiguration(`${CONFIG_SECTION}.reloadLanguageData`)) {
+      if (this.hasConfigItemChanged(previousConfig, 'reloadLanguageData')) {
         try {
           await this.resetReloadLanguageDataFlag();
         } catch (error) {
@@ -221,20 +226,7 @@ export class X4ConfigurationManager {
     const updates: Array<Promise<void>> = [];
 
     // 1. Workspace folder level: need to inspect each folder separately
-    const folders = vscode.workspace.workspaceFolders || [];
-    let folderReset = false;
-    for (const folder of folders) {
-      const folderConfig = vscode.workspace.getConfiguration(CONFIG_SECTION, folder.uri);
-      const folderInspect = folderConfig.inspect<boolean>(key as string);
-      if (folderInspect && folderInspect.workspaceFolderValue === true) {
-        folderReset = true;
-        updates.push(Promise.resolve(folderConfig.update(key, false, vscode.ConfigurationTarget.WorkspaceFolder)) as Promise<void>);
-      }
-    }
-    if (folderReset) {
-      await Promise.all(updates);
-      return; // Folder scope overrides others; done
-    }
+    // Ignored
 
     // 2. Workspace level
     if (inspected.workspaceValue === true) {
