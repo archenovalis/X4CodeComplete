@@ -274,14 +274,16 @@ export function activate(context: vscode.ExtensionContext) {
 
     onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
-      languageProcessor
-        .loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
-        .then(() => {
-          logger.info('Language files reloaded successfully.');
-        })
-        .catch((error) => {
-          logger.error('Failed to reload language files:', error);
-        });
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: refreshing language files...' }, async () => {
+        await languageProcessor
+          .loadLanguageFiles(config.unpackedFileLocation, config.extensionsFolder)
+          .then(() => {
+            logger.info('Language files reloaded successfully.');
+          })
+          .catch((error) => {
+            logger.error('Failed to reload language files:', error);
+          });
+      });
     },
 
     onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
@@ -314,7 +316,8 @@ export function activate(context: vscode.ExtensionContext) {
   // ================================================================================================
 
   onCodeCompleteStartupProcessed(async () => {
-    try {
+    // Heavy initialization logic extracted so we can optionally wrap it in a progress UI
+    const performHeavyInitialization = async () => {
       logger.info('Starting deferred heavy services initialization...');
 
       if (disposables.length > 0) {
@@ -342,10 +345,9 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
       // Reinitialize script analysis services with fresh data
-      // Note: These replace the minimal instances created during activation
       if (xsdReference) {
         logger.info('Reinitializing XSD reference...');
-        xsdReference.dispose(); // Clear previous state if exists
+        xsdReference.dispose();
       }
       xsdReference = new XsdReference(configManager.librariesPath);
 
@@ -358,7 +360,6 @@ export function activate(context: vscode.ExtensionContext) {
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
       }
-      // Update the completion provider with the fully loaded services
       scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker, processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
@@ -642,6 +643,16 @@ export function activate(context: vscode.ExtensionContext) {
       logger.debug(`Documents URIs collected on startup: ${documentsUris.length}`);
       openDocument();
       isActivated = true;
+    };
+    try {
+      if (isActivated) {
+        // Show a progress notification that auto-closes when initialization completes
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: refreshing data...' }, async () => {
+          await performHeavyInitialization();
+        });
+      } else {
+        await performHeavyInitialization();
+      }
     } catch (error) {
       logger.error('Error during heavy services initialization:', error);
       vscode.window.showErrorMessage('Error initializing X4CodeComplete services: ' + error);
