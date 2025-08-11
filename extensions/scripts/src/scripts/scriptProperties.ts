@@ -560,11 +560,15 @@ export class ScriptProperties {
   private static createItem(
     complete: string,
     info: string[] = [],
-    kind: vscode.CompletionItemKind = vscode.CompletionItemKind.Property
+    kind: vscode.CompletionItemKind = vscode.CompletionItemKind.Property,
+    range?: vscode.Range
   ): vscode.CompletionItem {
     const item = new vscode.CompletionItem(complete, kind);
     if (info.length > 0) {
       item.documentation = new vscode.MarkdownString(info.join('  \n- '));
+    }
+    if (range) {
+      item.range = range;
     }
     return item;
   }
@@ -621,7 +625,7 @@ export class ScriptProperties {
       return undefined;
     }
     // Use step-by-step analysis
-    const completions = this.analyzeExpressionStepByStep(textToProcessBefore, schema, token);
+    const completions = this.analyzeExpressionStepByStep(textToProcessBefore, textToProcessAfter.length, position, schema, token);
 
     if (completions === undefined) return undefined;
 
@@ -638,12 +642,17 @@ export class ScriptProperties {
    * Each part is either "identified & completed" or "identified & not completed"
    * Tracks contentType through the analysis
    */
-  private analyzeExpressionStepByStep(expression: string, schema: string, token?: vscode.CancellationToken): Map<string, vscode.CompletionItem> | undefined {
+  private analyzeExpressionStepByStep(
+    expression: string,
+    suffixLength: number,
+    position: vscode.Position,
+    schema: string,
+    token?: vscode.CancellationToken
+  ): Map<string, vscode.CompletionItem> | undefined {
     const items = new Map<string, vscode.CompletionItem>();
 
     // Split expression into parts (empty parts are valid and should be processed)
     const parts = ScriptProperties.splitExpressionPreserveBraces(expression);
-
     logger.warn(`Analyzing expression: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
 
     if (parts.length === 0) {
@@ -664,7 +673,8 @@ export class ScriptProperties {
       if (!keyword) {
         // First part not found as keyword - provide keyword suggestions
         logger.debug(`First part "${firstPart}" not found as keyword, providing keyword suggestions`);
-        this.addKeywordCompletions(items, firstPart, schema);
+        const range = new vscode.Range(position.line, position.character - firstPart.length, position.line, position.character + suffixLength);
+        this.addKeywordCompletions(items, firstPart, range, schema);
         return items;
       }
       logger.debug(`First part "${firstPart}" identified as keyword, type: ${keyword.name || 'none'}`);
@@ -720,7 +730,8 @@ export class ScriptProperties {
       } else {
         if (isLastPart && result.properties) {
           // Add completions and stop analysis
-          this.generateCompletionsFromProperties(result.properties, ScriptProperties.partsCount(prefix), items, schema);
+          const range = new vscode.Range(position.line, position.character - part.length, position.line, position.character + suffixLength);
+          this.generateCompletionsFromProperties(result.properties, ScriptProperties.partsCount(prefix), items, range, schema);
           break;
         }
         // Part is identified but not completed - add to prefix and continue
@@ -836,7 +847,8 @@ export class ScriptProperties {
     properties: PropertyEntry[],
     prefixPartsCount: number,
     items: Map<string, vscode.CompletionItem>,
-    schema?: string
+    range: vscode.Range,
+    schema: string
   ): void {
     // const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
@@ -852,9 +864,9 @@ export class ScriptProperties {
 
         if (placeholderMatch && schema) {
           // Expand placeholder to actual keyword values only if at the end of the property name
-          this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, uniqueCompletions);
+          this.expandPlaceholderInCompletion(completion, property, placeholderMatch[1], schema, items, range, uniqueCompletions);
         } else if (completion) {
-          this.addToUniqueCompletions(completion, items, uniqueCompletions, property.getDescription());
+          this.addToUniqueCompletions(completion, items, uniqueCompletions, property.getDescription(), range);
         }
       }
     }
@@ -863,10 +875,17 @@ export class ScriptProperties {
     // return items;
   }
 
-  private addToUniqueCompletions(completion: string, items: Map<string, vscode.CompletionItem>, uniqueCompletions: Set<string>, description: string[]): void {
+  private addToUniqueCompletions(
+    completion: string,
+    items: Map<string, vscode.CompletionItem>,
+    uniqueCompletions: Set<string>,
+    description: string[],
+    range: vscode.Range
+  ): void {
     if (!uniqueCompletions.has(completion)) {
       uniqueCompletions.add(completion);
       const item = ScriptProperties.createItem(completion, description, vscode.CompletionItemKind.Property);
+      item.range = range;
       items.set(completion, item);
     } else {
       const item = items.get(completion);
@@ -893,11 +912,11 @@ export class ScriptProperties {
   /**
    * Adds keyword completions that match the given prefix
    */
-  private addKeywordCompletions(items: Map<string, vscode.CompletionItem>, prefix: string, schema: string): void {
+  private addKeywordCompletions(items: Map<string, vscode.CompletionItem>, prefix: string, range: vscode.Range, schema: string): void {
     const keywords = this.getKeywords(schema);
     for (const keyword of keywords) {
       if (keyword.name.toLowerCase().startsWith(prefix.toLowerCase())) {
-        const item = ScriptProperties.createItem(keyword.name, keyword.getDescription(), vscode.CompletionItemKind.Keyword);
+        const item = ScriptProperties.createItem(keyword.name, keyword.getDescription(), vscode.CompletionItemKind.Keyword, range);
         items.set(keyword.name, item);
       }
     }
@@ -912,6 +931,7 @@ export class ScriptProperties {
     placeholderName: string,
     schema: string,
     items: Map<string, vscode.CompletionItem>,
+    range: vscode.Range,
     uniqueCompletions: Set<string>
   ): void {
     logger.debug(`Expanding placeholder <${placeholderName}> in completion "${completion}"`);
@@ -940,7 +960,7 @@ export class ScriptProperties {
           description.push(`**${propName.replace(/([<>])/g, '\\$1')}**: ${prop.details}`);
         }
       }
-      this.addToUniqueCompletions(expandedCompletion, items, uniqueCompletions, description);
+      this.addToUniqueCompletions(expandedCompletion, items, uniqueCompletions, description, range);
     }
 
     logger.debug(`Expanded ${keywordProperties.size} completions from placeholder <${placeholderName}>`);
