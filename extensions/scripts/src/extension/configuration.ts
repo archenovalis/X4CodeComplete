@@ -57,6 +57,8 @@ export interface ConfigChangeCallbacks {
   onDebugChanged?: (isDebugEnabled: boolean) => void;
   /** Called when language files need to be reloaded */
   onLanguageFilesReload?: (config: X4CodeCompleteConfig) => Promise<void>;
+  /** Called when unpacked file location changes */
+  onUnpackedFileLocationChanged?: (config: X4CodeCompleteConfig) => Promise<void>;
 }
 
 // ================================================================================================
@@ -206,6 +208,12 @@ export class X4ConfigurationManager {
         } catch (error) {
           logger.error('Failed to reset reload flag (internal helper):', error);
         }
+      }
+    }
+
+    if (this.hasConfigItemChanged(previousConfig, 'unpackedFileLocation')) {
+      if (this._changeCallbacks.onUnpackedFileLocationChanged) {
+        this._changeCallbacks.onUnpackedFileLocationChanged(this._config);
       }
     }
   }
