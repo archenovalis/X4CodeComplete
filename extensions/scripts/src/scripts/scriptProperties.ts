@@ -1089,68 +1089,31 @@ export class ScriptProperties {
     return undefined;
   }
 
-  /**
-   * Enhanced hover provider using the step-by-step expression analysis
-   * This method leverages the same parsing logic as completion for more accurate hover information
-   */
-  public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.Hover | undefined {
-    try {
-      if (token?.isCancellationRequested) {
-        logger.debug(`Hover request cancelled.`);
-        return undefined;
-      }
-      const schema = getDocumentScriptType(document);
-      if (schema === '') {
-        return undefined;
-      }
-      // Get the expression at the cursor position
-      const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
-      const phraseRange = document.getWordRangeAtPosition(position, phraseRegex);
-      if (!phraseRange) {
-        return undefined;
-      }
-
-      const fullExpression = document.getText(phraseRange);
-      const cleanExpression = getSubStringByBreakCommonSymbol(fullExpression, true);
-      if (token?.isCancellationRequested) {
-        logger.debug(`Hover request cancelled.`);
-        return undefined;
-      }
-
-      logger.debug('Enhanced hover - Full expression:', fullExpression);
-      logger.debug('Enhanced hover - Clean expression:', cleanExpression);
-
-      // Analyze the expression to get type information
-      const hoverInfo = this.analyzeExpressionForHover(cleanExpression, schema, position, phraseRange, fullExpression, token);
-
-      if (hoverInfo) {
-        return new vscode.Hover(hoverInfo.content, hoverInfo.range || phraseRange);
-      }
-
-      return undefined;
-    } catch (error) {
-      logger.error('Error in provideEnhancedHover:', error);
+  private static prepareExpression(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token?: vscode.CancellationToken
+  ): {
+    parts: string[];
+    expressionLength: number;
+    positionInExpression: number;
+    startPosition: vscode.Position;
+    endPosition: vscode.Position;
+    phraseRange: vscode.Range;
+  } {
+    const phraseRegex = /([.]*[$@]*[a-zA-Z0-9_-{}])+/g;
+    const phraseRange = document.getWordRangeAtPosition(position, phraseRegex);
+    if (!phraseRange) {
       return undefined;
     }
-  }
 
-  private static isItVariable(expression: string): boolean {
-    return variablePatternExact.test(expression);
-  }
+    const fullExpression = document.getText(phraseRange);
+    let expression = getSubStringByBreakCommonSymbol(fullExpression, true);
+    logger.debug('Enhanced hover - Full expression:', fullExpression);
+    logger.debug('Enhanced hover - Clean expression:', expression);
 
-  /**
-   * Analyzes an expression for hover information using step-by-step parsing
-   */
-  private analyzeExpressionForHover(
-    expression: string,
-    schema: string,
-    position: vscode.Position,
-    phraseRange: vscode.Range,
-    fullExpression: string,
-    token?: vscode.CancellationToken
-  ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
     if (token?.isCancellationRequested) {
-      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      logger.debug(`Request cancelled, for expression: "${expression}".`);
       return undefined;
     }
     let expressionIndex = fullExpression.indexOf(expression);
@@ -1188,6 +1151,74 @@ export class ScriptProperties {
     const startPosition = phraseRange.start.translate(0, expressionIndex);
     const endPosition = phraseRange.start.translate(0, expressionIndex + expressionLength);
     const positionInExpression = position.character - startPosition.character;
+    return {
+      parts,
+      expressionLength,
+      positionInExpression,
+      startPosition,
+      endPosition,
+      phraseRange,
+    };
+  }
+
+  /**
+   * Enhanced hover provider using the step-by-step expression analysis
+   * This method leverages the same parsing logic as completion for more accurate hover information
+   */
+  public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.Hover | undefined {
+    try {
+      if (token?.isCancellationRequested) {
+        logger.debug(`Hover request cancelled.`);
+        return undefined;
+      }
+      const schema = getDocumentScriptType(document);
+      if (schema === '') {
+        return undefined;
+      }
+
+      const prepared = ScriptProperties.prepareExpression(document, position, token);
+      if (!prepared) {
+        return undefined;
+      }
+
+      // Analyze the expression to get type information
+      const hoverInfo = this.analyzeExpressionForHover(
+        prepared.parts,
+        prepared.expressionLength,
+        prepared.positionInExpression,
+        prepared.startPosition,
+        prepared.endPosition,
+        schema,
+        token
+      );
+
+      if (hoverInfo) {
+        return new vscode.Hover(hoverInfo.content, hoverInfo.range || prepared.phraseRange);
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.error('Error in provideEnhancedHover:', error);
+      return undefined;
+    }
+  }
+
+  private static isItVariable(expression: string): boolean {
+    return variablePatternExact.test(expression);
+  }
+
+  /**
+   * Analyzes an expression for hover information using step-by-step parsing
+   */
+  private analyzeExpressionForHover(
+    parts: string[],
+    expressionLength: number,
+    positionInExpression: number,
+    startPosition: vscode.Position,
+    endPosition: vscode.Position,
+    schema: string,
+    token?: vscode.CancellationToken
+  ): { content: vscode.MarkdownString; range?: vscode.Range } | undefined {
     // Step 1: Analyze the first part
     const firstPart = parts[0];
     const isVariableBased = ScriptProperties.isItVariable(firstPart);
@@ -1221,7 +1252,7 @@ export class ScriptProperties {
     }
 
     if (token?.isCancellationRequested) {
-      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      logger.debug(`Hover request cancelled.`);
       return undefined;
     }
 
@@ -1237,7 +1268,7 @@ export class ScriptProperties {
     }
 
     if (token?.isCancellationRequested) {
-      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      logger.debug(`Hover request cancelled.`);
       return undefined;
     }
     // Step 2: Analyze property chain
@@ -1251,7 +1282,7 @@ export class ScriptProperties {
       fullContentOnStep = fullContentOnStep ? `${fullContentOnStep}.${part}` : part;
       const contentOnStepLength = fullContentOnStep.length;
       if (token?.isCancellationRequested) {
-        logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+        logger.debug(`Hover request cancelled.`);
         return undefined;
       }
 
@@ -1259,7 +1290,7 @@ export class ScriptProperties {
 
       const result = this.analyzePropertyStep(part, currentContentType, types, properties, prefix, isLastPart, schema, token, false);
       if (result === undefined || token?.isCancellationRequested) {
-        logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+        logger.debug(`Hover request cancelled.`);
         return undefined;
       }
       if (result.isCompleted && (result.property || (isLastPart && result.properties))) {
