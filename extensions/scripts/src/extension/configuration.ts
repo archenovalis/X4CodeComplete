@@ -184,7 +184,6 @@ export class X4ConfigurationManager {
 
     // Check if language files need to be reloaded
     const shouldReloadLanguageFiles =
-      this.hasConfigItemChanged(previousConfig, 'unpackedFileLocation') ||
       this.hasConfigItemChanged(previousConfig, 'extensionsFolder') ||
       this.hasConfigItemChanged(previousConfig, 'languageNumber') ||
       this.hasConfigItemChanged(previousConfig, 'limitLanguageOutput') ||
