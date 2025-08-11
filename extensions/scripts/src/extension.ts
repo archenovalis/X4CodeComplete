@@ -614,13 +614,18 @@ export function activate(context: vscode.ExtensionContext) {
         const uri = documentsUris.shift();
         if (uri) {
           logger.debug(`Reading document on startup: ${uri.toString()}`);
-          vscode.workspace.openTextDocument(uri).then((doc) => {
-            logger.debug(`Document found on startup: ${doc.uri.toString()}`);
-            if (doc.languageId === 'xml') {
-              scriptDocumentTracker.trackScriptDocument(doc, isActivated);
-            }
+          const openedDoc = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString());
+          if (openedDoc) {
+            logger.debug(`Document found on startup: ${openedDoc.uri.toString()}`);
+            scriptDocumentTracker.trackScriptDocument(openedDoc, isActivated);
             openDocument();
-          });
+          } else {
+            vscode.workspace.openTextDocument(uri).then((doc) => {
+              logger.debug(`Document found on startup: ${doc.uri.toString()}`);
+              scriptDocumentTracker.trackScriptDocument(doc, isActivated);
+              openDocument();
+            });
+          }
         }
       };
 
