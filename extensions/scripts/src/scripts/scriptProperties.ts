@@ -12,15 +12,18 @@ import { LanguageFileProcessor } from '../languageFiles/languageFiles';
 import { variablePatternExact } from './scriptVariables';
 
 class PropertyEntry {
-  name: string;
-  type?: string;
-  details?: string;
-  owner?: TypeEntry | KeywordEntry;
-  constructor(name: string, type?: string, details?: string, owner?: TypeEntry | KeywordEntry) {
+  public name: string;
+  public type?: string;
+  public details?: string;
+  public owner?: TypeEntry | KeywordEntry;
+  public location?: vscode.Location;
+
+  constructor(name: string, type?: string, details?: string, owner?: TypeEntry | KeywordEntry, location?: vscode.Location) {
     this.name = name;
     this.type = type;
     this.details = details;
     this.owner = owner;
+    this.location = location;
   }
   public getDescription(): string[] {
     const result: string[] = [];
@@ -58,15 +61,17 @@ class TypeEntry {
   public properties: Map<string, PropertyEntry> = new Map<string, PropertyEntry>();
   public supertype?: TypeEntry;
   public suffix?: string;
+  public location?: vscode.Location;
 
-  constructor(name: string, supertype?: TypeEntry, suffix?: string) {
+  constructor(name: string, supertype?: TypeEntry, suffix?: string, location?: vscode.Location) {
     this.name = name;
     this.supertype = supertype;
     this.suffix = suffix;
+    this.location = location;
   }
 
-  public addProperty(value: string, type: string = '', details: string = '') {
-    this.properties.set(value, new PropertyEntry(value, type, details, this));
+  public addProperty(value: string, type: string = '', details: string = '', location?: vscode.Location) {
+    this.properties.set(value, new PropertyEntry(value, type, details, this, location));
   }
 
   public getProperties(directOnly: boolean = false): Map<string, PropertyEntry> {
@@ -122,8 +127,9 @@ class TypeEntry {
 class KeywordEntry extends TypeEntry {
   public details?: string;
   public script?: string;
-  constructor(name: string, supertype?: TypeEntry, script?: string, details?: string) {
-    super(name, supertype);
+
+  constructor(name: string, supertype?: TypeEntry, script?: string, details?: string, location?: vscode.Location) {
+    super(name, supertype, undefined, location);
     if (script) {
       this.script = script === 'md' ? mdScriptId : aiScriptId;
     }
@@ -269,7 +275,6 @@ export class ScriptProperties {
   private librariesFolder: string;
   private languageProcessor: LanguageFileProcessor;
   private scriptPropertiesPath: string;
-  private locationDict: Map<string, vscode.Location> = new Map<string, vscode.Location>();
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   private keywordList: KeywordEntry[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
@@ -290,7 +295,6 @@ export class ScriptProperties {
 
   dispose(): void {
     this.domParser = undefined;
-    this.locationDict.clear();
     this.typeDict.clear();
     this.keywordList = [];
     this.descriptions.clear();
@@ -344,19 +348,19 @@ export class ScriptProperties {
   private processProperty(rawData: string, parent: string, parentType: string, prop: ScriptProperty, script?: string) {
     const name = prop.$.name;
     logger.debug('\tProperty read: ', name);
-    this.addPropertyLocation(rawData, name, parent, parentType);
+    const location = this.addPropertyLocation(rawData, name, parent, parentType);
     if (parentType === 'keyword') {
-      this.addKeywordProperty(parent, name, script, prop.$.type || '', prop.$.result);
+      this.addKeywordProperty(parent, name, script, prop.$.type || '', prop.$.result, location);
     } else {
-      this.addTypeProperty(parent, name, prop.$.type || '', prop.$.result);
+      this.addTypeProperty(parent, name, prop.$.type || '', prop.$.result, location);
     }
   }
 
   private async processKeyword(rawData: string, e: Keyword) {
     const name = e.$.name;
-    this.addNonPropertyLocation(rawData, name, 'keyword');
+    const location = this.addNonPropertyLocation(rawData, name, 'keyword');
     const type = this.typeDict.get(e.$.type || '');
-    this.addKeyword(name, type, e.$.script, e.$.description);
+    this.addKeyword(name, type, e.$.script, e.$.description, location);
     logger.debug('Keyword read: ' + name);
 
     if (e.import !== undefined) {
@@ -418,7 +422,7 @@ export class ScriptProperties {
               description = element.getAttribute('comment') || '';
             }
           }
-          this.addKeywordProperty(name, value, script, type, this.processTextPatterns(description), ignorePrefix);
+          this.addKeywordProperty(name, value, script, type, this.processTextPatterns(description), undefined, ignorePrefix);
         }
       } else {
         logger.warn('No matches found for import: ' + select + '/' + targetName + ' in ' + src);
@@ -436,9 +440,9 @@ export class ScriptProperties {
 
   private processDatatype(rawData: any, e: Datatype) {
     const name = e.$.name;
-    this.addNonPropertyLocation(rawData, name, 'datatype');
+    const location = this.addNonPropertyLocation(rawData, name, 'datatype');
     logger.debug('Datatype read: ' + name);
-    this.addType(name, e.$.type, e.$.suffix);
+    this.addType(name, e.$.type, e.$.suffix, location);
     if (e.property === undefined) {
       return;
     }
@@ -459,28 +463,28 @@ export class ScriptProperties {
     });
   }
 
-  addLocation(name: string, file: string, start: vscode.Position, end: vscode.Position): void {
+  makeLocation(file: string, start: vscode.Position, end: vscode.Position): vscode.Location {
     const range = new vscode.Range(start, end);
     const uri = vscode.Uri.file(file);
-    this.locationDict.set(cleanStr(name), new vscode.Location(uri, range));
+    return new vscode.Location(uri, range);
   }
 
-  addLocationForRegexMatch(rawData: string, rawIdx: number, name: string) {
+  addLocationForRegexMatch(rawData: string, rawIdx: number, name: string): vscode.Location {
     // make sure we don't care about platform & still count right https://stackoverflow.com/a/8488787
     const line = rawData.substring(0, rawIdx).split(/\r\n|\r|\n/).length - 1;
     const startIdx = Math.max(rawData.lastIndexOf('\n', rawIdx), rawData.lastIndexOf('\r', rawIdx));
     const start = new vscode.Position(line, rawIdx - startIdx);
     const endIdx = rawData.indexOf('>', rawIdx) + 2;
     const end = new vscode.Position(line, endIdx - rawIdx);
-    this.addLocation(name, this.scriptPropertiesPath, start, end);
+    return this.makeLocation(this.scriptPropertiesPath, start, end);
   }
 
-  addNonPropertyLocation(rawData: string, name: string, tagType: string): void {
+  addNonPropertyLocation(rawData: string, name: string, tagType: string): vscode.Location {
     const rawIdx = rawData.search('<' + tagType + ' name="' + escapeRegex(name) + '"[^>]*>');
-    this.addLocationForRegexMatch(rawData, rawIdx, name);
+    return this.addLocationForRegexMatch(rawData, rawIdx, name);
   }
 
-  addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): void {
+  addPropertyLocation(rawData: string, name: string, parent: string, parentType: string): vscode.Location | undefined {
     const re = new RegExp('(?:<' + parentType + ' name="' + escapeRegex(parent) + '"[^>]*>.*?)(<property name="' + escapeRegex(name) + '"[^>]*>)', 's');
     const matches = rawData.match(re);
     if (matches === null || matches.index === undefined) {
@@ -488,28 +492,28 @@ export class ScriptProperties {
       return;
     }
     const rawIdx = matches.index + matches[0].indexOf(matches[1]);
-    this.addLocationForRegexMatch(rawData, rawIdx, parent + '.' + name);
+    return this.addLocationForRegexMatch(rawData, rawIdx, parent + '.' + name);
   }
 
-  addType(key: string, supertype?: string, suffix?: string): void {
+  addType(key: string, supertype?: string, suffix?: string, location?: vscode.Location): void {
     const k = cleanStr(key);
     let entry = this.typeDict.get(k);
     if (entry === undefined) {
-      entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined, suffix);
+      entry = new TypeEntry(k, supertype ? this.typeDict.get(cleanStr(supertype)) : undefined, suffix, location);
       this.typeDict.set(k, entry);
     }
   }
 
-  addKeyword(key: string, type?: TypeEntry, script?: string, details?: string): void {
+  addKeyword(key: string, type?: TypeEntry, script?: string, details?: string, location?: vscode.Location): void {
     const k = cleanStr(key);
     let entry = this.getKeyword(k, script || '');
     if (entry === undefined) {
-      entry = new KeywordEntry(k, type, script, details);
+      entry = new KeywordEntry(k, type, script, details, location);
       this.keywordList.push(entry);
     }
   }
 
-  addTypeProperty(key: string, prop: string, type?: string, details?: string): void {
+  addTypeProperty(key: string, prop: string, type?: string, details?: string, location?: vscode.Location): void {
     const k = cleanStr(key);
     if (!this.typeDict.has(k)) {
       this.addType(k);
@@ -518,10 +522,18 @@ export class ScriptProperties {
     if (entry === undefined) {
       return;
     }
-    entry.addProperty(prop, type, details);
+    entry.addProperty(prop, type, details, location);
   }
 
-  addKeywordProperty(key: string, prop: string, script?: string, type?: string, details?: string, ignorePrefix: boolean = false): void {
+  addKeywordProperty(
+    key: string,
+    prop: string,
+    script?: string,
+    type?: string,
+    details?: string,
+    location?: vscode.Location,
+    ignorePrefix: boolean = false
+  ): void {
     const k = cleanStr(key);
 
     const entry = this.getKeyword(k, script || '');
@@ -531,7 +543,7 @@ export class ScriptProperties {
     if (ignorePrefix && prop.startsWith(k + '.')) {
       prop = prop.substring(k.length + 1);
     }
-    entry.addProperty(prop, type, details);
+    entry.addProperty(prop, type, details, location);
   }
 
   addDescription(name: string, description: string): void {
@@ -800,7 +812,7 @@ export class ScriptProperties {
         return undefined;
       }
 
-      // Property not found exactly - try filtering by prefix using enhanced method
+      // Property not found exactly - try filtering by prefix using method
       const filtered = this.filterPropertiesByParts(currentType, part, prefixPartsCount, propertiesPrevious, schema, !isTypeDefined);
       if (token?.isCancellationRequested) {
         logger.debug(`Step cancelled: "${fullContentOnStep}"`);
@@ -1071,24 +1083,6 @@ export class ScriptProperties {
     };
   }
 
-  public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
-    const schema = getDocumentScriptType(document);
-    if (schema == '') {
-      return undefined; // Skip if the document is not valid
-    }
-    const line = document.lineAt(position).text;
-    const start = line.lastIndexOf('"', position.character);
-    const end = line.indexOf('"', position.character);
-    let relevant = line.substring(start, end).trim().replace('"', '');
-    do {
-      if (this.locationDict.has(relevant)) {
-        return this.locationDict.get(relevant);
-      }
-      relevant = relevant.substring(relevant.indexOf('.') + 1);
-    } while (relevant.length > 0);
-    return undefined;
-  }
-
   private static prepareExpression(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -1109,8 +1103,6 @@ export class ScriptProperties {
 
     const fullExpression = document.getText(phraseRange);
     let expression = getSubStringByBreakCommonSymbol(fullExpression, true);
-    logger.debug('Enhanced hover - Full expression:', fullExpression);
-    logger.debug('Enhanced hover - Clean expression:', expression);
 
     if (token?.isCancellationRequested) {
       logger.debug(`Request cancelled, for expression: "${expression}".`);
@@ -1141,10 +1133,10 @@ export class ScriptProperties {
       return undefined;
     }
 
-    logger.debug(`Enhanced hover analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
+    logger.debug(`Expression analysis: "${expression}" -> parts: [${parts.map((p) => `"${p}"`).join(', ')}]`);
 
     if (token?.isCancellationRequested) {
-      logger.debug(`Hover request cancelled, for expression: "${expression}".`);
+      logger.debug(`Request cancelled, for expression: "${expression}".`);
       return undefined;
     }
 
@@ -1161,8 +1153,113 @@ export class ScriptProperties {
     };
   }
 
+  public provideDefinition(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): vscode.Definition | undefined {
+    const schema = getDocumentScriptType(document);
+    if (schema == '') {
+      return undefined; // Skip if the document is not valid
+    }
+    logger.debug(`Providing definition for ${schema} at ${position.line}:${position.character}`);
+    const prepared = ScriptProperties.prepareExpression(document, position, token);
+    if (!prepared) {
+      return undefined;
+    }
+    return this.analyzeExpressionForDefinition(
+      prepared.parts,
+      prepared.expressionLength,
+      prepared.positionInExpression,
+      prepared.startPosition,
+      prepared.endPosition,
+      schema,
+      token
+    );
+  }
+
   /**
-   * Enhanced hover provider using the step-by-step expression analysis
+   * Analyzes an expression for definition information using step-by-step parsing
+   */
+  private analyzeExpressionForDefinition(
+    parts: string[],
+    expressionLength: number,
+    positionInExpression: number,
+    startPosition: vscode.Position,
+    endPosition: vscode.Position,
+    schema: string,
+    token?: vscode.CancellationToken
+  ): vscode.Definition | undefined {
+    // Step 1: Analyze the first part
+    const firstPart = parts[0];
+    const isVariableBased = ScriptProperties.isItVariable(firstPart);
+    let currentContentType: KeywordEntry | TypeEntry | undefined;
+    let fullContentOnStep = firstPart;
+
+    if (!isVariableBased) {
+      // Look for keyword
+      currentContentType = this.getKeyword(firstPart, schema);
+
+      if (currentContentType) {
+        const contentOnStepLength = fullContentOnStep.length;
+        if (positionInExpression < contentOnStepLength) {
+          return currentContentType.location;
+        }
+      } else {
+        return undefined; // Unknown first part
+      }
+    }
+
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled.`);
+      return undefined;
+    }
+
+    if (token?.isCancellationRequested) {
+      logger.debug(`Hover request cancelled.`);
+      return undefined;
+    }
+    // Step 2: Analyze property chain
+    let prefix = '';
+    let types = [];
+    let properties = [];
+
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const isLastPart = i === parts.length - 1;
+      fullContentOnStep = fullContentOnStep ? `${fullContentOnStep}.${part}` : part;
+      const contentOnStepLength = fullContentOnStep.length;
+      if (token?.isCancellationRequested) {
+        logger.debug(`Definition request cancelled.`);
+        return undefined;
+      }
+
+      logger.debug(`Definition step ${i}: part="${part}", prefix="${prefix}"`);
+
+      const result = this.analyzePropertyStep(part, currentContentType, types, properties, prefix, isLastPart, schema, token, false);
+      if (result === undefined || token?.isCancellationRequested) {
+        logger.debug(`Definition request cancelled.`);
+        return undefined;
+      }
+      if (result.isCompleted && (result.property || (isLastPart && result.properties))) {
+        if (positionInExpression < contentOnStepLength) {
+          return result.properties ? result.properties.map((p) => p.location) : result.property?.location;
+        }
+        if (!isLastPart) {
+          currentContentType = result.newContentType;
+
+          prefix = ''; // Reset prefix for next property step
+          types = [];
+          properties = [];
+        }
+      } else {
+        prefix = prefix ? `${prefix}.${part}` : part;
+        types = result.newTypes || [];
+        properties = result.properties || [];
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Hover provider using the step-by-step expression analysis
    * This method leverages the same parsing logic as completion for more accurate hover information
    */
   public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.Hover | undefined {
@@ -1198,7 +1295,7 @@ export class ScriptProperties {
 
       return undefined;
     } catch (error) {
-      logger.error('Error in provideEnhancedHover:', error);
+      logger.error('Error in provideHover:', error);
       return undefined;
     }
   }
@@ -1286,7 +1383,7 @@ export class ScriptProperties {
         return undefined;
       }
 
-      logger.debug(`Enhanced hover step ${i}: part="${part}", prefix="${prefix}"`);
+      logger.debug(`Hover step ${i}: part="${part}", prefix="${prefix}"`);
 
       const result = this.analyzePropertyStep(part, currentContentType, types, properties, prefix, isLastPart, schema, token, false);
       if (result === undefined || token?.isCancellationRequested) {

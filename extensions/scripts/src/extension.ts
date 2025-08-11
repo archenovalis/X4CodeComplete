@@ -381,9 +381,8 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
             }
-            return undefined;
             // Fallback to script properties
-            // return scriptProperties.provideDefinition(document, position);
+            return scriptProperties.provideDefinition(document, position, token);
           },
         })
       );
