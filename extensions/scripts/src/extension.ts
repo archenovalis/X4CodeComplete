@@ -64,6 +64,9 @@ import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/sc
 /** Extension configuration and state variables */
 let configManager: X4ConfigurationManager;
 
+/** Activation state */
+let isActivated = false;
+
 /** Core service instances */
 let xsdReference: XsdReference;
 let scriptProperties: ScriptProperties;
@@ -78,6 +81,8 @@ const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
 /** Completion trigger characters for script completion */
 const completionTriggerCharacters = ['.', '"', '{', ' ', '$'];
+
+const disposables: vscode.Disposable[] = [];
 
 /** Document change tracking for batched processing */
 interface DocumentChange {
@@ -278,6 +283,11 @@ export function activate(context: vscode.ExtensionContext) {
           logger.error('Failed to reload language files:', error);
         });
     },
+
+    onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
+      logger.info('Unpacked file location changed.');
+      codeCompleteStartupDone.fire();
+    },
   };
 
   // Initialize configuration manager
@@ -307,8 +317,20 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       logger.info('Starting deferred heavy services initialization...');
 
+      if (disposables.length > 0) {
+        logger.info(`Disposing ${disposables.length} old subscriptions...`);
+        do {
+          const disposable = disposables.pop();
+          if (disposable) {
+            disposable.dispose();
+          }
+        } while (disposables.length > 0);
+      }
+
       // Initialize language processor and load language files
-      languageProcessor = new LanguageFileProcessor();
+      if (!languageProcessor) {
+        languageProcessor = new LanguageFileProcessor();
+      }
       await languageProcessor
         .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
         .then(() => {
@@ -321,13 +343,27 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Reinitialize script analysis services with fresh data
       // Note: These replace the minimal instances created during activation
+      if (xsdReference) {
+        logger.info('Reinitializing XSD reference...');
+        xsdReference.dispose(); // Clear previous state if exists
+      }
       xsdReference = new XsdReference(configManager.librariesPath);
 
+      if (scriptProperties) {
+        scriptProperties.dispose();
+      }
       scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
       await scriptProperties.initialize();
 
+      if (scriptCompletionProvider) {
+        scriptCompletionProvider.dispose();
+      }
       // Update the completion provider with the fully loaded services
       scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker, processQueuedDocumentChanges);
+
+      if (scriptDocumentTracker) {
+        scriptDocumentTracker.dispose();
+      }
       scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
 
       logger.info('Heavy services initialization completed.');
@@ -337,11 +373,10 @@ export function activate(context: vscode.ExtensionContext) {
       // ================================================================================================
 
       // Register completion provider with trigger characters
-      const disposableCompleteProvider = vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, ...completionTriggerCharacters);
-      context.subscriptions.push(disposableCompleteProvider);
+      disposables.push(vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, ...completionTriggerCharacters));
 
       // Register definition provider for go-to-definition functionality
-      context.subscriptions.push(
+      disposables.push(
         vscode.languages.registerDefinitionProvider(xmlSelector, {
           /**
            * Provides definition locations for symbols at a given position
@@ -383,7 +418,7 @@ export function activate(context: vscode.ExtensionContext) {
       );
 
       // Register hover provider for displaying tooltips and documentation
-      context.subscriptions.push(
+      disposables.push(
         vscode.languages.registerHoverProvider(xmlSelector, {
           /**
            * Provides hover information for symbols at a given position
@@ -502,7 +537,7 @@ export function activate(context: vscode.ExtensionContext) {
       logger.info('XSD schemas loaded successfully.');
 
       // Listen for editor changes to parse documents as they become active
-      context.subscriptions.push(
+      disposables.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
           if (editor && scriptsMetadataSet(editor.document)) {
             scriptDocumentTracker.trackScriptDocument(editor.document, false);
@@ -514,7 +549,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
       );
 
-      context.subscriptions.push(
+      disposables.push(
         vscode.window.onDidChangeVisibleTextEditors((editors) => {
           editors.forEach((editor) => {
             addUriToRefreshTimeout(editor.document.uri);
@@ -524,7 +559,7 @@ export function activate(context: vscode.ExtensionContext) {
       );
 
       // Parse newly opened documents only if they become the active document
-      context.subscriptions.push(
+      disposables.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
           if (scriptsMetadataSet(document)) {
             scriptDocumentTracker.trackScriptDocument(document, true);
@@ -533,16 +568,19 @@ export function activate(context: vscode.ExtensionContext) {
       );
 
       // Update XML structure and trigger completion when documents change
-      context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(onDocumentChange));
+      disposables.push(vscode.workspace.onDidChangeTextDocument(onDocumentChange));
 
       // Update document structure when files are saved
-      context.subscriptions.push(
+      disposables.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
           if (scriptsMetadataSet(document, true)) {
             scriptDocumentTracker.trackScriptDocument(document, true);
           }
         })
       );
+
+      // Register all disposables
+      context.subscriptions.push(...disposables);
 
       // Clean up cached data when documents are closed
       context.subscriptions.push(
@@ -567,7 +605,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         })
       );
-
+      ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitions();
       ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
       logger.info(`Doing post-startup work now`);
       const documentsUris: vscode.Uri[] = [];
@@ -579,7 +617,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.workspace.openTextDocument(uri).then((doc) => {
             logger.debug(`Document found on startup: ${doc.uri.toString()}`);
             if (doc.languageId === 'xml') {
-              scriptDocumentTracker.trackScriptDocument(doc, true);
+              scriptDocumentTracker.trackScriptDocument(doc, isActivated);
             }
             openDocument();
           });
@@ -599,6 +637,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       logger.debug(`Documents URIs collected on startup: ${documentsUris.length}`);
       openDocument();
+      isActivated = true;
     } catch (error) {
       logger.error('Error during heavy services initialization:', error);
       vscode.window.showErrorMessage('Error initializing X4CodeComplete services: ' + error);

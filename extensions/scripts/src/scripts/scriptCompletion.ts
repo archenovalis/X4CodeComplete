@@ -398,4 +398,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     }
     return ScriptCompletion.emptyCompletion; // Skip if not in an element range
   }
+
+  dispose() {}
 }

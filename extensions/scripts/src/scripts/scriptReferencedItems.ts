@@ -436,6 +436,14 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
+  public static clearExternalDefinitions(): void {
+    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+      for (const trackerInfo of trackersInfo) {
+        trackerInfo.tracker.clearExternalDefinitions();
+      }
+    }
+  }
+
   public static collectExternalDefinitions(config: X4CodeCompleteConfig) {
     const folders: string[] = [];
     const mainFolders: string[] = [];
@@ -592,6 +600,10 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     } else {
       return `**Defined**: at line ${definition.range.start.line + 1} in \`${path.basename(definition.uri.fsPath)}\``;
     }
+  }
+
+  public clearExternalDefinitions(): void {
+    this.externalDefinitions.clear();
   }
 }
 

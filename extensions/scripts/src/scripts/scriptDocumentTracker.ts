@@ -287,4 +287,6 @@ export class ScriptDocumentTracker {
     this.diagnosticCollection.set(document.uri, diagnostics);
     logger.debug(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
   }
+
+  dispose(): void {}
 }
