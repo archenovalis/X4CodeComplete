@@ -718,11 +718,9 @@ export class ScriptProperties {
         properties = [];
         logger.debug(`Part "${part}" completed, new contentType: "${currentContentType?.name}"`);
       } else {
-        if (result.completions) {
+        if (isLastPart && result.properties) {
           // Add completions and stop analysis
-          for (const [key, value] of result.completions) {
-            items.set(key, value);
-          }
+          this.generateCompletionsFromProperties(result.properties, ScriptProperties.partsCount(prefix), items, schema);
           break;
         }
         // Part is identified but not completed - add to prefix and continue
@@ -734,6 +732,11 @@ export class ScriptProperties {
     }
 
     return items;
+  }
+
+  private static partsCount(expression: string): number {
+    const parts = ScriptProperties.splitExpressionPreserveBraces(expression);
+    return expression ? parts.length : 0;
   }
 
   /**
@@ -752,27 +755,22 @@ export class ScriptProperties {
   ):
     | {
         isCompleted: boolean;
-        completions?: Map<string, vscode.CompletionItem>;
         newContentType?: KeywordEntry | TypeEntry;
         newTypes?: TypeEntry[];
         property?: PropertyEntry;
         properties?: PropertyEntry[];
-        isCompletionsForNext?: boolean;
       }
     | undefined {
     const fullContentOnStep = prefix ? `${prefix}.${part}` : part;
-    const prefixParts = ScriptProperties.splitExpressionPreserveBraces(prefix);
-    const prefixPartsCount = prefix ? prefixParts.length : 0;
+    const prefixPartsCount = ScriptProperties.partsCount(prefix);
     const isTypeDefined = contentType !== undefined;
     const possibleTypes = isTypeDefined ? [contentType] : typesPrevious.length > 0 ? typesPrevious : Array.from(this.typeDict.values());
     const newTypes = [];
-    let isCompletionsForNext = false;
     if (token?.isCancellationRequested) {
       logger.debug(`Step cancelled: "${fullContentOnStep}"`);
       return undefined;
     }
 
-    const completions = new Map<string, vscode.CompletionItem>();
     const properties = [];
     for (const currentType of possibleTypes) {
       // if (ScriptProperties.typesNotAssignableToVariable.has(currentType.name)) {
@@ -782,24 +780,8 @@ export class ScriptProperties {
       if (currentType.hasProperty(fullContentOnStep, !isTypeDefined)) {
         const property = currentType.getProperty(fullContentOnStep)!;
         logger.debug(`Found exact property: "${fullContentOnStep}", type: "${property.type}"`);
-
-        if (isLastPart && isCompletionMode) {
-          // Last part and found - provide next level completions if property has a type
-          if (property.type) {
-            isCompletionsForNext = true;
-            const typeEntry = this.typeDict.get(property.type);
-            if (typeEntry) {
-              typeEntry.prepareItems('', completions, undefined, token);
-            } else {
-              logger.warn(`Type entry not found for property type: "${property.type}"`);
-            }
-          }
-          return { isCompleted: true, completions };
-        } else {
-          // Not last part - continue with the property's type
-          const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
-          return { isCompleted: true, newContentType, property };
-        }
+        const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
+        return { isCompleted: true, newContentType, property };
       }
 
       if (token?.isCancellationRequested) {
@@ -808,24 +790,24 @@ export class ScriptProperties {
       }
 
       // Property not found exactly - try filtering by prefix using enhanced method
-      const filteredProperties = this.filterPropertiesByParts(currentType, part, prefixPartsCount, propertiesPrevious, schema, !isTypeDefined);
+      const filtered = this.filterPropertiesByParts(currentType, part, prefixPartsCount, propertiesPrevious, schema, !isTypeDefined);
       if (token?.isCancellationRequested) {
         logger.debug(`Step cancelled: "${fullContentOnStep}"`);
         return undefined;
       }
 
-      if (filteredProperties.length === 1) {
-        const property = filteredProperties[0];
+      if (filtered.fullyMatched.length === 1 && filtered.fullyMatched[0]) {
+        const property = filtered.properties[0];
         if (property.name.split('.').length === prefixPartsCount + 1 && part !== '') {
           const newContentType = property.type ? this.typeDict.get(property.type) : undefined;
           return { isCompleted: true, newContentType, property };
         }
       }
 
-      if (filteredProperties.length > 0) {
-        logger.debug(`Found ${filteredProperties.length} properties with prefix "${fullContentOnStep}"`);
+      if (filtered.properties.length > 0) {
+        logger.debug(`Found ${filtered.properties.length} properties with prefix "${fullContentOnStep}"`);
 
-        for (const property of filteredProperties) {
+        for (const property of filtered.properties) {
           if (!properties.find((p) => p.name === property.name && p.owner?.name === property.owner?.name)) {
             properties.push(property);
           }
@@ -843,31 +825,8 @@ export class ScriptProperties {
         logger.debug(`Step cancelled: "${fullContentOnStep}"`);
         return undefined;
       }
-
-      // No properties found
-      if (isLastPart) {
-        if (isCompletionMode) {
-          if (filteredProperties.length > 0) {
-            this.generateCompletionsFromProperties(filteredProperties, prefixPartsCount + 1, completions, schema);
-
-            if (token?.isCancellationRequested) {
-              logger.debug(`Step cancelled: "${fullContentOnStep}"`);
-              return undefined;
-            }
-
-            // return { isCompleted: false, completions };
-            continue; // Skip to next type
-          }
-        }
-      }
     }
-    if (isCompletionMode && completions.size > 0) {
-      return { isCompleted: false, completions, newTypes };
-    } else if (!isCompletionMode && properties.length > 0) {
-      return { isCompleted: true, properties };
-    } else {
-      return { isCompleted: false, newTypes, properties };
-    }
+    return { isCompleted: !isCompletionMode && properties.length > 0, newTypes, properties };
   }
 
   /**
@@ -875,20 +834,18 @@ export class ScriptProperties {
    */
   private generateCompletionsFromProperties(
     properties: PropertyEntry[],
-    contentPartsCount: number,
+    prefixPartsCount: number,
     items: Map<string, vscode.CompletionItem>,
     schema?: string
   ): void {
     // const items = new Map<string, vscode.CompletionItem>();
     const uniqueCompletions = new Set<string>();
 
-    const completionPosition = contentPartsCount - 1; // Exclude the last part
-
     for (const property of properties) {
       const nameSplitted = property.name.split('.');
 
-      if (nameSplitted.length >= contentPartsCount) {
-        const completion = nameSplitted[completionPosition];
+      if (nameSplitted.length > prefixPartsCount) {
+        const completion = nameSplitted[prefixPartsCount];
 
         // Check if completion contains placeholder pattern like <classname>
         const placeholderMatch = completion?.match(ScriptProperties.regexLookupElement);
@@ -1019,10 +976,14 @@ export class ScriptProperties {
     propertiesPrevious: PropertyEntry[],
     schema: string,
     directOnly
-  ): PropertyEntry[] {
-    const result: PropertyEntry[] = [];
-    const properties = propertiesPrevious.length > 0 ? propertiesPrevious : contentType.getProperties(directOnly).values();
-    for (const prop of properties) {
+  ): {
+    properties: PropertyEntry[];
+    fullyMatched: boolean[];
+  } {
+    const properties: PropertyEntry[] = [];
+    const fullyMatched: boolean[] = [];
+    const props = propertiesPrevious.length > 0 ? propertiesPrevious : contentType.getProperties(directOnly).values();
+    for (const prop of props) {
       const name = prop.name;
 
       // Check for placeholder expansion in middle parts
@@ -1031,23 +992,30 @@ export class ScriptProperties {
 
       if (nameSplittedCount > prefixPartsCount) {
         if (part === '') {
-          result.push(prop);
+          properties.push(prop);
+          fullyMatched.push(false);
           continue;
         }
         const namePart = nameSplitted[prefixPartsCount];
-        if (part == namePart || namePart.startsWith(part)) {
+        if (part == namePart) {
           // Direct match
-          result.push(prop);
+          properties.push(prop);
+          fullyMatched.push(true);
           continue;
+        } else if (namePart.startsWith(part)) {
+          properties.push(prop);
+          fullyMatched.push(false);
         }
         // Check for parameter matching like {$component} and {$faction}
         if (part.length > 2 && namePart.length > 2 && part.startsWith('{') && namePart.startsWith('{') && part.endsWith('}') && namePart.endsWith('}')) {
-          result.push(prop);
+          properties.push(prop);
+          fullyMatched.push(true);
           continue;
         }
 
         if (variablePatternExact.test(part) && namePart === '$<variable>') {
-          result.push(prop);
+          properties.push(prop);
+          fullyMatched.push(true);
           continue;
         }
 
@@ -1055,7 +1023,8 @@ export class ScriptProperties {
         const placeholderMatch = namePart.match(ScriptProperties.regexLookupElement);
         if (placeholderMatch && schema) {
           if (part.length > 0 && ['mdscriptname', 'cuename'].includes(placeholderMatch[1])) {
-            result.push(prop);
+            properties.push(prop);
+            fullyMatched.push(true);
             continue; // Stub for md scripts
           }
           // Get the keyword item from the property's result attribute or directly from the placeholder name
@@ -1064,14 +1033,22 @@ export class ScriptProperties {
           if (keyword && keyword.hasProperty(part)) {
             logger.debug(`Matched placeholder <${placeholderMatch[1]}> in "${namePart}" with prefix part "${part}"`);
 
-            result.push(prop);
+            properties.push(prop);
+            fullyMatched.push(true);
             continue;
+          } else if (keyword && Array.from(keyword.getProperties().values()).some((p) => p.name.startsWith(part))) {
+            properties.push(prop);
+            fullyMatched.push(false);
+            continue; // Partial match
           }
         }
       }
     }
 
-    return result;
+    return {
+      properties,
+      fullyMatched,
+    };
   }
 
   public provideDefinition(document: vscode.TextDocument, position: vscode.Position): vscode.Location | undefined {
