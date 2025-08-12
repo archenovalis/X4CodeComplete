@@ -6,6 +6,13 @@ import * as sax from 'sax';
 import { logger } from '../logger/logger';
 
 export class LanguageFileProcessor {
+  /* matches: {1015,7} or {1015, 7} or readtext.{1015}.{7} or page="1015" line="7" */
+  private static textPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
+  /* matches: {1015,7} or {1015, 7} */
+  private static textPatternSimple = /\{\s*(\d+)\s*,\s*(\d+)\s*\}/g;
+
+  private static commentPattern = /\([^)]+\)/g;
+
   private languageData: Map<string, Map<string, string>> = new Map();
 
   /**
@@ -235,43 +242,36 @@ export class LanguageFileProcessor {
 
   private textReplacer(match, pageId, textId) {
     const languageText = this.findLanguageText(pageId, textId, true);
-    return languageText || match;
+    if (languageText) {
+      return languageText.replace(LanguageFileProcessor.textPatternSimple, (match, pageId, textId) => this.textReplacer(match, pageId, textId));
+    }
+    return match;
   }
 
-  private textHideComment(text: string): string {
+  private static textHideComment(text: string): string {
     // Remove comments from the text
-    const commentPattern = /\([^)]+\)/g;
-    return text.replace(commentPattern, '').trim();
+    return text.replace(this.commentPattern, '').trim();
   }
 
   public replaceSimplePatternsByText(text: string): string {
     // Replace all simple {pageId,textId} patterns in the text with their language text
-    const tPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}/g;
-    let result = text;
-    while (tPattern.test(result)) {
-      result = result.replace(tPattern, (match, pageId, textId) => this.textReplacer(match, pageId, textId));
-    }
-    return this.textHideComment(result);
+    const result = text.replace(LanguageFileProcessor.textPatternSimple, (match, pageId, textId) => this.textReplacer(match, pageId, textId));
+    return LanguageFileProcessor.textHideComment(result);
   }
 
   public provideHover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): vscode.ProviderResult<vscode.Hover> {
     if (token?.isCancellationRequested) {
       return undefined;
     }
-    const tPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
-    // matches:
-    // {1015,7} or {1015, 7}
-    // readtext.{1015}.{7}
-    // page="1015" line="7"
 
-    const range = document.getWordRangeAtPosition(position, tPattern);
+    const range = document.getWordRangeAtPosition(position, LanguageFileProcessor.textPattern);
     if (range) {
       if (token?.isCancellationRequested) {
         return undefined;
       }
       const text = document.getText(range);
-      const matches = tPattern.exec(text);
-      tPattern.lastIndex = 0; // Reset regex state
+      const matches = LanguageFileProcessor.textPattern.exec(text);
+      LanguageFileProcessor.textPattern.lastIndex = 0; // Reset regex state
 
       if (matches && matches.length >= 3) {
         let pageId: string | undefined;
