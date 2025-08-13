@@ -80,7 +80,7 @@ let refreshTimeoutId: NodeJS.Timeout | undefined;
 const xmlSelector: vscode.DocumentSelector = { language: 'xml' };
 
 /** Completion trigger characters for script completion */
-const completionTriggerCharacters = ['.', '"', '{', ' ', '$'];
+const completionTriggerCharacters = ['.', '"', '{', ' ', '$', '<'];
 
 const disposables: vscode.Disposable[] = [];
 
