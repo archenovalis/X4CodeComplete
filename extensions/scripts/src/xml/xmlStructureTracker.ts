@@ -8,6 +8,7 @@ export interface XmlElement {
   nameRange: vscode.Range; // Range of just the element name within the start tag
   isSelfClosing: boolean;
   parent?: XmlElement; // Optional parent element for easier hierarchy traversal
+  previous?: XmlElement; // Optional previous sibling element
   hierarchy: string[]; // Array representing the full hierarchy of parent elements
   children: XmlElement[];
   attributes: XmlElementAttribute[];
@@ -295,6 +296,9 @@ export class XmlStructureTracker {
           if (openElementStack.length > 0) {
             const parent = openElementStack[openElementStack.length - 1];
             newElement.parent = parent;
+            if (parent.children.length > 0) {
+              newElement.previous = parent.children[parent.children.length - 1]; // Set previous sibling if exists
+            }
             parent.children.push(newElement);
 
             // Update hierarchy

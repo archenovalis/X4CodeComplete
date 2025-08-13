@@ -105,33 +105,17 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     const items: CompletionsMap = new Map();
     const parentName = parent ? parent.name : '';
     const parentHierarchy = parent ? parent.hierarchy : [];
-    const currentElement: XmlElement | undefined = element || parent;
-    let previousElement: XmlElement | undefined = undefined;
-    if (currentElement !== undefined) {
-      let elementName = this.xmlTracker.elementWithPosInName(document, position, element);
-      let newPosition = elementName ? elementName.nameRange.start : position;
-      let foundElement = currentElement;
-      while (foundElement.range.isEqual(currentElement.range)) {
-        newPosition = ScriptCompletion.movePositionLeft(newPosition, document);
-        if (newPosition === undefined) {
-          logger.debug('No more positions to check, exiting loop');
-          break; // No more positions to check, exit the loop
-        }
-        foundElement = this.xmlTracker.elementWithPosIn(document, newPosition);
-        if (foundElement === undefined || !foundElement.range.isEqual(currentElement.range)) {
-          break; // No more elements found, exit the loop
-        }
-        elementName = this.xmlTracker.elementWithPosInName(document, newPosition, foundElement);
-        if (elementName) {
-          break; // Found the element name, exit the loop
-        }
+    const currentElement: XmlElement | undefined = element;
+    let previousElement: XmlElement | undefined = element?.previous || undefined;
+    if (currentElement === undefined && parent !== undefined) {
+      const documentText = document.getText();
+      const previousElementEndIndex = documentText.lastIndexOf('>', document.offsetAt(position) - 1);
+      previousElement = this.xmlTracker.elementWithPosIn(document, document.positionAt(previousElementEndIndex));
+      if (previousElement && previousElement.parent !== parent) {
+        previousElement = undefined;
       }
-      logger.debug(`Element name found: ${foundElement ? foundElement.name : 'undefined'}`);
-      if (foundElement && !foundElement.range.isEqual(currentElement.range)) {
-        previousElement = foundElement;
-      }
-      logger.debug(`Current element: ${currentElement.name}, Previous element: ${previousElement ? previousElement.name : 'undefined'}`);
     }
+    logger.debug(`Current element: ${currentElement?.name}, Previous element: ${previousElement?.name}, Parent element: ${parent?.name}`);
     const possibleElements = this.xsdReference.getPossibleChildElements(
       schema,
       parentName,
