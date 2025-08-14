@@ -385,6 +385,50 @@ export function activate(context: vscode.ExtensionContext) {
               return undefined;
             }
 
+            const element = xmlTracker.elementWithPosInStartTag(document, position);
+            if (element) {
+              const inNameElement = xmlTracker.elementWithPosInName(document, position, element);
+              if (inNameElement) {
+                const elementDefinition = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+                if (elementDefinition) {
+                  const elementLocation = XsdReference.getElementLocation(elementDefinition);
+                  if (elementLocation) {
+                    logger.debug(
+                      `Definition found for element: ${element.name} at ${elementLocation.uri.toString()}:${elementLocation.line}:${elementLocation.column}}`
+                    );
+                    return new vscode.Location(
+                      vscode.Uri.parse(elementLocation.uri),
+                      new vscode.Range(
+                        new vscode.Position(elementLocation.line - 1, elementLocation.column - 1),
+                        new vscode.Position(elementLocation.line - 1, elementLocation.column - 1 + elementLocation.lengthOfStartTag)
+                      )
+                    );
+                  }
+                }
+              } else {
+                const attribute = xmlTracker.attributeWithPosInName(document, position, element);
+                if (attribute) {
+                  const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
+                  const attributeDefinition = elementAttributes.find((attr) => attr.name === attribute.name);
+                  if (attributeDefinition && attributeDefinition.location) {
+                    logger.debug(
+                      `Definition found for attribute: ${attribute.name} at ${attributeDefinition.location.uri.toString()}:${attributeDefinition.location.line}:${attributeDefinition.location.column}}`
+                    );
+                    return new vscode.Location(
+                      vscode.Uri.parse(attributeDefinition.location.uri),
+                      new vscode.Range(
+                        new vscode.Position(attributeDefinition.location.line - 1, attributeDefinition.location.column - 1),
+                        new vscode.Position(
+                          attributeDefinition.location.line - 1,
+                          attributeDefinition.location.column - 1 + attributeDefinition.location.lengthOfStartTag
+                        )
+                      )
+                    );
+                  }
+                }
+              }
+            }
+
             // Check if cursor is on a variable
             const variableDefinition = variableTracker.getVariableDefinition(document, position);
             if (variableDefinition) {
