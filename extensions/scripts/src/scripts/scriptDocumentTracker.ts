@@ -109,8 +109,23 @@ export class ScriptDocumentTracker {
      * - Label and action reference tracking
      */
     const processElement = (element: XmlElement) => {
-      const parentName = element.parent?.name || '';
-
+      if (element.parent) {
+        const parentName = element.parent?.name || '';
+        const parentHierarchy = element.parent.hierarchy || [];
+        const previousName = element.previous?.name || '';
+        const isValidElement = this.xsdReference.isValidChild(schema, element.name, parentName, parentHierarchy, previousName);
+        if (!isValidElement) {
+          const diagnostic = new vscode.Diagnostic(
+            element.startTagRange,
+            `Invalid child element '${element.name}' in parent '${parentName}' after '${previousName}'`,
+            vscode.DiagnosticSeverity.Error
+          );
+          diagnostic.code = 'invalid-child-element';
+          diagnostic.source = 'X4CodeComplete';
+          diagnostics.push(diagnostic);
+        }
+        return;
+      }
       // Validate element against XSD schema
       const elementDefinition = this.xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
       if (elementDefinition === undefined) {
