@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as xml2js from 'xml2js';
 import * as xpath from 'xpath';
 import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
-import { getDocumentScriptType, aiScriptId, mdScriptId } from './scriptsMetadata';
+import { getDocumentScriptType, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 import { getSubStringByBreakCommonSymbol, getEnclosingCurlyBracesIndexes, breakoutsForExpressions, breakoutsForExpressionsAfter } from './scriptUtilities';
 import { LanguageFileProcessor } from '../languageFiles/languageFiles';
 import { variablePatternExact } from './scriptVariables';
@@ -131,7 +131,7 @@ class KeywordEntry extends TypeEntry {
   constructor(name: string, supertype?: TypeEntry, script?: string, details?: string, location?: vscode.Location) {
     super(name, supertype, undefined, location);
     if (script) {
-      this.script = script === 'md' ? mdScriptId : aiScriptId;
+      this.script = script === 'md' ? mdScriptSchema : aiScriptSchema;
     }
     this.details = details;
   }

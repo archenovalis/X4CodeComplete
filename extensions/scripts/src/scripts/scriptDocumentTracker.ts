@@ -3,7 +3,7 @@ import { XsdReference } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
-import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptId, mdScriptId } from './scriptsMetadata';
+import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
   private xmlTracker: XmlStructureTracker;
@@ -132,7 +132,7 @@ export class ScriptDocumentTracker {
           return;
         }
       }
-      if ((schema === aiScriptId && element.name === 'aiscript') || (schema === mdScriptId && element.name === 'mdscript')) {
+      if ((schema === aiScriptSchema && element.name === 'aiscript') || (schema === mdScriptSchema && element.name === 'mdscript')) {
         const nameOfScript = element.attributes.find((attr) => attr.name === 'name')?.value || '';
         if (scriptName !== nameOfScript) {
           scriptName = nameOfScript;
@@ -235,7 +235,7 @@ export class ScriptDocumentTracker {
 
             // Special handling for parameter definitions in AI scripts
             if (
-              schema === aiScriptId &&
+              schema === aiScriptSchema &&
               element.name === 'param' &&
               attr.name === 'name' &&
               element.hierarchy.length > 0 &&
@@ -259,7 +259,7 @@ export class ScriptDocumentTracker {
 
             // Determine variable definition priority based on script section
             const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
-            if (schema === aiScriptId && isLValueAttribute) {
+            if (schema === aiScriptSchema && isLValueAttribute) {
               if (element.hierarchy.includes('library')) {
                 priority = 10;
               } else if (element.hierarchy.includes('init')) {

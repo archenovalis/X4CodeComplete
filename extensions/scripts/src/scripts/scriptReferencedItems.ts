@@ -3,7 +3,7 @@ import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
 import fs from 'fs';
-import { aiScriptId, mdScriptId, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
+import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
@@ -88,12 +88,12 @@ interface ScriptReferencedItemsRegistryItem {
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
 
 const scriptReferencedItemType: ScriptReferencedItemType = new Map([
-  ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptId }],
-  ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptId }],
-  ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptId }],
-  ['cue', { type: 'cue', name: 'Cue', class: 'external', schema: mdScriptId, options: { skipNotUsed: true } }],
-  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptId }],
-  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptId }],
+  ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptSchema }],
+  ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptSchema }],
+  ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptSchema }],
+  ['cue', { type: 'cue', name: 'Cue', class: 'external', schema: mdScriptSchema, options: { skipNotUsed: true } }],
+  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptSchema }],
+  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptSchema }],
 ]);
 
 const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
@@ -296,7 +296,7 @@ export class ReferencedItemsTracker {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
     }
     let scriptName = metadata.name;
-    if (metadata.schema === mdScriptId) {
+    if (metadata.schema === mdScriptSchema) {
       const nameSplitted = name.split('.');
       if (nameSplitted.length === 3 && nameSplitted[0] === 'md') {
         name = nameSplitted[2];
@@ -415,7 +415,7 @@ export class ReferencedItemsTracker {
       if (!definition) {
         itemData.references.forEach((reference) => {
           let name = itemName;
-          if (metadata.schema === mdScriptId && itemData.scriptName !== metadata.name) {
+          if (metadata.schema === mdScriptSchema && itemData.scriptName !== metadata.name) {
             name = `md.${itemData.scriptName}.${name}`;
           }
           const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${name}' is not defined`, vscode.DiagnosticSeverity.Error);
@@ -628,7 +628,6 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     };
     const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
     const folders: string[] = [];
-    const schemas: string[] = [aiScriptId, mdScriptId];
     for (const mainFolder of mainFolders) {
       if (await isDir(mainFolder)) {
         let firstLevel: fs.Dirent[] = [];
@@ -640,13 +639,13 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         for (const entry of firstLevel) {
           if (entry.isDirectory()) {
             const firstLevelPath = path.join(mainFolder, entry.name);
-            if (schemas.includes(entry.name.toLowerCase())) {
+            if (scriptsSchemas.includes(entry.name.toLowerCase())) {
               folders.push(firstLevelPath);
             } else {
               try {
                 const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
                 for (const subEntry of secondLevel) {
-                  if (subEntry.isDirectory() && schemas.includes(subEntry.name.toLowerCase())) {
+                  if (subEntry.isDirectory() && scriptsSchemas.includes(subEntry.name.toLowerCase())) {
                     folders.push(path.join(firstLevelPath, subEntry.name));
                   }
                 }
@@ -724,24 +723,25 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       vscode.Uri.file(fileName),
       new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
     );
-    this.externalDefinitions.set(metadata.schema === aiScriptId ? value : `md.${metadata.name}.${value}`, { name: value, scriptName, definition });
+    this.externalDefinitions.set(metadata.schema === aiScriptSchema ? value : `md.${metadata.name}.${value}`, { name: value, scriptName, definition });
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
     const metadata = getDocumentMetadata(document);
     if (item.definition) {
-      if (metadata.schema === aiScriptId || item.scriptName === metadata.name) {
+      if (metadata.schema === aiScriptSchema || item.scriptName === metadata.name) {
         return super.getDefinition(document, item);
       }
     } else {
       const definitions = Array.from(this.documentReferencedItems.values());
       const externalDefinitions = definitions.filter(
-        (def) => def.has(item.name) && (metadata.schema === aiScriptId || def.get(item.name)?.scriptName === item.scriptName) && def.get(item.name)?.definition
+        (def) =>
+          def.has(item.name) && (metadata.schema === aiScriptSchema || def.get(item.name)?.scriptName === item.scriptName) && def.get(item.name)?.definition
       );
       if (externalDefinitions && externalDefinitions.length > 0) {
         return externalDefinitions[0].get(item.name)?.definition;
       }
-      const externalDefinition = this.externalDefinitions.get(metadata.schema === aiScriptId ? item.name : `md.${item.scriptName}.${item.name}`);
+      const externalDefinition = this.externalDefinitions.get(metadata.schema === aiScriptSchema ? item.name : `md.${item.scriptName}.${item.name}`);
       if (externalDefinition) {
         return externalDefinition.definition;
       }

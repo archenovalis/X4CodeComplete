@@ -40,13 +40,13 @@ export function scriptsMetadataClearAll(): void {
 }
 
 const schemaKeyId = 'xsi:noNamespaceSchemaLocation'.toLowerCase();
-export const aiScriptId = 'aiscripts';
-export const mdScriptId = 'md';
+export const aiScriptSchema = 'aiscripts';
+export const mdScriptSchema = 'md';
 const aiScriptNodeName = 'aiscript';
 const mdScriptNodeName = 'mdscript';
 const nodeNameToSchema = {
-  [aiScriptNodeName]: aiScriptId,
-  [mdScriptNodeName]: mdScriptId,
+  [aiScriptNodeName]: aiScriptSchema,
+  [mdScriptNodeName]: mdScriptSchema,
 };
 const keysIds = Object.keys(nodeNameToSchema);
 export const scriptsSchemas = Object.values(nodeNameToSchema);
@@ -85,13 +85,13 @@ export function getMetadata(text: string): ScriptMetadata | undefined {
   // Create a non-strict parser to be more tolerant of errors
   const node = getFirstNode(text);
   if (node && keysIds.includes(node.name)) {
-    let languageSubId = node.attributes?.[schemaKeyId]?.toString().split('/').pop()?.split('.')[0].toLowerCase();
-    if (!languageSubId || !scriptsSchemas.includes(languageSubId)) {
-      languageSubId = nodeNameToSchema[node.name.toLowerCase()] || '';
+    let scriptSchema = node.attributes?.[schemaKeyId]?.toString().split('/').pop()?.split('.')[0].toLowerCase();
+    if (!scriptSchema || !scriptsSchemas.includes(scriptSchema)) {
+      scriptSchema = nodeNameToSchema[node.name.toLowerCase()] || '';
     }
-    if (languageSubId) {
+    if (scriptSchema) {
       const scriptName = node.attributes.name?.toString() || '';
-      return { schema: languageSubId, name: scriptName };
+      return { schema: scriptSchema, name: scriptName };
     }
   }
   return undefined; // Return undefined if no valid metadata is found
