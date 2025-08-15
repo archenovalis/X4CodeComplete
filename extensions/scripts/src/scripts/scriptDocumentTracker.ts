@@ -217,7 +217,7 @@ export class ScriptDocumentTracker {
                   logger.debug(`Tracking referenced item: ${referencedItemAttributeDetected.type} - ${attrValue} in ${document.uri.toString()}`);
                   const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
                   if (!value.includes('$')) {
-                    switch (referencedItemAttributeDetected.attrType) {
+                    switch (referencedItemAttributeDetected.class) {
                       case 'definition':
                         trackerInfo.tracker.addItemDefinition(metadata, value, document, attr.valueRange);
                         break;

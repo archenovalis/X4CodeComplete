@@ -57,7 +57,7 @@ export interface ScriptReferencedItemsDetectionItem {
   element: string; // The element to check for references
   attribute: string; // The attribute to check for references
   type: ScriptReferencedItemTypeId;
-  attrType: 'definition' | 'reference';
+  class: 'definition' | 'reference';
   filePrefix?: string; // Optional prefix for external definitions
   noCompletion?: boolean; // Optional flag to disable completion for this item
   filters?: ScriptReferencedItemsFilterItem[]; // Optional filter for item detection
@@ -96,34 +96,34 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
 ]);
 
 const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
-  { element: 'label', attribute: 'name', type: 'label', attrType: 'definition', noCompletion: true },
-  { element: 'resume', attribute: 'label', type: 'label', attrType: 'reference' },
-  { element: 'run_interrupt_script', attribute: 'resume', type: 'label', attrType: 'reference' },
-  { element: 'abort_called_scripts', attribute: 'resume', type: 'label', attrType: 'reference' },
-  { element: 'actions', attribute: 'name', type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' },
-  { element: 'include_interrupt_actions', attribute: 'ref', type: 'actions', attrType: 'reference' },
-  { element: 'handler', attribute: 'name', type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
-  { element: 'handler', attribute: 'ref', type: 'handler', attrType: 'reference' },
-  { element: 'cue', attribute: 'name', type: 'cue', attrType: 'definition', noCompletion: true },
-  { element: 'event_cue_signalled', attribute: 'cue', type: 'cue', attrType: 'reference' },
+  { element: 'label', attribute: 'name', type: 'label', class: 'definition', noCompletion: true },
+  { element: 'resume', attribute: 'label', type: 'label', class: 'reference' },
+  { element: 'run_interrupt_script', attribute: 'resume', type: 'label', class: 'reference' },
+  { element: 'abort_called_scripts', attribute: 'resume', type: 'label', class: 'reference' },
+  { element: 'actions', attribute: 'name', type: 'actions', class: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' },
+  { element: 'include_interrupt_actions', attribute: 'ref', type: 'actions', class: 'reference' },
+  { element: 'handler', attribute: 'name', type: 'handler', class: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
+  { element: 'handler', attribute: 'ref', type: 'handler', class: 'reference' },
+  { element: 'cue', attribute: 'name', type: 'cue', class: 'definition', noCompletion: true },
+  { element: 'event_cue_signalled', attribute: 'cue', type: 'cue', class: 'reference' },
   {
     element: 'library',
     attribute: 'name',
     type: 'library_run',
-    attrType: 'definition',
+    class: 'definition',
     noCompletion: true,
     filters: [{ attribute: 'purpose', value: 'run_actions', presented: true }],
   },
-  { element: 'run_actions', attribute: 'ref', type: 'library_run', attrType: 'reference' },
+  { element: 'run_actions', attribute: 'ref', type: 'library_run', class: 'reference' },
   {
     element: 'library',
     attribute: 'name',
     type: 'library_include',
-    attrType: 'definition',
+    class: 'definition',
     noCompletion: true,
     filters: [{ attribute: 'purpose', value: 'run_actions', presented: false }],
   },
-  { element: 'include_actions', attribute: 'ref', type: 'library_include', attrType: 'reference' },
+  { element: 'include_actions', attribute: 'ref', type: 'library_include', class: 'reference' },
 ];
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();
@@ -489,7 +489,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
   private static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker): void {
-    const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.attrType === 'definition');
+    const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.class === 'definition');
     if (!itemInfo) {
       logger.warn(`No item info found for item type: ${itemType}`);
       return;
