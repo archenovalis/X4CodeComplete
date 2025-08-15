@@ -643,7 +643,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
       );
       ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitions();
-      ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
+      await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
       logger.info(`Doing post-startup work now`);
       const documentsUris: vscode.Uri[] = [];
 

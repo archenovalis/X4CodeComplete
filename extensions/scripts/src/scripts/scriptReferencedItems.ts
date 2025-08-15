@@ -490,61 +490,81 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  public static collectExternalDefinitions(config: X4CodeCompleteConfig) {
-    const folders: string[] = [];
+  public static async collectExternalDefinitions(config: X4CodeCompleteConfig): Promise<void> {
     const mainFolders: string[] = [];
-    // if (config.extensionsFolder) {
-    //   mainFolders.push(config.extensionsFolder);
-    // }
     if (config.unpackedFileLocation) {
       mainFolders.push(config.unpackedFileLocation);
     }
     logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
+
+    const isDir = async (p: string): Promise<boolean> => {
+      try {
+        const st = await fs.promises.stat(p);
+        return st.isDirectory();
+      } catch {
+        return false;
+      }
+    };
+
     for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
       logger.debug(`Tracker for ${schema} has ${trackersInfo.length} trackers`);
+      const folders: string[] = [];
       for (const mainFolder of mainFolders) {
-        // Find and push any aiscripts subfolders, including indirect (up to 2 levels deep)
-        if (fs.existsSync(mainFolder)) {
-          const firstLevel = fs.readdirSync(mainFolder, { withFileTypes: true });
+        if (await isDir(mainFolder)) {
+          let firstLevel: fs.Dirent[] = [];
+          try {
+            firstLevel = await fs.promises.readdir(mainFolder, { withFileTypes: true });
+          } catch {
+            firstLevel = [];
+          }
           for (const entry of firstLevel) {
             if (entry.isDirectory()) {
               const firstLevelPath = path.join(mainFolder, entry.name);
               if (entry.name.toLowerCase() === schema.toLowerCase()) {
                 folders.push(firstLevelPath);
               } else {
-                // Check second level
-                const secondLevel = fs.readdirSync(firstLevelPath, { withFileTypes: true });
-                for (const subEntry of secondLevel) {
-                  if (subEntry.isDirectory() && subEntry.name.toLowerCase() === schema.toLowerCase()) {
-                    folders.push(path.join(firstLevelPath, subEntry.name));
+                try {
+                  const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
+                  for (const subEntry of secondLevel) {
+                    if (subEntry.isDirectory() && subEntry.name.toLowerCase() === schema.toLowerCase()) {
+                      folders.push(path.join(firstLevelPath, subEntry.name));
+                    }
                   }
+                } catch {
+                  // ignore subfolder read errors
                 }
               }
             }
           }
         }
       }
+
       logger.debug(`Collecting external definitions for ${folders.length} folders`);
       for (const folder of folders) {
-        if (fs.existsSync(folder) && fs.statSync(folder).isDirectory()) {
+        if (await isDir(folder)) {
           logger.debug(`Processing folder: ${folder}`);
-          const files = fs
-            .readdirSync(folder, { withFileTypes: true })
-            .filter((item) => item.isFile() && item.name.endsWith('.xml'))
-            .map((item) => path.join(folder, item.name));
+          let dirents: fs.Dirent[] = [];
+          try {
+            dirents = await fs.promises.readdir(folder, { withFileTypes: true });
+          } catch {
+            dirents = [];
+          }
+          const files = dirents.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
           for (const file of files) {
             logger.debug(`Processing file: ${file}`);
             const fileName = path.basename(file, '.xml');
-            let fileContent: string = '';
+            let fileContent = '';
+            try {
+              fileContent = await fs.promises.readFile(file, 'utf8');
+            } catch {
+              continue; // skip unreadable files
+            }
             for (const trackerInfo of trackersInfo) {
               const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
               if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
                 logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}`);
-                if (!fileContent && fs.existsSync(file)) {
-                  fileContent = fs.readFileSync(file, 'utf8');
-                }
                 const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
-                let match;
+                let match: RegExpExecArray | null;
                 while ((match = regex.exec(fileContent)) !== null) {
                   const value = match[1];
                   const valueIndex = match.index + match[0].indexOf(`"${value}"`);
