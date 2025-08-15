@@ -247,7 +247,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
 
       const attributeInfo = elementAttributes.find((attr) => attr.name === attribute.name);
-      const attributeValue = document.getText(attribute.valueRange);
+      const attributeValue = attribute.value || '';
 
       // If we're in an attribute value, we need to check for possible values
       const attributeValues: Map<string, string> = elementAttributes
@@ -271,7 +271,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attribute.name, attributeInfo.type || 'undefined');
       let valueCompletion: ScriptReferencedCompletion = new Map();
       // Check if we're in a label or action context
-      if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion) {
+      if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion && !attributeValue.includes('$')) {
         let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
         if (prefix === '' && attributeValue !== '') {
           prefix = attributeValue; // If the prefix is empty, use the current attribute value
