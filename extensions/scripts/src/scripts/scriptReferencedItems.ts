@@ -32,11 +32,15 @@ export interface ScriptReferencedItemsReferences {
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
 export type ScriptReferencedItemClassId = 'basic' | 'external';
+interface ScriptReferencedItemOptions {
+  skipNotUsed?: boolean; // Optional flag to ignore "not used" warnings
+}
 export type ScriptReferencedItemDetails = {
   type: ScriptReferencedItemTypeId;
   name: string;
   class: ScriptReferencedItemClassId;
   schema?: string;
+  options?: ScriptReferencedItemOptions;
 };
 
 type ScriptReferencedItemType = Map<ScriptReferencedItemTypeId, ScriptReferencedItemDetails>;
@@ -86,7 +90,7 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
   ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptId }],
   ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptId }],
   ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptId }],
-  ['cue', { type: 'cue', name: 'Cue', class: 'external', schema: mdScriptId }],
+  ['cue', { type: 'cue', name: 'Cue', class: 'external', schema: mdScriptId, options: { skipNotUsed: true } }],
   ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptId }],
   ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptId }],
 ]);
@@ -128,10 +132,10 @@ function initializeScriptReferencedItemsDetectionMap() {
   for (const [key, details] of scriptReferencedItemType.entries()) {
     switch (details.class) {
       case 'basic':
-        new ReferencedItemsTracker(key, details.name, details.schema);
+        new ReferencedItemsTracker(key, details.name, details.schema, details.options || {});
         break;
       case 'external':
-        new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema);
+        new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema, details.options || {});
         break;
       default:
         logger.warn(`Unknown item type '${details.class}' for key '${key}' in scriptReferencedItemType`);
@@ -232,11 +236,13 @@ export class ReferencedItemsTracker {
   protected documentReferencedItems: Map<vscode.TextDocument, ScriptReferencedItems> = new Map();
   protected itemType: string;
   protected itemName: string;
+  protected options: ScriptReferencedItemOptions;
 
-  constructor(itemType: string, itemName: string, schema: string) {
+  constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
     this.itemType = itemType;
     this.schema = schema;
+    this.options = options || {};
     this.itemName = itemName;
     // Register this tracker in the global registry
     this.registerTracker();
@@ -404,7 +410,7 @@ export class ReferencedItemsTracker {
         });
       }
       const references = this.getReferences(document, itemData);
-      if (references.length === 0) {
+      if (references.length === 0 && !this.options.skipNotUsed) {
         const diagnostic = new vscode.Diagnostic(itemData.definition.range, `${this.itemName} '${itemName}' is not used`, vscode.DiagnosticSeverity.Warning);
         diagnostic.code = `unused-${this.itemType}`;
         diagnostic.source = 'X4CodeComplete';
@@ -674,8 +680,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  constructor(itemType: string, itemName: string, schema: string) {
-    super(itemType, itemName, schema);
+  constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
+    super(itemType, itemName, schema, options);
     ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
   }
 
