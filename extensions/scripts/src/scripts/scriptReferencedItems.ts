@@ -3,10 +3,11 @@ import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
 import fs from 'fs';
-import { aiScriptId, mdScriptId, getMetadata } from './scriptsMetadata';
+import { aiScriptId, mdScriptId, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
+  scriptName: string;
   definition: vscode.Location;
   references: vscode.Location[];
 }
@@ -246,7 +247,7 @@ export class ReferencedItemsTracker {
     logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
-  public addItemDefinition(name: string, document: vscode.TextDocument, range: vscode.Range): void {
+  public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
     if (!this.documentReferencedItems.has(document)) {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
@@ -257,6 +258,7 @@ export class ReferencedItemsTracker {
       // Create a new label info object if it doesn't exist
       itemsData.set(name, {
         name: name,
+        scriptName: metadata.name,
         definition: new vscode.Location(document.uri, range),
         references: [],
       });
@@ -269,10 +271,18 @@ export class ReferencedItemsTracker {
     }
   }
 
-  public addItemReference(name: string, document: vscode.TextDocument, range: vscode.Range): void {
+  public addItemReference(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
     if (!this.documentReferencedItems.has(document)) {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
+    }
+    let scriptName = metadata.name;
+    if (metadata.schema === mdScriptId) {
+      const nameSplitted = name.split('.');
+      if (nameSplitted.length === 3 && nameSplitted[0] === 'md') {
+        name = nameSplitted[2];
+        scriptName = nameSplitted[1];
+      }
     }
     const itemsData = this.documentReferencedItems.get(document);
 
@@ -280,6 +290,7 @@ export class ReferencedItemsTracker {
       // Create a new label info object if it doesn't exist
       itemsData.set(name, {
         name: name,
+        scriptName: scriptName,
         definition: undefined,
         references: [new vscode.Location(document.uri, range)],
       });
@@ -548,7 +559,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}, value: ${value}`);
         const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
         const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
-        trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, metadata.name, filePath);
+        trackerInfo.tracker.addExternalDefinition(metadata, value, line, valueIndex - lineStart, value.length, metadata.name, filePath);
       }
     }
   }
@@ -662,24 +673,37 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
-  public addExternalDefinition(value: string, line: number, position: number, length: number, scriptName: string, fileName: string): void {
+  public addExternalDefinition(
+    metadata: ScriptMetadata,
+    value: string,
+    line: number,
+    position: number,
+    length: number,
+    scriptName: string,
+    fileName: string
+  ): void {
     const definition = new vscode.Location(
       vscode.Uri.file(fileName),
       new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
     );
-    this.externalDefinitions.set(value, { name: value, scriptName, definition });
+    this.externalDefinitions.set(metadata.schema === aiScriptId ? value : `md.${metadata.name}.${value}`, { name: value, scriptName, definition });
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+    const metadata = getDocumentMetadata(document);
     if (item.definition) {
-      return super.getDefinition(document, item);
+      if (metadata.schema === aiScriptId || item.scriptName === metadata.name) {
+        return super.getDefinition(document, item);
+      }
     } else {
       const definitions = Array.from(this.documentReferencedItems.values());
-      const externalDefinitions = definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
+      const externalDefinitions = definitions.filter(
+        (def) => def.has(item.name) && (metadata.schema === aiScriptId || def.get(item.name)?.scriptName === item.scriptName) && def.get(item.name)?.definition
+      );
       if (externalDefinitions && externalDefinitions.length > 0) {
         return externalDefinitions[0].get(item.name)?.definition;
       }
-      const externalDefinition = this.externalDefinitions.get(item.name);
+      const externalDefinition = this.externalDefinitions.get(metadata.schema === aiScriptId ? item.name : `md.${item.scriptName}.${item.name}`);
       if (externalDefinition) {
         return externalDefinition.definition;
       }
@@ -719,7 +743,14 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       if (externalDefinition.definition && (prefix === '' || itemName.startsWith(prefix))) {
         // Only add the item if it matches the prefix
         if (!result.has(itemName)) {
-          result.set(itemName, this.getItemDetails(document, { name: itemName, definition: externalDefinition.definition, references: [] }, 'external'));
+          result.set(
+            itemName,
+            this.getItemDetails(
+              document,
+              { name: itemName, scriptName: externalDefinition.scriptName, definition: externalDefinition.definition, references: [] },
+              'external'
+            )
+          );
         }
       }
     }

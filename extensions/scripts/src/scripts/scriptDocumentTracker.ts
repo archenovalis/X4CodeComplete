@@ -217,10 +217,10 @@ export class ScriptDocumentTracker {
                   logger.debug(`Tracking referenced item: ${referencedItemAttributeDetected.type} - ${attrValue} in ${document.uri.toString()}`);
                   switch (referencedItemAttributeDetected.attrType) {
                     case 'definition':
-                      trackerInfo.tracker.addItemDefinition(attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemDefinition(metadata, attrValue, document, attr.valueRange);
                       break;
                     case 'reference':
-                      trackerInfo.tracker.addItemReference(attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemReference(metadata, attrValue, document, attr.valueRange);
                       break;
                   }
                 } else {

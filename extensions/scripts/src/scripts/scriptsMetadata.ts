@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 
-type ScriptMetadata = {
+export type ScriptMetadata = {
   schema: string;
   name: string;
 };
