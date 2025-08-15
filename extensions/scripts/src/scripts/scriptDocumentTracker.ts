@@ -216,13 +216,15 @@ export class ScriptDocumentTracker {
                 if (trackerInfo) {
                   logger.debug(`Tracking referenced item: ${referencedItemAttributeDetected.type} - ${attrValue} in ${document.uri.toString()}`);
                   const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
-                  switch (referencedItemAttributeDetected.attrType) {
-                    case 'definition':
-                      trackerInfo.tracker.addItemDefinition(metadata, value, document, attr.valueRange);
-                      break;
-                    case 'reference':
-                      trackerInfo.tracker.addItemReference(metadata, value, document, attr.valueRange);
-                      break;
+                  if (!value.includes('$')) {
+                    switch (referencedItemAttributeDetected.attrType) {
+                      case 'definition':
+                        trackerInfo.tracker.addItemDefinition(metadata, value, document, attr.valueRange);
+                        break;
+                      case 'reference':
+                        trackerInfo.tracker.addItemReference(metadata, value, document, attr.valueRange);
+                        break;
+                    }
                   }
                 } else {
                   logger.warn(`No tracker found for referenced item type: ${referencedItemAttributeDetected.type}`);
