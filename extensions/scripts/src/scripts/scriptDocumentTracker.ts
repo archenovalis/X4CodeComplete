@@ -215,12 +215,13 @@ export class ScriptDocumentTracker {
                 const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
                 if (trackerInfo) {
                   logger.debug(`Tracking referenced item: ${referencedItemAttributeDetected.type} - ${attrValue} in ${document.uri.toString()}`);
+                  const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
                   switch (referencedItemAttributeDetected.attrType) {
                     case 'definition':
-                      trackerInfo.tracker.addItemDefinition(metadata, attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemDefinition(metadata, value, document, attr.valueRange);
                       break;
                     case 'reference':
-                      trackerInfo.tracker.addItemReference(metadata, attrValue, document, attr.valueRange);
+                      trackerInfo.tracker.addItemReference(metadata, value, document, attr.valueRange);
                       break;
                   }
                 } else {
