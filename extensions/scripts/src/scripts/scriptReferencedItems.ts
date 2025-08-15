@@ -55,7 +55,7 @@ export interface ScriptReferencedItemsDetectionItem {
   attrType: 'definition' | 'reference';
   filePrefix?: string; // Optional prefix for external definitions
   noCompletion?: boolean; // Optional flag to disable completion for this item
-  filter?: ScriptReferencedItemsFilterItem[]; // Optional filter for item detection
+  filters?: ScriptReferencedItemsFilterItem[]; // Optional filter for item detection
 }
 
 type ScriptReferencedItemsDetectionList = ScriptReferencedItemsDetectionItem[];
@@ -68,6 +68,7 @@ interface ScriptItemExternalDefinition {
 interface externalTrackerInfo {
   elementName: string;
   attributeName: string;
+  filters: ScriptReferencedItemsFilterItem[];
   filePrefix: string; // Optional prefix for external definitions
   tracker: ReferencedItemsWithExternalDefinitionsTracker;
 }
@@ -83,8 +84,8 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
   ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptId }],
   ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptId }],
   ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptId }],
-  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'basic', schema: mdScriptId }],
-  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'basic', schema: mdScriptId }],
+  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptId }],
+  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptId }],
 ]);
 
 const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
@@ -102,7 +103,7 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
     type: 'library_run',
     attrType: 'definition',
     noCompletion: true,
-    filter: [{ attribute: 'purpose', value: 'run_actions', presented: true }],
+    filters: [{ attribute: 'purpose', value: 'run_actions', presented: true }],
   },
   { element: 'run_actions', attribute: 'ref', type: 'library_run', attrType: 'reference' },
   {
@@ -111,7 +112,7 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
     type: 'library_include',
     attrType: 'definition',
     noCompletion: true,
-    filter: [{ attribute: 'purpose', value: 'run_actions', presented: false }],
+    filters: [{ attribute: 'purpose', value: 'run_actions', presented: false }],
   },
   { element: 'include_actions', attribute: 'ref', type: 'library_include', attrType: 'reference' },
 ];
@@ -200,9 +201,9 @@ export function checkReferencedItemAttributeType(schema: string, element: object
   }
   for (const reference of references) {
     let allowed = true;
-    if (reference.filter) {
+    if (reference.filters) {
       const attributes: any[] = element?.['attributes'] || [];
-      for (const filter of reference.filter) {
+      for (const filter of reference.filters) {
         const attribute = attributes.find((attr) => attr.name === filter.attribute);
         if (
           (filter.presented && (attribute === undefined || attribute['value'] !== filter.value)) ||
@@ -476,6 +477,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       this.trackersWithExternalDefinitions.get(schema)?.push({
         elementName: itemInfo.element,
         attributeName: itemInfo.attribute,
+        filters: itemInfo.filters || [],
         filePrefix,
         tracker,
       });
@@ -566,6 +568,23 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
                 const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
                 let match: RegExpExecArray | null;
                 while ((match = regex.exec(fileContent)) !== null) {
+                  if (trackerInfo.filters.length > 0) {
+                    const elementText = match[0];
+                    let allowed = true;
+                    for (const filter of trackerInfo.filters) {
+                      const attributeString = `${filter.attribute}="${filter.value}"`;
+                      if (
+                        (filter.presented && (elementText === undefined || !elementText.includes(attributeString))) ||
+                        (!filter.presented && elementText.includes(attributeString))
+                      ) {
+                        allowed = false;
+                        break;
+                      }
+                    }
+                    if (!allowed) {
+                      continue; // skip this match if it doesn't pass the filters
+                    }
+                  }
                   const value = match[1];
                   const valueIndex = match.index + match[0].indexOf(`"${value}"`);
                   logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}, value: ${value}`);
