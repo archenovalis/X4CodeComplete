@@ -3,7 +3,7 @@ import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
 import fs from 'fs';
-import { aiScriptId, mdScriptId } from './scriptsMetadata';
+import { aiScriptId, mdScriptId, getMetadata } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
@@ -62,6 +62,7 @@ type ScriptReferencedItemsDetectionList = ScriptReferencedItemsDetectionItem[];
 
 interface ScriptItemExternalDefinition {
   name: string;
+  scriptName: string;
   definition: vscode.Location;
 }
 
@@ -492,9 +493,9 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  public static clearExternalDefinitionsForFile(schema: string, filePath: string): void {
+  public static clearExternalDefinitionsForFile(schemaOfFile: string, filePath: string): void {
     for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      if (schema !== schema) {
+      if (schema !== schemaOfFile) {
         continue; // Skip if the schema does not match
       }
       for (const trackerInfo of trackersInfo) {
@@ -503,12 +504,25 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  protected static collectExternalDefinitionsForTrackerAndFile(trackerInfo: externalTrackerInfo, filePath: string, fileContent: string): void {
+  protected static collectExternalDefinitionsForTrackerAndFile(
+    trackerInfo: externalTrackerInfo,
+    filePath: string,
+    fileContent: string,
+    schema: string = ''
+  ): void {
     const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
     const fileName = path.basename(filePath, '.xml');
     if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
       logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}`);
-
+      const metadata = getMetadata(fileContent);
+      if (!metadata) {
+        logger.debug(`No metadata found for file: ${filePath}`);
+        return;
+      }
+      if (schema && metadata.schema !== schema) {
+        logger.debug(`Metadata schema mismatch for file: ${filePath}, expected: ${schema}, found: ${metadata.schema}`);
+        return; // Skip if metadata is invalid or schema does not match
+      }
       const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
       let match: RegExpExecArray | null;
       while ((match = regex.exec(fileContent)) !== null) {
@@ -534,12 +548,12 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}, value: ${value}`);
         const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
         const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
-        trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, filePath);
+        trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, metadata.name, filePath);
       }
     }
   }
 
-  public static async collectExternalDefinitionsForFile(schema: string, filePath: string): Promise<void> {
+  public static async collectExternalDefinitionsForFile(schemaOfFile: string, filePath: string): Promise<void> {
     let fileContent = '';
     try {
       fileContent = await fs.promises.readFile(filePath, 'utf8');
@@ -547,9 +561,9 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       logger.error(`Failed to read file: ${filePath}`);
       return;
     }
-    this.clearExternalDefinitionsForFile(schema, filePath);
+    this.clearExternalDefinitionsForFile(schemaOfFile, filePath);
     for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      if (schema !== schema) {
+      if (schema !== schemaOfFile) {
         continue; // Skip if the schema does not match
       }
       for (const trackerInfo of trackersInfo) {
@@ -627,7 +641,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
               return; // skip unreadable files
             }
             for (const trackerInfo of trackersInfo) {
-              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent);
+              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent, schema);
             }
           }
         }
@@ -648,12 +662,12 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
-  public addExternalDefinition(value: string, line: number, position: number, length: number, fileName: string): void {
+  public addExternalDefinition(value: string, line: number, position: number, length: number, scriptName: string, fileName: string): void {
     const definition = new vscode.Location(
       vscode.Uri.file(fileName),
       new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
     );
-    this.externalDefinitions.set(value, { name: value, definition });
+    this.externalDefinitions.set(value, { name: value, scriptName, definition });
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {

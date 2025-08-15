@@ -3,7 +3,7 @@ import { XsdReference } from 'xsd-lookup';
 import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
-import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId } from './scriptsMetadata';
+import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptId, mdScriptId } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
   private xmlTracker: XmlStructureTracker;
@@ -51,11 +51,12 @@ export class ScriptDocumentTracker {
    */
   public trackScriptDocument(document: vscode.TextDocument, update: boolean = false, position?: vscode.Position): void {
     // Get the script schema type (aiscript, mdscript, etc.)
-    const schema = getDocumentScriptType(document);
-    if (schema === '') {
+    const metadata = getDocumentMetadata(document);
+    if (!metadata || !metadata.schema) {
       return; // Skip processing if the document is not a valid script type
     }
-
+    const schema = metadata.schema;
+    let scriptName = metadata.name || '';
     const diagnostics: vscode.Diagnostic[] = [];
 
     // Check if document is already parsed to avoid redundant work
@@ -129,6 +130,13 @@ export class ScriptDocumentTracker {
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
           return;
+        }
+      }
+      if ((schema === aiScriptId && element.name === 'aiscript') || (schema === mdScriptId && element.name === 'mdscript')) {
+        const nameOfScript = element.attributes.find((attr) => attr.name === 'name')?.value || '';
+        if (scriptName !== nameOfScript) {
+          scriptName = nameOfScript;
+          scriptsMetadataUpdateName(document, scriptName);
         }
       }
       // Validate element against XSD schema
