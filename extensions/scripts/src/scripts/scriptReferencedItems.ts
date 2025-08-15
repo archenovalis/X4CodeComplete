@@ -101,7 +101,7 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
   { element: 'handler', attribute: 'name', type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
   { element: 'handler', attribute: 'ref', type: 'handler', attrType: 'reference' },
   { element: 'cue', attribute: 'name', type: 'cue', attrType: 'definition', noCompletion: true },
-  { element: 'event_cue_signalled', attribute: 'ref', type: 'cue', attrType: 'reference' },
+  { element: 'event_cue_signalled', attribute: 'cue', type: 'cue', attrType: 'reference' },
   {
     element: 'library',
     attribute: 'name',
