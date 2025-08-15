@@ -29,10 +29,13 @@ export class ScriptDocumentTracker {
    * @returns Array of diagnostic issues found
    */
   private validateReferences(document: vscode.TextDocument): vscode.Diagnostic[] {
+    const schema = getDocumentScriptType(document);
     const diagnostics: vscode.Diagnostic[] = [];
 
     scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-      diagnostics.push(...trackerInfo.tracker.validateItems(document));
+      if (trackerInfo.tracker.schema === schema) {
+        diagnostics.push(...trackerInfo.tracker.validateItems(document));
+      }
     });
 
     return diagnostics;
@@ -95,7 +98,9 @@ export class ScriptDocumentTracker {
     // Clear existing tracking data for this document before reprocessing
     this.variableTracker.clearVariablesForDocument(document);
     scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-      trackerInfo.tracker.clearItemsForDocument(document);
+      if (trackerInfo.tracker.schema === schema) {
+        trackerInfo.tracker.clearItemsForDocument(document);
+      }
     });
 
     const text = document.getText();
@@ -123,8 +128,8 @@ export class ScriptDocumentTracker {
           diagnostic.code = 'invalid-child-element';
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
+          return;
         }
-        return;
       }
       // Validate element against XSD schema
       const elementDefinition = this.xsdReference.getElementDefinition(schema, element.name, element.hierarchy);

@@ -436,10 +436,10 @@ export function activate(context: vscode.ExtensionContext) {
               return variableDefinition.definition;
             }
 
-            // AI script specific features
-            if (schema === aiScriptId) {
-              for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-                if (token.isCancellationRequested) return undefined;
+            // Process trackers
+            for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+              if (token.isCancellationRequested) return undefined;
+              if (trackerInfo.tracker.schema === schema) {
                 const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
                 if (itemDefinition) {
                   logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
@@ -535,10 +535,10 @@ export function activate(context: vscode.ExtensionContext) {
                     return undefined;
                   }
 
-                  // AI script specific hover information
-                  if (schema === aiScriptId) {
-                    for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-                      if (token.isCancellationRequested) return undefined;
+                  // Trackers specific hover information
+                  for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                    if (token.isCancellationRequested) return undefined;
+                    if (trackerInfo.tracker.schema === schema) {
                       // Check for action definitions
                       const itemHover = trackerInfo.tracker.getItemHover(document, position);
                       if (itemHover) {
@@ -817,9 +817,9 @@ export function activate(context: vscode.ExtensionContext) {
           logger.debug(`References found for variable: ${variableReferences.name}`);
           return variableReferences.references;
         }
-        if (schema == aiScriptId) {
-          for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-            if (token.isCancellationRequested) return undefined;
+        for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+          if (token.isCancellationRequested) return undefined;
+          if (trackerInfo.tracker.schema === schema) {
             const itemReferences = trackerInfo.tracker.getItemReferences(document, position);
             if (itemReferences) {
               logger.debug(`References found for ${itemType}: ${itemReferences.name}`);

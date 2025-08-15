@@ -4,6 +4,7 @@ import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
 import { log } from 'console';
 import fs from 'fs';
+import { aiScriptId } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
@@ -31,8 +32,13 @@ export interface ScriptReferencedItemsReferences {
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler';
 export type ScriptReferencedItemClassId = 'basic' | 'external';
+export type ScriptReferencedItemDetails = {
+  type: ScriptReferencedItemTypeId;
+  class: ScriptReferencedItemClassId;
+  schema?: string;
+};
 
-type ScriptReferencedItemType = Map<ScriptReferencedItemTypeId, ScriptReferencedItemClassId>;
+type ScriptReferencedItemType = Map<ScriptReferencedItemTypeId, ScriptReferencedItemDetails>;
 
 export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 
@@ -66,9 +72,9 @@ interface ScriptReferencedItemsRegistryItem {
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
 
 const scriptReferencedItemType: ScriptReferencedItemType = new Map([
-  ['label', 'basic'],
-  ['actions', 'external'],
-  ['handler', 'external'],
+  ['label', { type: 'label', class: 'basic', schema: aiScriptId }],
+  ['actions', { type: 'actions', class: 'external', schema: aiScriptId }],
+  ['handler', { type: 'handler', class: 'external', schema: aiScriptId }],
 ]);
 
 const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
@@ -76,25 +82,25 @@ const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new
   ['resume#label', { type: 'label', attrType: 'reference' }],
   ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
   ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.', schema: 'aiscripts' }],
+  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' }],
   ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
-  ['handler#name', { type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.', schema: 'aiscripts' }],
+  ['handler#name', { type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' }],
   ['handler#ref', { type: 'handler', attrType: 'reference' }],
 ]);
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();
 
 function initializeScriptReferencedItemsDetectionMap() {
-  for (const [key, value] of scriptReferencedItemType.entries()) {
-    switch (value) {
+  for (const [key, details] of scriptReferencedItemType.entries()) {
+    switch (details.class) {
       case 'basic':
-        new ReferencedItemsTracker(key);
+        new ReferencedItemsTracker(key, details.schema);
         break;
       case 'external':
-        new ReferencedItemsWithExternalDefinitionsTracker(key);
+        new ReferencedItemsWithExternalDefinitionsTracker(key, details.schema);
         break;
       default:
-        logger.warn(`Unknown item type '${value}' for key '${key}' in scriptReferencedItemType`);
+        logger.warn(`Unknown item type '${details.class}' for key '${key}' in scriptReferencedItemType`);
     }
   }
 }
@@ -167,13 +173,15 @@ export function checkReferencedItemAttributeType(elementName, attributeName): Sc
 
 export class ReferencedItemsTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
+  public schema: string;
   protected documentReferencedItems: Map<vscode.TextDocument, ScriptReferencedItems> = new Map();
   protected itemType: string;
   protected itemTypeCapitalized: string;
 
-  constructor(itemType: string) {
+  constructor(itemType: string, schema: string) {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
     this.itemType = itemType;
+    this.schema = schema;
     this.itemTypeCapitalized = this.itemType.charAt(0).toUpperCase() + this.itemType.slice(1);
     // Register this tracker in the global registry
     this.registerTracker();
@@ -422,7 +430,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
     const [elementName, attributeName] = itemInfo.split('#');
     const filePrefix = scriptReferencedItemsDetectionMap.get(itemInfo)?.filePrefix || '';
-    const schema = scriptReferencedItemsDetectionMap.get(itemInfo)?.schema || '';
+    const schema = tracker.schema || '';
     if (schema) {
       if (!this.trackersWithExternalDefinitions.has(schema)) {
         this.trackersWithExternalDefinitions.set(schema, []);
@@ -515,8 +523,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  constructor(itemType: string) {
-    super(itemType);
+  constructor(itemType: string, schema: string) {
+    super(itemType, schema);
     ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
   }
 
