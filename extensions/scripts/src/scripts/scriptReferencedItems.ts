@@ -30,7 +30,7 @@ export interface ScriptReferencedItemsReferences {
   references: vscode.Location[];
 }
 
-export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'library_run' | 'library_include';
+export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
 export type ScriptReferencedItemClassId = 'basic' | 'external';
 export type ScriptReferencedItemDetails = {
   type: ScriptReferencedItemTypeId;
@@ -86,6 +86,7 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
   ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptId }],
   ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptId }],
   ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptId }],
+  ['cue', { type: 'cue', name: 'Cue', class: 'external', schema: mdScriptId }],
   ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptId }],
   ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptId }],
 ]);
@@ -99,6 +100,8 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
   { element: 'include_interrupt_actions', attribute: 'ref', type: 'actions', attrType: 'reference' },
   { element: 'handler', attribute: 'name', type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
   { element: 'handler', attribute: 'ref', type: 'handler', attrType: 'reference' },
+  { element: 'cue', attribute: 'name', type: 'cue', attrType: 'definition', noCompletion: true },
+  { element: 'event_cue_signalled', attribute: 'ref', type: 'cue', attrType: 'reference' },
   {
     element: 'library',
     attribute: 'name',
