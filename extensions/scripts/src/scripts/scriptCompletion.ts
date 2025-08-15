@@ -268,7 +268,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
         return ScriptCompletion.makeCompletionList(items, prefix);
       }
-      const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attribute.name);
+      const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attribute.name, attributeInfo.type || 'undefined');
       let valueCompletion: ScriptReferencedCompletion = new Map();
       // Check if we're in a label or action context
       if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion) {

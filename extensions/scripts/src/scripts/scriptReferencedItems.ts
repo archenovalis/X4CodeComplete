@@ -55,7 +55,8 @@ export interface ScriptReferencedItemsFilterItem {
 
 export interface ScriptReferencedItemsDetectionItem {
   element: string; // The element to check for references
-  attribute: string; // The attribute to check for references
+  attribute?: string; // The attribute to check for references
+  attributeType?: string; // The type of the attribute to check for references
   type: ScriptReferencedItemTypeId;
   class: 'definition' | 'reference';
   filePrefix?: string; // Optional prefix for external definitions
@@ -105,7 +106,7 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
   { element: 'handler', attribute: 'name', type: 'handler', class: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
   { element: 'handler', attribute: 'ref', type: 'handler', class: 'reference' },
   { element: 'cue', attribute: 'name', type: 'cue', class: 'definition', noCompletion: true },
-  { element: '*', attribute: 'cue', type: 'cue', class: 'reference' },
+  { element: '*', attributeType: 'cuename', type: 'cue', class: 'reference' },
   {
     element: 'library',
     attribute: 'name',
@@ -200,12 +201,18 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
     .map((item) => item.name);
 }
 
-export function checkReferencedItemAttributeType(schema: string, element: object, attributeName: string): ScriptReferencedItemsDetectionItem | undefined {
+export function checkReferencedItemAttributeType(
+  schema: string,
+  element: object,
+  attributeName: string,
+  attributeType: string
+): ScriptReferencedItemsDetectionItem | undefined {
   const references = scriptReferencedItemsDetectionList.filter((item) => {
     const result =
       scriptReferencedItemType.get(item.type)?.schema === schema &&
       (item.element === '*' || item.element === element?.['name']) &&
-      item.attribute === attributeName;
+      (item.attribute === undefined || item.attribute === attributeName) &&
+      (item.attributeType === undefined || item.attributeType === attributeType);
     return result;
   });
   if (references.length === 0) {
