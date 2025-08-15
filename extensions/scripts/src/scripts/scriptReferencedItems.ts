@@ -2,9 +2,8 @@ import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
 import path from 'path';
-import { log } from 'console';
 import fs from 'fs';
-import { aiScriptId } from './scriptsMetadata';
+import { aiScriptId, mdScriptId } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
@@ -30,10 +29,11 @@ export interface ScriptReferencedItemsReferences {
   references: vscode.Location[];
 }
 
-export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler';
+export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'library_run' | 'library_include';
 export type ScriptReferencedItemClassId = 'basic' | 'external';
 export type ScriptReferencedItemDetails = {
   type: ScriptReferencedItemTypeId;
+  name: string;
   class: ScriptReferencedItemClassId;
   schema?: string;
 };
@@ -42,15 +42,23 @@ type ScriptReferencedItemType = Map<ScriptReferencedItemTypeId, ScriptReferenced
 
 export type ScriptReferencedCompletion = Map<string, vscode.MarkdownString>;
 
-export interface ScriptReferencedItemsDetectionItem {
-  type: ScriptReferencedItemTypeId;
-  attrType: 'definition' | 'reference';
-  schema?: string; // Optional schema for actions
-  filePrefix?: string; // Optional prefix for external definitions
-  noCompletion?: boolean; // Optional flag to disable completion for this item
+export interface ScriptReferencedItemsFilterItem {
+  attribute: string;
+  value: string;
+  presented: boolean;
 }
 
-type ScriptReferencedItemsDetectionMap = Map<string, ScriptReferencedItemsDetectionItem>;
+export interface ScriptReferencedItemsDetectionItem {
+  element: string; // The element to check for references
+  attribute: string; // The attribute to check for references
+  type: ScriptReferencedItemTypeId;
+  attrType: 'definition' | 'reference';
+  filePrefix?: string; // Optional prefix for external definitions
+  noCompletion?: boolean; // Optional flag to disable completion for this item
+  filter?: ScriptReferencedItemsFilterItem[]; // Optional filter for item detection
+}
+
+type ScriptReferencedItemsDetectionList = ScriptReferencedItemsDetectionItem[];
 
 interface ScriptItemExternalDefinition {
   name: string;
@@ -72,21 +80,41 @@ interface ScriptReferencedItemsRegistryItem {
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
 
 const scriptReferencedItemType: ScriptReferencedItemType = new Map([
-  ['label', { type: 'label', class: 'basic', schema: aiScriptId }],
-  ['actions', { type: 'actions', class: 'external', schema: aiScriptId }],
-  ['handler', { type: 'handler', class: 'external', schema: aiScriptId }],
+  ['label', { type: 'label', name: 'Label', class: 'basic', schema: aiScriptId }],
+  ['actions', { type: 'actions', name: 'Actions', class: 'external', schema: aiScriptId }],
+  ['handler', { type: 'handler', name: 'Handler', class: 'external', schema: aiScriptId }],
+  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'basic', schema: mdScriptId }],
+  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'basic', schema: mdScriptId }],
 ]);
 
-const scriptReferencedItemsDetectionMap: ScriptReferencedItemsDetectionMap = new Map([
-  ['label#name', { type: 'label', attrType: 'definition', noCompletion: true }],
-  ['resume#label', { type: 'label', attrType: 'reference' }],
-  ['run_interrupt_script#resume', { type: 'label', attrType: 'reference' }],
-  ['abort_called_scripts#resume', { type: 'label', attrType: 'reference' }],
-  ['actions#name', { type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' }],
-  ['include_interrupt_actions#ref', { type: 'actions', attrType: 'reference' }],
-  ['handler#name', { type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' }],
-  ['handler#ref', { type: 'handler', attrType: 'reference' }],
-]);
+const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
+  { element: 'label', attribute: 'name', type: 'label', attrType: 'definition', noCompletion: true },
+  { element: 'resume', attribute: 'label', type: 'label', attrType: 'reference' },
+  { element: 'run_interrupt_script', attribute: 'resume', type: 'label', attrType: 'reference' },
+  { element: 'abort_called_scripts', attribute: 'resume', type: 'label', attrType: 'reference' },
+  { element: 'actions', attribute: 'name', type: 'actions', attrType: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' },
+  { element: 'include_interrupt_actions', attribute: 'ref', type: 'actions', attrType: 'reference' },
+  { element: 'handler', attribute: 'name', type: 'handler', attrType: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
+  { element: 'handler', attribute: 'ref', type: 'handler', attrType: 'reference' },
+  {
+    element: 'library',
+    attribute: 'name',
+    type: 'library_run',
+    attrType: 'definition',
+    noCompletion: true,
+    filter: [{ attribute: 'purpose', value: 'run_actions', presented: true }],
+  },
+  { element: 'run_actions', attribute: 'ref', type: 'library_run', attrType: 'reference' },
+  {
+    element: 'library',
+    attribute: 'name',
+    type: 'library_include',
+    attrType: 'definition',
+    noCompletion: true,
+    filter: [{ attribute: 'purpose', value: 'run_actions', presented: false }],
+  },
+  { element: 'include_actions', attribute: 'ref', type: 'library_include', attrType: 'reference' },
+];
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();
 
@@ -94,10 +122,10 @@ function initializeScriptReferencedItemsDetectionMap() {
   for (const [key, details] of scriptReferencedItemType.entries()) {
     switch (details.class) {
       case 'basic':
-        new ReferencedItemsTracker(key, details.schema);
+        new ReferencedItemsTracker(key, details.name, details.schema);
         break;
       case 'external':
-        new ReferencedItemsWithExternalDefinitionsTracker(key, details.schema);
+        new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema);
         break;
       default:
         logger.warn(`Unknown item type '${details.class}' for key '${key}' in scriptReferencedItemType`);
@@ -162,11 +190,32 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
     .map((item) => item.name);
 }
 
-export function checkReferencedItemAttributeType(elementName, attributeName): ScriptReferencedItemsDetectionItem | undefined {
-  const key = `${elementName}#${attributeName}`;
-  if (scriptReferencedItemsDetectionMap.has(key)) {
-    const item = scriptReferencedItemsDetectionMap.get(key);
-    return item ? item : undefined;
+export function checkReferencedItemAttributeType(schema: string, element: object, attributeName: string): ScriptReferencedItemsDetectionItem | undefined {
+  const references = scriptReferencedItemsDetectionList.filter((item) => {
+    const result = scriptReferencedItemType.get(item.type)?.schema === schema && item.element === element?.['name'] && item.attribute === attributeName;
+    return result;
+  });
+  if (references.length === 0) {
+    return undefined;
+  }
+  for (const reference of references) {
+    let allowed = true;
+    if (reference.filter) {
+      const attributes: any[] = element?.['attributes'] || [];
+      for (const filter of reference.filter) {
+        const attribute = attributes.find((attr) => attr.name === filter.attribute);
+        if (
+          (filter.presented && (attribute === undefined || attribute['value'] !== filter.value)) ||
+          (!filter.presented && attribute?.['value'] === filter.value)
+        ) {
+          allowed = false;
+          break;
+        }
+      }
+    }
+    if (allowed) {
+      return reference;
+    }
   }
   return undefined;
 }
@@ -176,13 +225,13 @@ export class ReferencedItemsTracker {
   public schema: string;
   protected documentReferencedItems: Map<vscode.TextDocument, ScriptReferencedItems> = new Map();
   protected itemType: string;
-  protected itemTypeCapitalized: string;
+  protected itemName: string;
 
-  constructor(itemType: string, schema: string) {
+  constructor(itemType: string, itemName: string, schema: string) {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
     this.itemType = itemType;
     this.schema = schema;
-    this.itemTypeCapitalized = this.itemType.charAt(0).toUpperCase() + this.itemType.slice(1);
+    this.itemName = itemName;
     // Register this tracker in the global registry
     this.registerTracker();
   }
@@ -332,11 +381,7 @@ export class ReferencedItemsTracker {
       const definition = this.getDefinition(document, itemData);
       if (!definition) {
         itemData.references.forEach((reference) => {
-          const diagnostic = new vscode.Diagnostic(
-            reference.range,
-            `${this.itemTypeCapitalized} '${itemName}' is not defined`,
-            vscode.DiagnosticSeverity.Error
-          );
+          const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${itemName}' is not defined`, vscode.DiagnosticSeverity.Error);
           diagnostic.code = `undefined-${this.itemType}`;
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
@@ -344,11 +389,7 @@ export class ReferencedItemsTracker {
       }
       const references = this.getReferences(document, itemData);
       if (references.length === 0) {
-        const diagnostic = new vscode.Diagnostic(
-          itemData.definition.range,
-          `${this.itemTypeCapitalized} '${itemName}' is not used`,
-          vscode.DiagnosticSeverity.Warning
-        );
+        const diagnostic = new vscode.Diagnostic(itemData.definition.range, `${this.itemName} '${itemName}' is not used`, vscode.DiagnosticSeverity.Warning);
         diagnostic.code = `unused-${this.itemType}`;
         diagnostic.source = 'X4CodeComplete';
         diagnostics.push(diagnostic);
@@ -371,16 +412,16 @@ export class ReferencedItemsTracker {
     const references = this.getReferences(document, item);
     const referenced = `**Referenced**: ${references.length} time${references.length !== 1 ? 's' : ''}`;
     if (detailsType === 'full' || detailsType === 'external') {
-      markdownString.appendMarkdown(`*${this.itemTypeCapitalized}*: **${item.name}**  \n`);
+      markdownString.appendMarkdown(`*${this.itemName}*: **${item.name}**  \n`);
       markdownString.appendMarkdown(defined + '  \n');
       if (detailsType === 'full') {
         markdownString.appendMarkdown(referenced);
       }
     } else if (detailsType === 'definition') {
-      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Definition**: \`${item.name}\`  \n`);
+      markdownString.appendMarkdown(`**${this.itemName} Definition**: \`${item.name}\`  \n`);
       markdownString.appendMarkdown(referenced);
     } else {
-      markdownString.appendMarkdown(`**${this.itemTypeCapitalized} Reference**: \`${item.name}\`  \n`);
+      markdownString.appendMarkdown(`**${this.itemName} Reference**: \`${item.name}\`  \n`);
       markdownString.appendMarkdown(defined);
     }
     return markdownString;
@@ -421,23 +462,20 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
   private static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker): void {
-    const itemInfo = Array.from(scriptReferencedItemsDetectionMap.keys()).find(
-      (key) => scriptReferencedItemsDetectionMap.get(key)?.type === itemType && scriptReferencedItemsDetectionMap.get(key)?.attrType === 'definition'
-    );
+    const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.attrType === 'definition');
     if (!itemInfo) {
       logger.warn(`No item info found for item type: ${itemType}`);
       return;
     }
-    const [elementName, attributeName] = itemInfo.split('#');
-    const filePrefix = scriptReferencedItemsDetectionMap.get(itemInfo)?.filePrefix || '';
+    const filePrefix = itemInfo?.filePrefix || '';
     const schema = tracker.schema || '';
     if (schema) {
       if (!this.trackersWithExternalDefinitions.has(schema)) {
         this.trackersWithExternalDefinitions.set(schema, []);
       }
       this.trackersWithExternalDefinitions.get(schema)?.push({
-        elementName,
-        attributeName,
+        elementName: itemInfo.element,
+        attributeName: itemInfo.attribute,
         filePrefix,
         tracker,
       });
@@ -523,8 +561,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  constructor(itemType: string, schema: string) {
-    super(itemType, schema);
+  constructor(itemType: string, itemName: string, schema: string) {
+    super(itemType, itemName, schema);
     ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
   }
 

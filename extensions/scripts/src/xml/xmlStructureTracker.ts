@@ -16,6 +16,7 @@ export interface XmlElement {
 
 export interface XmlElementAttribute {
   name: string;
+  value: string;
   element: XmlElement; // Reference to the element this attribute belongs to
   range: vscode.Range; // Full range of the attribute including name and value
   nameRange: vscode.Range;
@@ -338,6 +339,7 @@ export class XmlStructureTracker {
 
                       const attribute: XmlElementAttribute = {
                         name: attrName,
+                        value: attrValue,
                         element: newElement, // Reference to the element this attribute belongs to
                         range: new vscode.Range(attrNameStart, attrEnd), // Include the closing quote in the range
                         nameRange: new vscode.Range(attrNameStart, attrNameEnd),

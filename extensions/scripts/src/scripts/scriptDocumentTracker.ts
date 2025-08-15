@@ -180,7 +180,7 @@ export class ScriptDocumentTracker {
             diagnostics.push(diagnostic);
           } else {
             const attrDefinition = schemaAttributes.find((a) => a.name === attr.name);
-            const attributeValue = text.substring(document.offsetAt(attr.valueRange.start), document.offsetAt(attr.valueRange.end));
+            const attributeValue = attr.value || '';
 
             // Validate attribute values (skip XML namespace attributes)
             if (!(attr.name.startsWith('xmlns:') || attr.name.startsWith('xsi:') || attr.name === 'xmlns')) {
@@ -198,10 +198,10 @@ export class ScriptDocumentTracker {
             }
 
             // Extract attribute value for further processing
-            const attrValue = text.substring(document.offsetAt(attr.valueRange.start), document.offsetAt(attr.valueRange.end));
+            const attrValue = attr.value || '';
 
             // Check if this attribute contains label or action references
-            const referencedItemAttributeDetected = checkReferencedItemAttributeType(element.name, attr.name);
+            const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attr.name);
             if (referencedItemAttributeDetected) {
               if (scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)) {
                 const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
