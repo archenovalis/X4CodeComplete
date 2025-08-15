@@ -46,7 +46,7 @@ import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidation
 // Script-specific functionality imports
 import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { ScriptProperties } from './scripts/scriptProperties';
-import { getDocumentScriptType, scriptsMetadata, aiScriptId, mdScriptId, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
+import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { LanguageFileProcessor } from './languageFiles/languageFiles';
@@ -597,7 +597,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Parse newly opened documents only if they become the active document
       disposables.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
-          const scriptMetadata = scriptsMetadata.get(document);
+          const scriptMetadata = getDocumentMetadata(document);
           if (scriptMetadata) {
             logger.debug(`Document is opened: ${document.uri.toString()}`);
             ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
