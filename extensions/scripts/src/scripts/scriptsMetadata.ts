@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as sax from 'sax';
 import { logger } from '../logger/logger';
 
 export type ScriptMetadata = {
@@ -6,10 +7,6 @@ export type ScriptMetadata = {
   name: string;
 };
 type ScriptsMetadata = WeakMap<vscode.TextDocument, ScriptMetadata>;
-
-export const scriptHeaderRegex =
-  /^\s*<\?xml[^>]*\?>\s*(?:<!--[\s\S]*?-->\s*)*<(mdscript|aiscript)[^>]*?\s+xsi:noNamespaceSchemaLocation="[^"]*?(aiscripts|md).xsd"/im;
-export const scriptNameRegex = /name\s*=\s*"([^"]+)"/i;
 
 export let scriptsMetadata: ScriptsMetadata = new WeakMap();
 
@@ -42,30 +39,62 @@ export function scriptsMetadataClearAll(): void {
   logger.debug('Cleared all script metadata.');
 }
 
+const schemaKeyId = 'xsi:noNamespaceSchemaLocation'.toLowerCase();
 export const aiScriptId = 'aiscripts';
 export const mdScriptId = 'md';
+const aiScriptNodeName = 'aiscript';
+const mdScriptNodeName = 'mdscript';
+const nodeNameToSchema = {
+  [aiScriptNodeName]: aiScriptId,
+  [mdScriptNodeName]: mdScriptId,
+};
+const keysIds = Object.keys(nodeNameToSchema);
+export const scriptsSchemas = Object.values(nodeNameToSchema);
 export const scriptIdDescription = {
   aiscripts: 'AI Script',
   md: 'Mission Director Script',
 };
 
+function getFirstNode(xml: string): sax.Tag | sax.QualifiedTag | undefined {
+  const parser = sax.parser(false, { lowercase: true });
+  let firstNode: sax.Tag | sax.QualifiedTag | undefined;
+  let shouldStop = false;
+
+  parser.onopentag = (node) => {
+    if (!firstNode) {
+      firstNode = node;
+      shouldStop = true; // signal to stop feeding
+    }
+  };
+
+  parser.onerror = () => {
+    firstNode = undefined;
+    shouldStop = true;
+  };
+
+  // Feed XML in small chunks
+  const chunkSize = 64; // or smaller if needed
+  for (let i = 0; i < xml.length && !shouldStop; i += chunkSize) {
+    parser.write(xml.slice(i, i + chunkSize));
+  }
+
+  return firstNode;
+}
+
 export function getMetadata(text: string): ScriptMetadata | undefined {
-  if (!scriptHeaderRegex.test(text)) {
-    logger.debug(`Document does not match script regex.`);
-    return undefined; // Skip if the document does not match the script regex
+  // Create a non-strict parser to be more tolerant of errors
+  const node = getFirstNode(text);
+  if (node && keysIds.includes(node.name)) {
+    let languageSubId = node.attributes?.[schemaKeyId]?.toString().split('/').pop()?.split('.')[0].toLowerCase();
+    if (!languageSubId || !scriptsSchemas.includes(languageSubId)) {
+      languageSubId = nodeNameToSchema[node.name.toLowerCase()] || '';
+    }
+    if (languageSubId) {
+      const scriptName = node.attributes.name?.toString() || '';
+      return { schema: languageSubId, name: scriptName };
+    }
   }
-  const match = scriptHeaderRegex.exec(text);
-  if (!match || match.length < 3) {
-    logger.debug(`Document does not contain valid script type.`);
-    return undefined; // Skip if the document does not contain a valid script type
-  }
-  const languageSubId = match[2].toLowerCase();
-  if (languageSubId) {
-    const nameMatch = scriptNameRegex.exec(match[0]);
-    const scriptName = nameMatch && nameMatch[1] ? nameMatch[1] : '';
-    return { schema: languageSubId, name: scriptName };
-  }
-  return undefined;
+  return undefined; // Return undefined if no valid metadata is found
 }
 
 export function getDocumentMetadata(document: vscode.TextDocument): ScriptMetadata | undefined {
