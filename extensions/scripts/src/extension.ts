@@ -597,8 +597,10 @@ export function activate(context: vscode.ExtensionContext) {
       // Parse newly opened documents only if they become the active document
       disposables.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
-          if (scriptsMetadataSet(document)) {
+          const scriptMetadata = scriptsMetadata.get(document);
+          if (scriptMetadata) {
             logger.debug(`Document is opened: ${document.uri.toString()}`);
+            ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
             scriptDocumentTracker.trackScriptDocument(document, true);
           }
         })
@@ -632,17 +634,21 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
           if (!stillOpenInTab) {
-            diagnosticCollection.delete(uri);
-            scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-              trackerInfo.tracker.clearItemsForDocument(document);
-            });
+            const scriptMetadata = scriptsMetadata.get(document);
+            if (scriptMetadata) {
+              diagnosticCollection.delete(uri);
+              scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
+                trackerInfo.tracker.clearItemsForDocument(document);
+              });
+              ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
+            }
             logger.debug(`Removed cached data for document: ${uri.toString()}`);
           } else {
             logger.debug(`Skipped removing diagnostics for: ${uri.toString()} (still open in a tab)`);
           }
         })
       );
-      ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitions();
+      ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
       await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
       logger.info(`Doing post-startup work now`);
       const documentsUris: vscode.Uri[] = [];

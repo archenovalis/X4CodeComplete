@@ -484,10 +484,76 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  public static clearExternalDefinitions(): void {
+  public static clearAllExternalDefinitions(): void {
     for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
       for (const trackerInfo of trackersInfo) {
-        trackerInfo.tracker.clearExternalDefinitions();
+        trackerInfo.tracker.clearAllExternalDefinitions();
+      }
+    }
+  }
+
+  public static clearExternalDefinitionsForFile(schema: string, filePath: string): void {
+    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+      if (schema !== schema) {
+        continue; // Skip if the schema does not match
+      }
+      for (const trackerInfo of trackersInfo) {
+        trackerInfo.tracker.clearExternalDefinitionsForFile(filePath);
+      }
+    }
+  }
+
+  protected static collectExternalDefinitionsForTrackerAndFile(trackerInfo: externalTrackerInfo, filePath: string, fileContent: string): void {
+    const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
+    const fileName = path.basename(filePath, '.xml');
+    if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
+      logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}`);
+
+      const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(fileContent)) !== null) {
+        if (trackerInfo.filters.length > 0) {
+          const elementText = match[0];
+          let allowed = true;
+          for (const filter of trackerInfo.filters) {
+            const attributeString = `${filter.attribute}="${filter.value}"`;
+            if (
+              (filter.presented && (elementText === undefined || !elementText.includes(attributeString))) ||
+              (!filter.presented && elementText.includes(attributeString))
+            ) {
+              allowed = false;
+              break;
+            }
+          }
+          if (!allowed) {
+            continue; // skip this match if it doesn't pass the filters
+          }
+        }
+        const value = match[1];
+        const valueIndex = match.index + match[0].indexOf(`"${value}"`);
+        logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}, value: ${value}`);
+        const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
+        const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
+        trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, filePath);
+      }
+    }
+  }
+
+  public static async collectExternalDefinitionsForFile(schema: string, filePath: string): Promise<void> {
+    let fileContent = '';
+    try {
+      fileContent = await fs.promises.readFile(filePath, 'utf8');
+    } catch {
+      logger.error(`Failed to read file: ${filePath}`);
+      return;
+    }
+    this.clearExternalDefinitionsForFile(schema, filePath);
+    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+      if (schema !== schema) {
+        continue; // Skip if the schema does not match
+      }
+      for (const trackerInfo of trackersInfo) {
+        this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent);
       }
     }
   }
@@ -545,54 +611,23 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       for (const folder of folders) {
         if (await isDir(folder)) {
           logger.debug(`Processing folder: ${folder}`);
-          let dirents: fs.Dirent[] = [];
+          let entry: fs.Dirent[] = [];
           try {
-            dirents = await fs.promises.readdir(folder, { withFileTypes: true });
+            entry = await fs.promises.readdir(folder, { withFileTypes: true });
           } catch {
-            dirents = [];
+            entry = [];
           }
-          const files = dirents.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
-          for (const file of files) {
-            logger.debug(`Processing file: ${file}`);
-            const fileName = path.basename(file, '.xml');
+          const files = entry.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
+          for (const filePath of files) {
+            logger.debug(`Processing file: ${filePath}`);
             let fileContent = '';
             try {
-              fileContent = await fs.promises.readFile(file, 'utf8');
+              fileContent = await fs.promises.readFile(filePath, 'utf8');
             } catch {
-              continue; // skip unreadable files
+              return; // skip unreadable files
             }
             for (const trackerInfo of trackersInfo) {
-              const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
-              if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
-                logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}`);
-                const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
-                let match: RegExpExecArray | null;
-                while ((match = regex.exec(fileContent)) !== null) {
-                  if (trackerInfo.filters.length > 0) {
-                    const elementText = match[0];
-                    let allowed = true;
-                    for (const filter of trackerInfo.filters) {
-                      const attributeString = `${filter.attribute}="${filter.value}"`;
-                      if (
-                        (filter.presented && (elementText === undefined || !elementText.includes(attributeString))) ||
-                        (!filter.presented && elementText.includes(attributeString))
-                      ) {
-                        allowed = false;
-                        break;
-                      }
-                    }
-                    if (!allowed) {
-                      continue; // skip this match if it doesn't pass the filters
-                    }
-                  }
-                  const value = match[1];
-                  const valueIndex = match.index + match[0].indexOf(`"${value}"`);
-                  logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${file}, value: ${value}`);
-                  const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
-                  const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
-                  trackerInfo.tracker.addExternalDefinition(value, line, valueIndex - lineStart, value.length, file);
-                }
-              }
+              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent);
             }
           }
         }
@@ -687,7 +722,15 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  public clearExternalDefinitions(): void {
+  public clearExternalDefinitionsForFile(filePath: string): void {
+    for (const [value, definition] of this.externalDefinitions.entries()) {
+      if (definition.definition.uri.fsPath === filePath) {
+        this.externalDefinitions.delete(value);
+      }
+    }
+  }
+
+  public clearAllExternalDefinitions(): void {
     this.externalDefinitions.clear();
   }
 }
