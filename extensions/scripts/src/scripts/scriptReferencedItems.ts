@@ -105,7 +105,7 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
   { element: 'handler', attribute: 'name', type: 'handler', class: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
   { element: 'handler', attribute: 'ref', type: 'handler', class: 'reference' },
   { element: 'cue', attribute: 'name', type: 'cue', class: 'definition', noCompletion: true },
-  { element: 'event_cue_signalled', attribute: 'cue', type: 'cue', class: 'reference' },
+  { element: '*', attribute: 'cue', type: 'cue', class: 'reference' },
   {
     element: 'library',
     attribute: 'name',
@@ -202,7 +202,10 @@ export function findSimilarItems(targetName: string, availableItems: string[], m
 
 export function checkReferencedItemAttributeType(schema: string, element: object, attributeName: string): ScriptReferencedItemsDetectionItem | undefined {
   const references = scriptReferencedItemsDetectionList.filter((item) => {
-    const result = scriptReferencedItemType.get(item.type)?.schema === schema && item.element === element?.['name'] && item.attribute === attributeName;
+    const result =
+      scriptReferencedItemType.get(item.type)?.schema === schema &&
+      (item.element === '*' || item.element === element?.['name']) &&
+      item.attribute === attributeName;
     return result;
   });
   if (references.length === 0) {
