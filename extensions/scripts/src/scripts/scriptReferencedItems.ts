@@ -392,6 +392,7 @@ export class ReferencedItemsTracker {
   }
 
   public validateItems(document: vscode.TextDocument): vscode.Diagnostic[] {
+    const metadata = getDocumentMetadata(document);
     const diagnostics: vscode.Diagnostic[] = [];
     const documentData = this.documentReferencedItems.get(document);
     if (!documentData) {
@@ -403,7 +404,11 @@ export class ReferencedItemsTracker {
       const definition = this.getDefinition(document, itemData);
       if (!definition) {
         itemData.references.forEach((reference) => {
-          const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${itemName}' is not defined`, vscode.DiagnosticSeverity.Error);
+          let name = itemName;
+          if (metadata.schema === mdScriptId && itemData.scriptName !== metadata.name) {
+            name = `md.${itemData.scriptName}.${name}`;
+          }
+          const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${name}' is not defined`, vscode.DiagnosticSeverity.Error);
           diagnostic.code = `undefined-${this.itemType}`;
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
