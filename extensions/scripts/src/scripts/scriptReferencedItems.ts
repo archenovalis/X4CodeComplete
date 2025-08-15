@@ -613,6 +613,9 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     if (config.unpackedFileLocation) {
       mainFolders.push(config.unpackedFileLocation);
     }
+    if (config.extensionsFolder) {
+      mainFolders.push(config.extensionsFolder);
+    }
     logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
 
     const isDir = async (p: string): Promise<boolean> => {
@@ -624,39 +627,39 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       }
     };
     const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
-    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      logger.debug(`Tracker for ${schema} has ${trackersInfo.length} trackers`);
-      const folders: string[] = [];
-      for (const mainFolder of mainFolders) {
-        if (await isDir(mainFolder)) {
-          let firstLevel: fs.Dirent[] = [];
-          try {
-            firstLevel = await fs.promises.readdir(mainFolder, { withFileTypes: true });
-          } catch {
-            firstLevel = [];
-          }
-          for (const entry of firstLevel) {
-            if (entry.isDirectory()) {
-              const firstLevelPath = path.join(mainFolder, entry.name);
-              if (entry.name.toLowerCase() === schema.toLowerCase()) {
-                folders.push(firstLevelPath);
-              } else {
-                try {
-                  const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
-                  for (const subEntry of secondLevel) {
-                    if (subEntry.isDirectory() && subEntry.name.toLowerCase() === schema.toLowerCase()) {
-                      folders.push(path.join(firstLevelPath, subEntry.name));
-                    }
+    const folders: string[] = [];
+    const schemas: string[] = [aiScriptId, mdScriptId];
+    for (const mainFolder of mainFolders) {
+      if (await isDir(mainFolder)) {
+        let firstLevel: fs.Dirent[] = [];
+        try {
+          firstLevel = await fs.promises.readdir(mainFolder, { withFileTypes: true });
+        } catch {
+          firstLevel = [];
+        }
+        for (const entry of firstLevel) {
+          if (entry.isDirectory()) {
+            const firstLevelPath = path.join(mainFolder, entry.name);
+            if (schemas.includes(entry.name.toLowerCase())) {
+              folders.push(firstLevelPath);
+            } else {
+              try {
+                const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
+                for (const subEntry of secondLevel) {
+                  if (subEntry.isDirectory() && schemas.includes(subEntry.name.toLowerCase())) {
+                    folders.push(path.join(firstLevelPath, subEntry.name));
                   }
-                } catch {
-                  // ignore subfolder read errors
                 }
+              } catch {
+                // ignore subfolder read errors
               }
             }
           }
         }
       }
+    }
 
+    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
       logger.debug(`Collecting external definitions for ${folders.length} folders`);
       for (const folder of folders) {
         if (await isDir(folder)) {
