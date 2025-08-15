@@ -522,13 +522,14 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     trackerInfo: externalTrackerInfo,
     filePath: string,
     fileContent: string,
-    schema: string = ''
+    schema: string = '',
+    metadata?: ScriptMetadata
   ): void {
     const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
     const fileName = path.basename(filePath, '.xml');
     if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
       logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}`);
-      const metadata = getMetadata(fileContent);
+      metadata = metadata || getMetadata(fileContent);
       if (!metadata) {
         logger.debug(`No metadata found for file: ${filePath}`);
         return;
@@ -601,7 +602,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         return false;
       }
     };
-
+    const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
     for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
       logger.debug(`Tracker for ${schema} has ${trackersInfo.length} trackers`);
       const folders: string[] = [];
@@ -649,13 +650,23 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
           for (const filePath of files) {
             logger.debug(`Processing file: ${filePath}`);
             let fileContent = '';
-            try {
-              fileContent = await fs.promises.readFile(filePath, 'utf8');
-            } catch {
-              return; // skip unreadable files
+            let fileMetadata: ScriptMetadata | undefined;
+            if (filesData.has(filePath)) {
+              const { content, metadata } = filesData.get(filePath)!;
+              fileContent = content;
+              fileMetadata = metadata;
+            } else {
+              try {
+                logger.debug(`Read file: ${filePath}`);
+                fileContent = await fs.promises.readFile(filePath, 'utf8');
+              } catch {
+                return; // skip unreadable files
+              }
+              fileMetadata = getMetadata(fileContent);
+              filesData.set(filePath, { content: fileContent, metadata: fileMetadata });
             }
             for (const trackerInfo of trackersInfo) {
-              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent, schema);
+              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent, schema, fileMetadata);
             }
           }
         }
