@@ -466,7 +466,7 @@ export class ReferencedItemsTracker {
     for (const [itemName, itemData] of documentData.entries()) {
       // Check if the item is invalid (has no definition or references)
       const definition = this.getDefinition(document, itemData);
-      if (!definition) {
+      if (!definition && !this.options.referenceAsExpression) {
         itemData.references.forEach((reference) => {
           let name = itemName;
           if (metadata.schema === mdScriptSchema && itemData.scriptName !== metadata.name) {
@@ -477,9 +477,6 @@ export class ReferencedItemsTracker {
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
         });
-      }
-      if (this.options.referenceAsExpression) {
-        continue;
       }
       const references = this.getReferences(document, itemData);
       if (references.length === 0 && !this.options.skipNotUsed) {
