@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
+import { XmlElement } from '../xml/xmlStructureTracker';
 import path from 'path';
 import fs from 'fs';
 import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
@@ -31,7 +32,7 @@ export interface ScriptReferencedItemsReferences {
 }
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
-export type ScriptReferencedItemClassId = 'basic' | 'external';
+export type ScriptReferencedItemClassId = 'basic' | 'external' | 'cue';
 interface ScriptReferencedItemOptions {
   skipNotUsed?: boolean; // Optional flag to ignore "not used" warnings
   prepareExternalReferences?: boolean; // Optional flag to prepare references for completion
@@ -79,12 +80,12 @@ interface externalTrackerInfo {
   attributeName: string;
   filters: ScriptReferencedItemsFilterItem[];
   filePrefix: string; // Optional prefix for external definitions
-  tracker: ReferencedItemsWithExternalDefinitionsTracker;
+  tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues;
 }
 
 interface ScriptReferencedItemsRegistryItem {
   type: string;
-  tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker;
+  tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues;
 }
 
 type ReferencesToCompletionItems = Map<string, Map<string, string[]>>;
@@ -101,7 +102,7 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
     {
       type: 'cue',
       name: 'Cue',
-      class: 'external',
+      class: 'cue',
       schema: mdScriptSchema,
       options: { skipNotUsed: true, prepareReferences: true, referenceAsExpression: true },
     },
@@ -151,6 +152,9 @@ function initializeScriptReferencedItemsDetectionMap() {
         break;
       case 'external':
         new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema, details.options || {});
+        break;
+      case 'cue':
+        new ReferencedCues(key, details.name, details.schema, details.options || {});
         break;
       default:
         logger.warn(`Unknown item type '${details.class}' for key '${key}' in scriptReferencedItemType`);
@@ -319,7 +323,7 @@ export class ReferencedItemsTracker {
     }
   }
 
-  public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
+  public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range, element: XmlElement): void {
     // Get or create the label map for the document
     if (!this.documentReferencedItems.has(document)) {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
@@ -561,9 +565,9 @@ export class ReferencedItemsTracker {
 export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
   protected externalDefinitions: Map<string, ScriptItemExternalDefinition> = new Map();
 
-  private static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
+  protected static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
-  private static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker): void {
+  protected static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues): void {
     const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.class === 'definition');
     if (!itemInfo) {
       logger.warn(`No item info found for item type: ${itemType}`);
@@ -880,5 +884,57 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     this.externalDefinitions.clear();
   }
 }
+export class ReferencedCues extends ReferencedItemsWithExternalDefinitionsTracker {
+  constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
+    super(itemType, itemName, schema, options);
+  }
 
+  protected static findCueElementForName(name: string, element: XmlElement): XmlElement | undefined {
+    let cue = element;
+    while (
+      cue &&
+      cue.parent &&
+      (cue.name !== 'cue' || (name === 'namespace' && !(cue.attributes.some((attr) => attr.name === 'namespace') || cue.parent?.name === 'cues')))
+    ) {
+      cue = cue.parent;
+    }
+    if (name === 'parent') {
+      let parent = cue;
+      if (parent && parent.name === 'cue') {
+        while (parent && parent.name !== 'cue' && parent.parent) {
+          parent = parent.parent;
+        }
+      }
+      cue = parent;
+    }
+    if (cue && cue.name === 'cue') {
+      return;
+    }
+    return undefined;
+  }
+
+  protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+    return super.getDefinition(document, item);
+  }
+
+  protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
+    return super.getReferences(document, item);
+  }
+
+  public addItemReference(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
+    if (!this.documentReferencedItems.has(document)) {
+      this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
+    }
+    const itemsData = this.documentReferencedItems.get(document);
+    if (!itemsData.has(name) && ['this', 'parent', 'static', 'namespace'].includes(name)) {
+      itemsData.set(name, {
+        name: name,
+        scriptName: metadata.name,
+        definition: new vscode.Location(document.uri, new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 1))),
+        references: [],
+      });
+    }
+    super.addItemReference(metadata, name, document, range);
+  }
+}
 initializeScriptReferencedItemsDetectionMap();
