@@ -1,23 +1,16 @@
 import * as vscode from 'vscode';
 import { XsdReference } from 'xsd-lookup';
-import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
+import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
-  private xmlTracker: XmlStructureTracker;
   private xsdReference: XsdReference;
   private variableTracker: VariableTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
-  constructor(
-    xmlTracker: XmlStructureTracker,
-    xsdReference: XsdReference,
-    variableTracker: VariableTracker,
-    diagnosticCollection: vscode.DiagnosticCollection
-  ) {
-    this.xmlTracker = xmlTracker;
+  constructor(xsdReference: XsdReference, variableTracker: VariableTracker, diagnosticCollection: vscode.DiagnosticCollection) {
     this.xsdReference = xsdReference;
     this.variableTracker = variableTracker;
     this.diagnosticCollection = diagnosticCollection;
@@ -60,7 +53,7 @@ export class ScriptDocumentTracker {
     const diagnostics: vscode.Diagnostic[] = [];
 
     // Check if document is already parsed to avoid redundant work
-    const isXMLParsed = this.xmlTracker.checkDocumentParsed(document);
+    const isXMLParsed = xmlTracker.checkDocumentParsed(document);
     if (isXMLParsed && !update) {
       logger.warn(`Document ${document.uri.toString()} is already parsed.`);
       return;
@@ -70,8 +63,8 @@ export class ScriptDocumentTracker {
     const lValueTypes = ['lvalueexpression', ...this.xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
 
     // Parse XML structure and handle any offset issues from unclosed tags
-    const xmlElements: XmlElement[] = this.xmlTracker.parseDocument(document);
-    const offsets = this.xmlTracker.getOffsets(document);
+    const xmlElements: XmlElement[] = xmlTracker.parseDocument(document);
+    const offsets = xmlTracker.getOffsets(document);
 
     // Create diagnostics for unclosed XML tags
     for (const offset of offsets) {

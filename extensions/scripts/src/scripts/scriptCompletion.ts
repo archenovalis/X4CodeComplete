@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { XsdReference, EnhancedAttributeInfo } from 'xsd-lookup';
-import { XmlStructureTracker, XmlElement } from '../xml/xmlStructureTracker';
+import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { ScriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
@@ -22,20 +22,12 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
   ]);
 
   private xsdReference: XsdReference;
-  private xmlTracker: XmlStructureTracker;
   private scriptProperties: ScriptProperties;
   private variablesTracker: VariableTracker;
   private processQueuedDocumentChanges: () => void;
 
-  constructor(
-    xsdReference: XsdReference,
-    xmlStructureTracker: XmlStructureTracker,
-    scriptProperties: ScriptProperties,
-    variablesTracker: VariableTracker,
-    processQueuedDocumentChanges: () => void
-  ) {
+  constructor(xsdReference: XsdReference, scriptProperties: ScriptProperties, variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
     this.xsdReference = xsdReference;
-    this.xmlTracker = xmlStructureTracker;
     this.scriptProperties = scriptProperties;
     this.variablesTracker = variablesTracker;
     this.processQueuedDocumentChanges = processQueuedDocumentChanges;
@@ -110,7 +102,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (currentElement === undefined && parent !== undefined) {
       const documentText = document.getText();
       const previousElementEndIndex = documentText.lastIndexOf('>', document.offsetAt(position) - 1);
-      previousElement = this.xmlTracker.elementWithPosIn(document, document.positionAt(previousElementEndIndex));
+      previousElement = xmlTracker.elementWithPosIn(document, document.positionAt(previousElementEndIndex));
       if (previousElement && previousElement.parent !== parent) {
         previousElement = undefined;
       }
@@ -196,11 +188,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
     const characterAtPosition = document.getText(new vscode.Range(position, position.translate(0, 1)));
 
-    const element = this.xmlTracker.elementWithPosInStartTag(document, position);
+    const element = xmlTracker.elementWithPosInStartTag(document, position);
     if (element) {
       logger.debug(`Completion requested in element: ${element.name}`);
 
-      const elementByName = this.xmlTracker.elementWithPosInName(document, position, element);
+      const elementByName = xmlTracker.elementWithPosInName(document, position, element);
       if (elementByName) {
         if (element.parent !== undefined) {
           return this.elementNameCompletion(schema, document, position, element, element.parent, element.nameRange);
@@ -209,7 +201,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
       const elementAttributes: EnhancedAttributeInfo[] = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
 
-      let attribute = this.xmlTracker.attributeWithPosInName(document, position, element);
+      let attribute = xmlTracker.attributeWithPosInName(document, position, element);
       if (attribute) {
         logger.debug(`Completion requested in attribute name: ${attribute.element.name}.${attribute.name}`);
       }
@@ -224,7 +216,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
 
       // Check if we're in an attribute value for context-aware completions
-      attribute = this.xmlTracker.attributeWithPosInValue(document, position);
+      attribute = xmlTracker.attributeWithPosInValue(document, position);
       if (attribute) {
         logger.debug(`Completion requested in attribute value: ${attribute.element.name}.${attribute.name}`);
       }
@@ -373,7 +365,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         );
       }
     } else {
-      const element = this.xmlTracker.elementWithPosIn(document, position);
+      const element = xmlTracker.elementWithPosIn(document, position);
       if (token?.isCancellationRequested) return undefined;
       if (element) {
         logger.debug(`Completion requested in element range: ${element.name}`);

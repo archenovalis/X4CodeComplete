@@ -351,12 +351,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
       }
-      scriptCompletionProvider = new ScriptCompletion(xsdReference, xmlTracker, scriptProperties, variableTracker, processQueuedDocumentChanges);
+      scriptCompletionProvider = new ScriptCompletion(xsdReference, scriptProperties, variableTracker, processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();
       }
-      scriptDocumentTracker = new ScriptDocumentTracker(xmlTracker, xsdReference, variableTracker, diagnosticCollection);
+      scriptDocumentTracker = new ScriptDocumentTracker(xsdReference, variableTracker, diagnosticCollection);
 
       logger.info('Heavy services initialization completed.');
 
