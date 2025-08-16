@@ -323,7 +323,7 @@ export class ReferencedItemsTracker {
     }
   }
 
-  public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range, element: XmlElement): void {
+  public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
     if (!this.documentReferencedItems.has(document)) {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
