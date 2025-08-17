@@ -835,17 +835,27 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       }
     }
     const documentFolder = path.dirname(document.uri.fsPath);
-    // Process all labels
-    for (const [itemName, itemData] of documentData.entries()) {
-      if (itemData.definition && (prefix === '' || itemName.startsWith(prefix)) && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
-        // Only add the item if it matches the prefix
-        if (!result.has(itemName)) {
-          result.set(itemName, this.getItemDetails(document, itemData, 'external'));
+    const documentsFiltered = Array.from(this.documentReferencedItems.keys()).filter((doc) => doc.uri.fsPath.startsWith(documentFolder) && doc !== document);
+    for (const doc of documentsFiltered) {
+      const docData = this.documentReferencedItems.get(doc);
+      // Process all labels
+      for (const [itemName, itemData] of docData.entries()) {
+        if (itemData.definition && (prefix === '' || itemName.startsWith(prefix)) && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
+          // Only add the item if it matches the prefix
+          if (!result.has(itemName)) {
+            result.set(itemName, this.getItemDetails(document, itemData, 'external'));
+          }
         }
       }
     }
     for (const [itemName, externalDefinition] of this.externalDefinitions.entries()) {
-      if (externalDefinition.definition && (prefix === '' || itemName.startsWith(prefix))) {
+      if (
+        externalDefinition.definition &&
+        (externalDefinition.definition.uri.fsPath.startsWith(documentFolder) ||
+          externalDefinition.definition.uri.fsPath.startsWith(configManager.config.extensionsFolder) ||
+          externalDefinition.definition.uri.fsPath.startsWith(configManager.config.unpackedFileLocation)) &&
+        (prefix === '' || itemName.startsWith(prefix))
+      ) {
         // Only add the item if it matches the prefix
         if (!result.has(itemName)) {
           result.set(
