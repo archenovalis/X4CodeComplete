@@ -8,7 +8,7 @@ import * as xpath from 'xpath';
 import { DOMParser, Node, Element, Text } from '@xmldom/xmldom';
 import { getDocumentScriptType, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 import { getSubStringByBreakCommonSymbol, getEnclosingCurlyBracesIndexes, breakoutsForExpressions, breakoutsForExpressionsAfter } from './scriptUtilities';
-import { LanguageFileProcessor } from '../languageFiles/languageFiles';
+import { languageProcessor } from '../languageFiles/languageFiles';
 import { variablePatternExact } from './scriptVariables';
 
 class PropertyEntry {
@@ -274,16 +274,14 @@ export class ScriptProperties {
 
   private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
-  private languageProcessor: LanguageFileProcessor;
   private scriptPropertiesPath: string;
   private typeDict: Map<string, TypeEntry> = new Map<string, TypeEntry>();
   private keywordList: KeywordEntry[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
 
-  constructor(librariesFolder: string, languageProcessor: LanguageFileProcessor) {
+  constructor(librariesFolder: string) {
     this.librariesFolder = librariesFolder;
     this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
-    this.languageProcessor = languageProcessor;
   }
 
   /**
@@ -340,8 +338,8 @@ export class ScriptProperties {
   }
 
   private processTextPatterns(text: string): string {
-    if (this.languageProcessor) {
-      return this.languageProcessor.replaceSimplePatternsByText(text);
+    if (languageProcessor) {
+      return languageProcessor.replaceSimplePatternsByText(text);
     }
     return text;
   }

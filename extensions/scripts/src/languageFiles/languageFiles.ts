@@ -373,3 +373,5 @@ export class LanguageFileProcessor {
     return textData ? Array.from(textData.keys()).sort() : [];
   }
 }
+
+export const languageProcessor: LanguageFileProcessor = new LanguageFileProcessor();

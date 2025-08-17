@@ -49,7 +49,7 @@ import { ScriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
-import { LanguageFileProcessor } from './languageFiles/languageFiles';
+import { languageProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
 import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
 
@@ -67,7 +67,6 @@ let isActivated = false;
 /** Core service instances */
 let xsdReference: XsdReference;
 let scriptProperties: ScriptProperties;
-let languageProcessor: LanguageFileProcessor;
 let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -319,9 +318,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // Initialize language processor and load language files
-      if (!languageProcessor) {
-        languageProcessor = new LanguageFileProcessor();
-      }
       await languageProcessor
         .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
         .then(() => {
@@ -342,7 +338,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (scriptProperties) {
         scriptProperties.dispose();
       }
-      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'), languageProcessor);
+      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
       await scriptProperties.initialize();
 
       if (scriptCompletionProvider) {
@@ -711,9 +707,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('x4CodeComplete.reloadLanguageFiles', async () => {
       try {
-        if (!languageProcessor) {
-          languageProcessor = new LanguageFileProcessor();
-        }
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading language files...' }, async () => {
           await languageProcessor
             .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
