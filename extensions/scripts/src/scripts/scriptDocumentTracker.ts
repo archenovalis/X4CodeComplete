@@ -1,15 +1,14 @@
 import * as vscode from 'vscode';
 import { xsdReference, XsdReference } from 'xsd-lookup';
+import { diagnosticCollection } from '../extension/shared';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { variableTracker, VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
-  private diagnosticCollection: vscode.DiagnosticCollection;
-
-  constructor(diagnosticCollection: vscode.DiagnosticCollection) {
-    this.diagnosticCollection = diagnosticCollection;
+  constructor() {
+    return;
   }
 
   /**
@@ -305,7 +304,7 @@ export class ScriptDocumentTracker {
     diagnostics.push(...this.validateReferences(document));
 
     // Update diagnostics for the document
-    this.diagnosticCollection.set(document.uri, diagnostics);
+    diagnosticCollection.set(document.uri, diagnostics);
     logger.debug(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
   }
 

@@ -37,6 +37,7 @@ import * as path from 'path';
 
 // Configuration imports
 import { X4CodeCompleteConfig, configManager, ConfigChangeCallbacks } from './extension/configuration';
+import { diagnosticCollection } from './extension/shared'; // Moved diagnosticCollection to shared for easier access
 
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
@@ -66,7 +67,6 @@ let isActivated = false;
 
 /** Core service instances */
 let scriptDocumentTracker: ScriptDocumentTracker;
-let diagnosticCollection: vscode.DiagnosticCollection;
 let refreshTimeoutId: NodeJS.Timeout | undefined;
 
 /** Document selector for XML files */
@@ -289,7 +289,6 @@ export function activate(context: vscode.ExtensionContext) {
   logger.debug('X4CodeComplete activation started.');
 
   // Initialize core services
-  diagnosticCollection = vscode.languages.createDiagnosticCollection('x4CodeComplete');
   context.subscriptions.push(diagnosticCollection);
 
   // ================================================================================================
@@ -331,7 +330,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();
       }
-      scriptDocumentTracker = new ScriptDocumentTracker(diagnosticCollection);
+      diagnosticCollection.clear();
+      scriptDocumentTracker = new ScriptDocumentTracker();
 
       logger.info('Heavy services initialization completed.');
 
