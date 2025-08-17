@@ -4,7 +4,7 @@ import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { scriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
-import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
+import { variableTracker, ScriptVariableAtPosition } from './scriptVariables';
 import { getNearestBreakSymbolIndexForExpressions, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
 import { logger } from '../logger/logger';
 
@@ -21,11 +21,9 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     ['value', vscode.CompletionItemKind.Value],
   ]);
 
-  private variablesTracker: VariableTracker;
   private processQueuedDocumentChanges: () => void;
 
-  constructor(variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
-    this.variablesTracker = variablesTracker;
+  constructor(processQueuedDocumentChanges: () => void) {
     this.processQueuedDocumentChanges = processQueuedDocumentChanges;
   }
 
@@ -320,7 +318,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
           position.translate(0, -textToProcessBefore.length + lastDollarIndex + 1),
           position.translate(0, textToProcessAfter.length)
         );
-        const variableCompletion = this.variablesTracker.getAllVariablesForDocumentMap(document, position, prefix);
+        const variableCompletion = variableTracker.getAllVariablesForDocumentMap(document, position, prefix);
 
         if (token?.isCancellationRequested) return undefined;
 

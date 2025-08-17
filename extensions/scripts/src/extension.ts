@@ -47,7 +47,7 @@ import { xsdReference, XsdReference, AttributeInfo, EnhancedAttributeInfo, Attri
 import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { scriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
-import { VariableTracker } from './scripts/scriptVariables';
+import { variableTracker, VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
@@ -93,9 +93,6 @@ const urisToRefresh = new Set<string>();
 // ================================================================================================
 // 4. TRACKER INSTANCES
 // ================================================================================================
-
-/** Global tracker instances for document analysis */
-const variableTracker = new VariableTracker();
 
 // ================================================================================================
 // 5. UTILITY FUNCTIONS (EXTENSION-SPECIFIC)
@@ -333,12 +330,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
       }
-      scriptCompletionProvider = new ScriptCompletion(variableTracker, processQueuedDocumentChanges);
+      scriptCompletionProvider = new ScriptCompletion(processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();
       }
-      scriptDocumentTracker = new ScriptDocumentTracker(variableTracker, diagnosticCollection);
+      scriptDocumentTracker = new ScriptDocumentTracker(diagnosticCollection);
 
       logger.info('Heavy services initialization completed.');
 

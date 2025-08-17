@@ -1,16 +1,14 @@
 import * as vscode from 'vscode';
 import { xsdReference, XsdReference } from 'xsd-lookup';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
-import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
+import { variableTracker, VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
-  private variableTracker: VariableTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
-  constructor(variableTracker: VariableTracker, diagnosticCollection: vscode.DiagnosticCollection) {
-    this.variableTracker = variableTracker;
+  constructor(diagnosticCollection: vscode.DiagnosticCollection) {
     this.diagnosticCollection = diagnosticCollection;
   }
 
@@ -88,7 +86,7 @@ export class ScriptDocumentTracker {
     }
 
     // Clear existing tracking data for this document before reprocessing
-    this.variableTracker.clearVariablesForDocument(document);
+    variableTracker.clearVariablesForDocument(document);
     scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
       if (trackerInfo.tracker.schema === schema) {
         trackerInfo.tracker.clearItemsForDocument(document);
@@ -232,7 +230,7 @@ export class ScriptDocumentTracker {
               element.hierarchy.length > 0 &&
               element.hierarchy[0] === 'params'
             ) {
-              this.variableTracker.addVariable(
+              variableTracker.addVariable(
                 'normal',
                 attrValue,
                 schema,
@@ -281,7 +279,7 @@ export class ScriptDocumentTracker {
 
               if (end.isEqual(attr.valueRange.end) && priority >= 0) {
                 // This is a variable definition
-                this.variableTracker.addVariable(
+                variableTracker.addVariable(
                   variableType,
                   variableName,
                   schema,
@@ -292,7 +290,7 @@ export class ScriptDocumentTracker {
                 );
               } else {
                 // This is a variable reference
-                this.variableTracker.addVariable(variableType, variableName, schema, document, variableRange);
+                variableTracker.addVariable(variableType, variableName, schema, document, variableRange);
               }
             }
           }

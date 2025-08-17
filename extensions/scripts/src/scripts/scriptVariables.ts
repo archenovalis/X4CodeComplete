@@ -201,3 +201,5 @@ export class VariableTracker {
     this.documentVariables = new WeakMap();
   }
 }
+
+export const variableTracker: VariableTracker = new VariableTracker();
