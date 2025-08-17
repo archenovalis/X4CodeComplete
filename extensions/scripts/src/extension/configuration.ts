@@ -73,12 +73,15 @@ export class X4ConfigurationManager {
   private _changeCallbacks: ConfigChangeCallbacks;
   private _disposables: vscode.Disposable[] = [];
 
-  constructor(callbacks?: ConfigChangeCallbacks) {
+  constructor() {
     this._config = this.createDefaultConfig();
-    this._changeCallbacks = callbacks || {};
 
     // Load initial configuration
     this.loadConfiguration();
+  }
+
+  public setCallbacks(callbacks: ConfigChangeCallbacks): void {
+    this._changeCallbacks = callbacks;
   }
 
   /**
@@ -368,3 +371,5 @@ export class X4ConfigurationManager {
     this._disposables = [];
   }
 }
+
+export const configManager: X4ConfigurationManager = new X4ConfigurationManager();

@@ -36,7 +36,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 
 // Configuration imports
-import { X4CodeCompleteConfig, X4ConfigurationManager, ConfigChangeCallbacks } from './extension/configuration';
+import { X4CodeCompleteConfig, configManager, ConfigChangeCallbacks } from './extension/configuration';
 
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
@@ -60,9 +60,6 @@ import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/sc
 // ================================================================================================
 // 3. GLOBAL VARIABLES AND CONFIGURATION
 // ================================================================================================
-
-/** Extension configuration and state variables */
-let configManager: X4ConfigurationManager;
 
 /** Activation state */
 let isActivated = false;
@@ -284,7 +281,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   // Initialize configuration manager
-  configManager = new X4ConfigurationManager(configCallbacks);
+  configManager.setCallbacks(configCallbacks);
 
   if (!configManager.validateSettings()) {
     return;
@@ -649,7 +646,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
       );
       ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
-      await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions(configManager.config);
+      await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions();
       logger.info(`Doing post-startup work now`);
       const documentsUris: vscode.Uri[] = [];
 

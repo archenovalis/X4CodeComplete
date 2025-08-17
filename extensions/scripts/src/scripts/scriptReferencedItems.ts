@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
-import { X4CodeCompleteConfig } from '../extension/configuration';
+import { configManager } from '../extension/configuration';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import path from 'path';
 import fs from 'fs';
@@ -677,7 +677,8 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  public static async collectExternalDefinitions(config: X4CodeCompleteConfig): Promise<void> {
+  public static async collectExternalDefinitions(): Promise<void> {
+    const config = configManager.config;
     const mainFolders: string[] = [];
     if (config.unpackedFileLocation) {
       mainFolders.push(config.unpackedFileLocation);
