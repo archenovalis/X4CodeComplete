@@ -32,7 +32,7 @@ export interface ScriptReferencedItemsReferences {
 }
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
-export type ScriptReferencedItemClassId = 'basic' | 'external' | 'cue';
+export type ScriptReferencedItemClassId = 'basic' | 'external' | 'mdscript' | 'cue';
 type ScriptReferencedDetailsType = 'full' | 'hover' | 'external' | 'definition' | 'reference';
 interface ScriptReferencedItemOptions {
   skipNotUsed?: boolean; // Optional flag to ignore "not used" warnings
@@ -108,8 +108,8 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
       options: { skipNotUsed: true, prepareReferences: true, referenceAsExpression: true },
     },
   ],
-  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'external', schema: mdScriptSchema }],
-  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'external', schema: mdScriptSchema }],
+  ['library_run', { type: 'library_run', name: 'Library run Action', class: 'mdscript', schema: mdScriptSchema }],
+  ['library_include', { type: 'library_include', name: 'Library include Action', class: 'mdscript', schema: mdScriptSchema }],
 ]);
 
 const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
@@ -153,6 +153,9 @@ function initializeScriptReferencedItemsDetectionMap() {
         break;
       case 'external':
         new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema, details.options || {});
+        break;
+      case 'mdscript':
+        new ReferencedInMScripts(key, details.name, details.schema, details.options || {});
         break;
       case 'cue':
         new ReferencedCues(key, details.name, details.schema, details.options || {});
@@ -895,7 +898,14 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     this.externalDefinitions.clear();
   }
 }
-export class ReferencedCues extends ReferencedItemsWithExternalDefinitionsTracker {
+
+export class ReferencedInMScripts extends ReferencedItemsWithExternalDefinitionsTracker {
+  constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
+    super(itemType, itemName, schema, options);
+  }
+}
+
+export class ReferencedCues extends ReferencedInMScripts {
   private static readonly cueSpecialItems = ['this', 'parent', 'static', 'namespace'];
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
