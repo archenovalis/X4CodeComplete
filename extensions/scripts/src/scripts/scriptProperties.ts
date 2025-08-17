@@ -285,7 +285,7 @@ export class ScriptProperties {
    * Initialize ScriptProperties asynchronously to avoid blocking the extension host.
    * Must be awaited before using properties/completions.
    */
-  public async initialize(librariesFolder: string): Promise<void> {
+  public async init(librariesFolder: string): Promise<void> {
     if (this.librariesFolder !== librariesFolder) {
       // Validate libraries folder exists and is a directory
       try {

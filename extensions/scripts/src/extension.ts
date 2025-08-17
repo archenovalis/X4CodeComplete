@@ -328,7 +328,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       xsdReference.init(configManager.librariesPath);
 
-      await scriptProperties.initialize(path.join(configManager.librariesPath, '/'));
+      await scriptProperties.init(path.join(configManager.librariesPath, '/'));
 
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
