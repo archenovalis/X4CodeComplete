@@ -1074,7 +1074,7 @@ export class ScriptProperties {
     const fullyMatched: boolean[] = [];
     const props = propertiesPrevious.length > 0 ? propertiesPrevious : contentType.getProperties(directOnly).values();
     for (const prop of props) {
-      if (resultType === 'undefined' || resultType === prop.type || !prop.type) {
+      if (!(resultType === 'undefined' || prop.type === undefined || resultType === prop.type)) {
         continue;
       }
       const name = prop.name;
