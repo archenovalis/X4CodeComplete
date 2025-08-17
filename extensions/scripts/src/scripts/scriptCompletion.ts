@@ -23,7 +23,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
   private processQueuedDocumentChanges: () => void;
 
-  constructor(processQueuedDocumentChanges: () => void) {
+  constructor() {
+    return;
+  }
+
+  init(processQueuedDocumentChanges: () => void) {
     this.processQueuedDocumentChanges = processQueuedDocumentChanges;
   }
 
@@ -366,3 +370,5 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
   dispose() {}
 }
+
+export const scriptCompletion: ScriptCompletion = new ScriptCompletion();

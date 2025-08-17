@@ -48,7 +48,7 @@ import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, 
 import { scriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { variableTracker, VariableTracker } from './scripts/scriptVariables';
-import { ScriptCompletion } from './scripts/scriptCompletion';
+import { scriptCompletion, ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
 import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
 import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
@@ -65,7 +65,6 @@ import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/sc
 let isActivated = false;
 
 /** Core service instances */
-let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
 let refreshTimeoutId: NodeJS.Timeout | undefined;
@@ -327,10 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       await scriptProperties.init(path.join(configManager.librariesPath, '/'));
 
-      if (scriptCompletionProvider) {
-        scriptCompletionProvider.dispose();
-      }
-      scriptCompletionProvider = new ScriptCompletion(processQueuedDocumentChanges);
+      scriptCompletion.init(processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();
@@ -344,7 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
       // ================================================================================================
 
       // Register completion provider with trigger characters
-      disposables.push(vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletionProvider, ...completionTriggerCharacters));
+      disposables.push(vscode.languages.registerCompletionItemProvider(xmlSelector, scriptCompletion, ...completionTriggerCharacters));
 
       // Register definition provider for go-to-definition functionality
       disposables.push(
