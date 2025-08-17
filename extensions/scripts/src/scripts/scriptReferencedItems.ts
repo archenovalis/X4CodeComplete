@@ -33,6 +33,7 @@ export interface ScriptReferencedItemsReferences {
 
 export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
 export type ScriptReferencedItemClassId = 'basic' | 'external' | 'cue';
+type ScriptReferencedDetailsType = 'full' | 'hover' | 'external' | 'definition' | 'reference';
 interface ScriptReferencedItemOptions {
   skipNotUsed?: boolean; // Optional flag to ignore "not used" warnings
   prepareExternalReferences?: boolean; // Optional flag to prepare references for completion
@@ -496,23 +497,19 @@ export class ReferencedItemsTracker {
     return diagnostics;
   }
 
-  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo): string {
+  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
     return `**Defined**: ${item.definition ? `at line ${item.definition.range.start.line + 1}` : '*No definition found!*'}`;
   }
 
-  public getItemDetails(
-    document: vscode.TextDocument,
-    item: ScriptReferencedItemInfo,
-    detailsType: 'full' | 'external' | 'definition' | 'reference'
-  ): vscode.MarkdownString {
+  public getItemDetails(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): vscode.MarkdownString {
     const markdownString = new vscode.MarkdownString();
-    const defined = this.definitionToMarkdown(document, item);
+    const defined = this.definitionToMarkdown(document, item, detailsType);
     const references = this.getReferences(document, item);
     const referenced = `**Referenced**: ${references.length} time${references.length !== 1 ? 's' : ''}`;
-    if (detailsType === 'full' || detailsType === 'external') {
+    if (['full', 'hover', 'external'].includes(detailsType)) {
       markdownString.appendMarkdown(`*${this.itemName}*: **${item.name}**  \n`);
       markdownString.appendMarkdown(defined + '  \n');
-      if (detailsType === 'full') {
+      if (['full', 'hover'].includes(detailsType)) {
         markdownString.appendMarkdown(referenced);
       }
     } else if (detailsType === 'definition') {
@@ -530,7 +527,7 @@ export class ReferencedItemsTracker {
     if (!item) {
       return undefined;
     }
-    const markdownString = this.getItemDetails(document, item.item, 'full');
+    const markdownString = this.getItemDetails(document, item.item, 'hover');
     return new vscode.Hover(markdownString);
   }
 
@@ -865,10 +862,10 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     return result;
   }
 
-  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo): string {
+  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
     const definition = this.getDefinition(document, item);
     if (definition === undefined || definition.uri.toString() === document.uri.toString()) {
-      return super.definitionToMarkdown(document, item);
+      return super.definitionToMarkdown(document, item, detailsType);
     } else {
       return `**Defined**: at line ${definition.range.start.line + 1} in \`${path.basename(definition.uri.fsPath)}\``;
     }
@@ -888,8 +885,18 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 }
 export class ReferencedCues extends ReferencedItemsWithExternalDefinitionsTracker {
+  private static readonly cueSpecialItems = ['this', 'parent', 'static', 'namespace'];
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
+  }
+
+  protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
+    if (ReferencedCues.cueSpecialItems.includes(item.name)) {
+      if (detailsType !== 'hover') {
+        return `Special item`;
+      }
+    }
+    return super.definitionToMarkdown(document, item, detailsType);
   }
 
   protected static findCueElementForName(name: string, element: XmlElement): XmlElement | undefined {
@@ -917,7 +924,7 @@ export class ReferencedCues extends ReferencedItemsWithExternalDefinitionsTracke
   }
 
   protected updateSpecificItem(document: vscode.TextDocument, item: ScriptReferencedItemInfo): ScriptReferencedItemInfo {
-    if (['this', 'parent', 'static', 'namespace'].includes(item.name)) {
+    if (ReferencedCues.cueSpecialItems.includes(item.name)) {
       if (this.lastLocation) {
         const element = xmlTracker.elementWithPosInStartTag(document, this.lastLocation?.range.start);
         if (element) {
