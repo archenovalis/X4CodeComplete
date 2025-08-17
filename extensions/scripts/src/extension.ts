@@ -51,7 +51,7 @@ import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMet
 import { variableTracker, VariableTracker } from './scripts/scriptVariables';
 import { scriptCompletion, ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
-import { ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
+import { scriptDocumentTracker } from './scripts/scriptDocumentTracker';
 import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
 
 // ================================================================================================
@@ -65,8 +65,7 @@ import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/sc
 /** Activation state */
 let isActivated = false;
 
-/** Core service instances */
-let scriptDocumentTracker: ScriptDocumentTracker;
+/** Refresh timeout ID */
 let refreshTimeoutId: NodeJS.Timeout | undefined;
 
 /** Document selector for XML files */
@@ -327,11 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       scriptCompletion.init(processQueuedDocumentChanges);
 
-      if (scriptDocumentTracker) {
-        scriptDocumentTracker.dispose();
-      }
-      diagnosticCollection.clear();
-      scriptDocumentTracker = new ScriptDocumentTracker();
+      scriptDocumentTracker.init();
 
       logger.info('Heavy services initialization completed.');
 

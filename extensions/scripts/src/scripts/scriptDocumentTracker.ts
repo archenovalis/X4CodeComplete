@@ -11,6 +11,11 @@ export class ScriptDocumentTracker {
     return;
   }
 
+  public init(): void {
+    // Initialization logic for the script document tracker
+    diagnosticCollection.clear();
+  }
+
   /**
    * Validates script references (labels and actions) in a document
    * @param document - The text document to validate
@@ -310,3 +315,5 @@ export class ScriptDocumentTracker {
 
   dispose(): void {}
 }
+
+export const scriptDocumentTracker: ScriptDocumentTracker = new ScriptDocumentTracker();
