@@ -974,13 +974,13 @@ export class ScriptProperties {
   /**
    * Adds keyword completions that match the given prefix
    */
-  private addKeywordCompletions(items: Map<string, vscode.CompletionItem>, prefix: string, type: string, range: vscode.Range, schema: string): void {
+  private addKeywordCompletions(items: Map<string, vscode.CompletionItem>, prefix: string, resultType: string, range: vscode.Range, schema: string): void {
     const keywords = this.getKeywords(schema);
     for (const keyword of keywords) {
       if (keyword.name.toLowerCase().startsWith(prefix.toLowerCase())) {
-        if (type !== 'undefined') {
-          if (keyword.supertype.name !== type) {
-            if (!Array.from(keyword.properties.values()).some((p) => p.type === type || !p.type)) {
+        if (resultType !== 'undefined') {
+          if (keyword.supertype.name !== resultType) {
+            if (!Array.from(keyword.properties.values()).some((p) => p.type === resultType || !p.type)) {
               continue;
             }
           }
