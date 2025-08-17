@@ -41,7 +41,7 @@ import { X4CodeCompleteConfig, configManager, ConfigChangeCallbacks } from './ex
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
 import { logger, setLoggerLevel } from './logger/logger';
-import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
+import { xsdReference, XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // Script-specific functionality imports
 import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
@@ -65,7 +65,6 @@ import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/sc
 let isActivated = false;
 
 /** Core service instances */
-let xsdReference: XsdReference;
 let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -327,24 +326,19 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage('Error loading language files: ' + error);
         });
 
-      // Reinitialize script analysis services with fresh data
-      if (xsdReference) {
-        logger.info('Reinitializing XSD reference...');
-        xsdReference.dispose();
-      }
-      xsdReference = new XsdReference(configManager.librariesPath);
+      xsdReference.init(configManager.librariesPath);
 
       await scriptProperties.initialize(path.join(configManager.librariesPath, '/'));
 
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
       }
-      scriptCompletionProvider = new ScriptCompletion(xsdReference, variableTracker, processQueuedDocumentChanges);
+      scriptCompletionProvider = new ScriptCompletion(variableTracker, processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();
       }
-      scriptDocumentTracker = new ScriptDocumentTracker(xsdReference, variableTracker, diagnosticCollection);
+      scriptDocumentTracker = new ScriptDocumentTracker(variableTracker, diagnosticCollection);
 
       logger.info('Heavy services initialization completed.');
 

@@ -1,17 +1,15 @@
 import * as vscode from 'vscode';
-import { XsdReference } from 'xsd-lookup';
+import { xsdReference, XsdReference } from 'xsd-lookup';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema } from './scriptsMetadata';
 
 export class ScriptDocumentTracker {
-  private xsdReference: XsdReference;
   private variableTracker: VariableTracker;
   private diagnosticCollection: vscode.DiagnosticCollection;
 
-  constructor(xsdReference: XsdReference, variableTracker: VariableTracker, diagnosticCollection: vscode.DiagnosticCollection) {
-    this.xsdReference = xsdReference;
+  constructor(variableTracker: VariableTracker, diagnosticCollection: vscode.DiagnosticCollection) {
     this.variableTracker = variableTracker;
     this.diagnosticCollection = diagnosticCollection;
   }
@@ -60,7 +58,7 @@ export class ScriptDocumentTracker {
     }
 
     // Get types that represent lvalue expressions for variable priority detection
-    const lValueTypes = ['lvalueexpression', ...this.xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
+    const lValueTypes = ['lvalueexpression', ...xsdReference.getSimpleTypesWithBaseType(schema, 'lvalueexpression')];
 
     // Parse XML structure and handle any offset issues from unclosed tags
     const xmlElements: XmlElement[] = xmlTracker.parseDocument(document);
@@ -112,7 +110,7 @@ export class ScriptDocumentTracker {
         const parentName = element.parent?.name || '';
         const parentHierarchy = element.parent.hierarchy || [];
         const previousName = element.previous?.name || '';
-        const isValidElement = this.xsdReference.isValidChild(schema, element.name, parentName, parentHierarchy, previousName);
+        const isValidElement = xsdReference.isValidChild(schema, element.name, parentName, parentHierarchy, previousName);
         if (!isValidElement) {
           const diagnostic = new vscode.Diagnostic(
             element.startTagRange,
@@ -133,7 +131,7 @@ export class ScriptDocumentTracker {
         }
       }
       // Validate element against XSD schema
-      const elementDefinition = this.xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
+      const elementDefinition = xsdReference.getElementDefinition(schema, element.name, element.hierarchy);
       if (elementDefinition === undefined) {
         const diagnostic = new vscode.Diagnostic(
           element.range,
@@ -145,7 +143,7 @@ export class ScriptDocumentTracker {
         diagnostics.push(diagnostic);
       } else {
         // Get valid attributes for this element from schema
-        const schemaAttributes = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
+        const schemaAttributes = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
         const attributes = element.attributes
           .map((attr) => attr.name)
           .filter((name) => !(name.startsWith('xmlns:') || name.startsWith('xsi:') || name === 'xmlns'));

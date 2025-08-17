@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { XsdReference, EnhancedAttributeInfo } from 'xsd-lookup';
+import { xsdReference, XsdReference, EnhancedAttributeInfo } from 'xsd-lookup';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { scriptProperties } from './scriptProperties';
@@ -21,12 +21,10 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     ['value', vscode.CompletionItemKind.Value],
   ]);
 
-  private xsdReference: XsdReference;
   private variablesTracker: VariableTracker;
   private processQueuedDocumentChanges: () => void;
 
-  constructor(xsdReference: XsdReference, variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
-    this.xsdReference = xsdReference;
+  constructor(variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
     this.variablesTracker = variablesTracker;
     this.processQueuedDocumentChanges = processQueuedDocumentChanges;
   }
@@ -106,12 +104,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
     }
     logger.debug(`Current element: ${currentElement?.name}, Previous element: ${previousElement?.name}, Parent element: ${parent?.name}`);
-    const possibleElements = this.xsdReference.getPossibleChildElements(
-      schema,
-      parentName,
-      parentHierarchy,
-      previousElement ? previousElement.name : undefined
-    );
+    const possibleElements = xsdReference.getPossibleChildElements(schema, parentName, parentHierarchy, previousElement ? previousElement.name : undefined);
     if (possibleElements !== undefined) {
       logger.debug(`Possible elements for ${parentName}:`, possibleElements);
       const currentLinePrefix = document.lineAt(position).text.substring(0, position.character);
@@ -197,7 +190,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         }
       }
 
-      const elementAttributes: EnhancedAttributeInfo[] = this.xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
+      const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
 
       let attribute = xmlTracker.attributeWithPosInName(document, position, element);
       if (attribute) {
