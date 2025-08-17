@@ -45,7 +45,7 @@ import { XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidation
 
 // Script-specific functionality imports
 import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
-import { ScriptProperties } from './scripts/scriptProperties';
+import { scriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { VariableTracker } from './scripts/scriptVariables';
 import { ScriptCompletion } from './scripts/scriptCompletion';
@@ -66,7 +66,6 @@ let isActivated = false;
 
 /** Core service instances */
 let xsdReference: XsdReference;
-let scriptProperties: ScriptProperties;
 let scriptCompletionProvider: ScriptCompletion;
 let scriptDocumentTracker: ScriptDocumentTracker;
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -335,16 +334,12 @@ export function activate(context: vscode.ExtensionContext) {
       }
       xsdReference = new XsdReference(configManager.librariesPath);
 
-      if (scriptProperties) {
-        scriptProperties.dispose();
-      }
-      scriptProperties = new ScriptProperties(path.join(configManager.librariesPath, '/'));
-      await scriptProperties.initialize();
+      await scriptProperties.initialize(path.join(configManager.librariesPath, '/'));
 
       if (scriptCompletionProvider) {
         scriptCompletionProvider.dispose();
       }
-      scriptCompletionProvider = new ScriptCompletion(xsdReference, scriptProperties, variableTracker, processQueuedDocumentChanges);
+      scriptCompletionProvider = new ScriptCompletion(xsdReference, variableTracker, processQueuedDocumentChanges);
 
       if (scriptDocumentTracker) {
         scriptDocumentTracker.dispose();

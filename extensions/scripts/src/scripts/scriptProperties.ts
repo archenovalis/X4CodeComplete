@@ -279,24 +279,54 @@ export class ScriptProperties {
   private keywordList: KeywordEntry[] = [];
   private descriptions: Map<string, string> = new Map<string, string>();
 
-  constructor(librariesFolder: string) {
-    this.librariesFolder = librariesFolder;
-    this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
-  }
+  constructor() {}
 
   /**
    * Initialize ScriptProperties asynchronously to avoid blocking the extension host.
    * Must be awaited before using properties/completions.
    */
-  public async initialize(): Promise<void> {
-    await this.readScriptPropertiesAsync(this.scriptPropertiesPath);
+  public async initialize(librariesFolder: string): Promise<void> {
+    if (this.librariesFolder !== librariesFolder) {
+      // Validate libraries folder exists and is a directory
+      try {
+        const stat = await fsp.stat(librariesFolder);
+        if (!stat.isDirectory()) {
+          vscode.window.showErrorMessage(`Libraries path is not a directory: ${librariesFolder}`);
+          logger.error('Libraries path is not a directory:', librariesFolder);
+          return;
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(`Libraries folder not found: ${librariesFolder}`);
+        logger.error('Libraries folder not found:', librariesFolder, err as any);
+        return;
+      }
+      try {
+        const stat = await fsp.stat(path.join(librariesFolder, 'scriptproperties.xml'));
+        if (!stat.isFile()) {
+          vscode.window.showErrorMessage(`Script properties file not found: ${librariesFolder}`);
+          logger.error('Script properties file not found:', librariesFolder);
+          return;
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(`Script properties file not found: ${librariesFolder}`);
+        logger.error('Script properties file not found:', librariesFolder, err as any);
+        return;
+      }
+      this.librariesFolder = librariesFolder;
+      this.scriptPropertiesPath = path.join(librariesFolder, 'scriptproperties.xml');
+      await this.readScriptPropertiesAsync(this.scriptPropertiesPath);
+    }
   }
 
-  dispose(): void {
-    this.domParser = undefined;
+  public clear(): void {
     this.typeDict.clear();
     this.keywordList = [];
     this.descriptions.clear();
+  }
+
+  public dispose(): void {
+    this.clear();
+    this.domParser = undefined;
   }
 
   private async readScriptPropertiesAsync(filepath: string): Promise<void> {
@@ -1550,3 +1580,5 @@ function escapeRegex(text: string) {
   // https://stackoverflow.com/a/6969486
   return cleanStr(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 }
+
+export const scriptProperties: ScriptProperties = new ScriptProperties();

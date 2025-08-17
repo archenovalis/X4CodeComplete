@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { XsdReference, EnhancedAttributeInfo } from 'xsd-lookup';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
-import { ScriptProperties } from './scriptProperties';
+import { scriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { VariableTracker, ScriptVariableAtPosition } from './scriptVariables';
 import { getNearestBreakSymbolIndexForExpressions, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
@@ -22,13 +22,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
   ]);
 
   private xsdReference: XsdReference;
-  private scriptProperties: ScriptProperties;
   private variablesTracker: VariableTracker;
   private processQueuedDocumentChanges: () => void;
 
-  constructor(xsdReference: XsdReference, scriptProperties: ScriptProperties, variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
+  constructor(xsdReference: XsdReference, variablesTracker: VariableTracker, processQueuedDocumentChanges: () => void) {
     this.xsdReference = xsdReference;
-    this.scriptProperties = scriptProperties;
     this.variablesTracker = variablesTracker;
     this.processQueuedDocumentChanges = processQueuedDocumentChanges;
   }
@@ -354,7 +352,7 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         if (inSingle) {
           return ScriptCompletion.emptyCompletion;
         }
-        return this.scriptProperties.makeCompletionsFromExpression(
+        return scriptProperties.makeCompletionsFromExpression(
           textToProcessBefore,
           textToProcessAfter,
           attributeInfo?.type || 'undefined',
