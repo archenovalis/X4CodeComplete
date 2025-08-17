@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 import { X4CodeCompleteConfig } from '../extension/configuration';
-import { XmlElement } from '../xml/xmlStructureTracker';
+import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import path from 'path';
 import fs from 'fs';
 import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
@@ -265,6 +265,7 @@ export class ReferencedItemsTracker {
   protected itemType: string;
   protected itemName: string;
   protected options: ScriptReferencedItemOptions;
+  protected lastLocation: vscode.Location | undefined;
 
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     logger.info(`Initialized ReferencedItemsTracker for item type: ${itemType}`);
@@ -389,6 +390,7 @@ export class ReferencedItemsTracker {
     for (const [itemName, itemData] of documentData.entries()) {
       // Check if position is at a label definition
       if (itemData.definition && itemData.definition.range.contains(position)) {
+        this.lastLocation = itemData.definition; // Store the last location for potential use
         return {
           item: itemData,
           location: itemData.definition,
@@ -398,6 +400,7 @@ export class ReferencedItemsTracker {
       // Check if position is at a label reference
       const referenceLocation = itemData.references.find((loc) => loc.range.contains(position));
       if (referenceLocation) {
+        this.lastLocation = referenceLocation; // Store the last location for potential use
         return {
           item: itemData,
           location: referenceLocation,
@@ -816,7 +819,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 
   protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
-    return Array.from(this.documentReferencedItems.values()).flatMap((itemMap) => itemMap.get(item.name)?.references || []);
+    return item.references || [];
   }
 
   public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
@@ -908,18 +911,55 @@ export class ReferencedCues extends ReferencedItemsWithExternalDefinitionsTracke
       cue = parent;
     }
     if (cue && cue.name === 'cue') {
-      return;
+      return cue;
     }
     return undefined;
   }
 
-  protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
-    return super.getDefinition(document, item);
+  protected updateSpecificItem(document: vscode.TextDocument, item: ScriptReferencedItemInfo): ScriptReferencedItemInfo {
+    if (['this', 'parent', 'static', 'namespace'].includes(item.name)) {
+      if (this.lastLocation) {
+        const element = xmlTracker.elementWithPosInStartTag(document, this.lastLocation?.range.start);
+        if (element) {
+          const cue = ReferencedCues.findCueElementForName(item.name, element);
+          if (cue) {
+            const current = ['this', 'static'].includes(item.name) ? cue : ReferencedCues.findCueElementForName('this', element);
+            const newItem = {
+              name: item.name,
+              scriptName: item.scriptName,
+              definition: new vscode.Location(document.uri, cue.nameRange),
+              references: [],
+            };
+            for (const reference of item.references) {
+              if (current.range.contains(reference.range)) {
+                newItem.references.push(reference);
+              }
+            }
+            return newItem;
+          }
+        }
+      }
+    }
+    return item;
   }
 
-  protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
-    return super.getReferences(document, item);
+  public getItemAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptReferencedItemAtPosition | undefined {
+    const item = super.getItemAtPosition(document, position);
+    if (!item) {
+      return undefined;
+    }
+    item.item = this.updateSpecificItem(document, item.item);
+    // Update the item to reflect the specific cue context
+    return item;
   }
+
+  // protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+  //   return super.getDefinition(document, this.updateSpecificItem(document, item));
+  // }
+
+  // protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
+  //   return super.getReferences(document, this.updateSpecificItem(document, item));
+  // }
 
   public addItemReference(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     if (!this.documentReferencedItems.has(document)) {
