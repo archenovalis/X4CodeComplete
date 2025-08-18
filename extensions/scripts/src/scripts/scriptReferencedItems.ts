@@ -72,10 +72,9 @@ export interface ScriptReferencedItemsDetectionItem {
 
 type ScriptReferencedItemsDetectionList = ScriptReferencedItemsDetectionItem[];
 
-interface ScriptItemExternalDefinition {
-  name: string;
-  scriptName: string;
-  definition: vscode.Location;
+interface ScriptExternalDefinition {
+  fsPath: string;
+  definitions: ScriptReferencedItemInfo[];
 }
 
 interface externalTrackerInfo {
@@ -481,6 +480,10 @@ export class ReferencedItemsTracker {
     return;
   }
 
+  protected getItemFullName(item: ScriptReferencedItemInfo): string {
+    return item.name;
+  }
+
   public validateItems(document: vscode.TextDocument): vscode.Diagnostic[] {
     const metadata = getDocumentMetadata(document);
     const diagnostics: vscode.Diagnostic[] = [];
@@ -494,11 +497,8 @@ export class ReferencedItemsTracker {
       const definition = this.getDefinition(document, itemData);
       if (!definition && !this.options.referenceAsExpression) {
         itemData.references.forEach((reference) => {
-          let name = itemName;
-          if (metadata.schema === mdScriptSchema && itemData.scriptName !== metadata.name) {
-            name = `md.${itemData.scriptName}.${name}`;
-          }
-          const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${name}' is not defined`, vscode.DiagnosticSeverity.Error);
+          const fullName = this.getItemFullName(itemData);
+          const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${fullName}' is not defined`, vscode.DiagnosticSeverity.Error);
           diagnostic.code = `undefined-${this.itemType}`;
           diagnostic.source = 'X4CodeComplete';
           diagnostics.push(diagnostic);
@@ -581,7 +581,7 @@ export class ReferencedItemsTracker {
 }
 
 export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
-  protected externalDefinitions: Map<string, ScriptItemExternalDefinition> = new Map();
+  protected externalDefinitions: Map<string, ScriptReferencedItemInfo> = new Map();
 
   protected static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
 
@@ -803,11 +803,13 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       vscode.Uri.file(fileName),
       new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
     );
-    this.externalDefinitions.set(metadata.schema === aiScriptSchema ? value : `md.${metadata.name}.${value}`, {
+    const definitionItem = {
       name: value,
       scriptName: metadata.name,
       definition,
-    });
+      references: [],
+    };
+    this.externalDefinitions.set(value, definitionItem);
     ReferencedItemsTracker.addReferencesForCompletion(this.itemType, metadata.name, value);
   }
 
@@ -892,17 +894,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       ) {
         // Only add the item if it matches the prefix
         if (!processedItems.has(itemName)) {
-          ScriptCompletion.addItem(
-            items,
-            this.itemType,
-            itemName,
-            this.getItemDetails(
-              document,
-              { name: itemName, scriptName: externalDefinition.scriptName, definition: externalDefinition.definition, references: [] },
-              'external'
-            ),
-            range
-          );
+          ScriptCompletion.addItem(items, this.itemType, itemName, this.getItemDetails(document, externalDefinition, 'external'), range);
           processedItems.add(itemName);
           i++;
           if (i % 32 === 0) {
@@ -942,8 +934,35 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
 }
 
 export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinitionsTracker {
+  protected externalScripts: Map<string, ScriptExternalDefinition> = new Map();
+
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
+  }
+
+  public addExternalDefinition(metadata: ScriptMetadata, value: string, line: number, position: number, length: number, fileName: string): void {
+    const definition = new vscode.Location(
+      vscode.Uri.file(fileName),
+      new vscode.Range(new vscode.Position(line, position), new vscode.Position(line, position + length))
+    );
+    const definitionItem = {
+      name: value,
+      scriptName: metadata.name,
+      definition,
+      references: [],
+    };
+    this.externalDefinitions.set(this.getItemFullName(definitionItem), definitionItem);
+    if (!this.externalScripts.has(metadata.name)) {
+      this.externalScripts.set(metadata.name, {
+        fsPath: fileName,
+        definitions: [],
+      });
+    }
+    this.externalScripts.get(metadata.name)!.definitions.push(definitionItem);
+  }
+
+  protected getItemFullName(item: ScriptReferencedItemInfo): string {
+    return `md.${item.scriptName}.${item.name}`;
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
@@ -960,7 +979,7 @@ export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinition
       if (externalDefinitions && externalDefinitions.length > 0) {
         return externalDefinitions[0].get(item.name)?.definition;
       }
-      const externalDefinition = this.externalDefinitions.get(`md.${item.scriptName}.${item.name}`);
+      const externalDefinition = this.externalDefinitions.get(this.getItemFullName(item));
       if (externalDefinition) {
         return externalDefinition.definition;
       }
@@ -1032,7 +1051,7 @@ export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinition
                 resultDetails = new vscode.MarkdownString(`*Script* **${itemData.scriptName}**: ${itemData.definition.uri.fsPath}`);
               }
             } else if (position === 2) {
-              resultName = `md.${itemData.scriptName}.${itemData.name}`;
+              resultName = this.getItemFullName(itemData);
               if (!processedItems.has(resultName)) {
                 resultDetails = this.getItemDetails(document, itemData, 'external');
               }
@@ -1051,55 +1070,70 @@ export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinition
           }
         }
       }
-      let externalDefinitions = Array.from(this.externalDefinitions.values());
       if (position === 1) {
-        externalDefinitions = externalDefinitions
-          .filter((item) => prefixScriptName === '' || item.scriptName.startsWith(prefixScriptName))
-          .filter((obj, index, self) => self.findIndex((t) => t.scriptName === obj.scriptName) === index);
-      } else {
-        externalDefinitions = externalDefinitions.filter(
-          (item) => item.scriptName === prefixScriptName && (prefixItemName === '' || item.name.startsWith(prefixItemName))
+        const scriptNames = Array.from(this.externalScripts.keys()).filter(
+          (key) =>
+            key.startsWith(prefixScriptName) &&
+            (this.externalScripts.get(key)?.fsPath.startsWith(documentFolder) ||
+              this.externalScripts.get(key)?.fsPath.startsWith(configManager.config.extensionsFolder) ||
+              this.externalScripts.get(key)?.fsPath.startsWith(configManager.config.unpackedFileLocation))
         );
-      }
-      externalDefinitions = externalDefinitions.filter(
-        (item) =>
-          item.definition &&
-          (item.definition.uri.fsPath.startsWith(documentFolder) ||
-            item.definition.uri.fsPath.startsWith(configManager.config.extensionsFolder) ||
-            item.definition.uri.fsPath.startsWith(configManager.config.unpackedFileLocation))
-      );
-      for (const externalDefinition of externalDefinitions) {
-        resultDetails = undefined;
-        if (position === 1) {
-          // Only add the item if it matches the prefix
-          resultName = `md.${externalDefinition.scriptName}`;
+        for (const scriptName of scriptNames) {
+          const scriptData = this.externalScripts.get(scriptName);
+          resultName = `md.${scriptName}`;
           if (!processedItems.has(resultName)) {
-            resultDetails = new vscode.MarkdownString(`*Script* **${externalDefinition.scriptName}**: ${externalDefinition.definition.uri.fsPath}`);
-          }
-        } else if (position === 2) {
-          resultName = `md.${externalDefinition.scriptName}.${externalDefinition.name}`;
-          if (!processedItems.has(resultName)) {
-            resultDetails = this.getItemDetails(
-              document,
-              { name: externalDefinition.name, scriptName: externalDefinition.scriptName, definition: externalDefinition.definition, references: [] },
-              'external'
-            );
+            processedItems.add(resultName);
+            ScriptCompletion.addItem(items, this.itemType, resultName, new vscode.MarkdownString(`*Script* **${scriptName}**: ${scriptData?.fsPath}`), range);
+            i++;
+            if (i % 32 === 0) {
+              // Process the items in batches
+              if (token.isCancellationRequested) {
+                return;
+              }
+            }
           }
         }
-        if (resultDetails !== undefined) {
-          processedItems.add(resultName);
-          ScriptCompletion.addItem(items, this.itemType, resultName, resultDetails, range);
-          i++;
-          if (i % 32 === 0) {
-            // Process the items in batches
-            if (token.isCancellationRequested) {
-              return;
+      } else {
+        const scriptData = this.externalScripts.get(prefixScriptName);
+        if (
+          scriptData &&
+          (scriptData.fsPath.startsWith(documentFolder) ||
+            scriptData.fsPath.startsWith(configManager.config.extensionsFolder) ||
+            scriptData.fsPath.startsWith(configManager.config.unpackedFileLocation))
+        ) {
+          const externalDefinitions = scriptData.definitions.filter((item) => prefixItemName === '' || item.name.startsWith(prefixItemName));
+          for (const externalDefinition of externalDefinitions) {
+            resultName = this.getItemFullName(externalDefinition);
+            resultDetails = this.getItemDetails(document, externalDefinition, 'external');
+            if (!processedItems.has(resultName)) {
+              processedItems.add(resultName);
+              ScriptCompletion.addItem(items, this.itemType, resultName, resultDetails, range);
+              i++;
+              if (i % 32 === 0) {
+                // Process the items in batches
+                if (token.isCancellationRequested) {
+                  return;
+                }
+              }
             }
           }
         }
       }
     }
     return;
+  }
+
+  public clearExternalDefinitionsForFile(filePath: string): void {
+    super.clearExternalDefinitionsForFile(filePath);
+    const scriptNames = Array.from(this.externalScripts.keys()).find((key) => this.externalScripts.get(key)?.fsPath === filePath);
+    if (scriptNames) {
+      this.externalScripts.delete(scriptNames);
+    }
+  }
+
+  public clearAllExternalDefinitions(): void {
+    super.clearAllExternalDefinitions();
+    this.externalScripts.clear();
   }
 }
 
