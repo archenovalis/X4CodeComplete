@@ -1122,12 +1122,10 @@ export class ReferencedCues extends ReferencedInMDScripts {
     ) {
       cue = cue.parent;
     }
-    if (name === 'parent') {
-      let parent = cue;
-      if (parent && parent.name === 'cue') {
-        while (parent && parent.name !== 'cue' && parent.parent) {
-          parent = parent.parent;
-        }
+    if (name === 'parent' && cue && cue.name === 'cue' && cue.parent) {
+      let parent = cue.parent;
+      while (parent && parent.name !== 'cue' && parent.parent) {
+        parent = parent.parent;
       }
       cue = parent;
     }
