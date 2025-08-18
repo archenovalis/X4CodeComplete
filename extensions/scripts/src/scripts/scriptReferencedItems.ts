@@ -1107,7 +1107,9 @@ export class ReferencedCues extends ReferencedInMDScripts {
   protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
     if (ReferencedCues.cueSpecialItems.includes(item.name)) {
       if (detailsType !== 'hover') {
-        return `Special item`;
+        return `*Special item*`;
+      } else {
+        return `*Real name*: **${document.getText(item.definition.range)}**`;
       }
     }
     return super.definitionToMarkdown(document, item, detailsType);
@@ -1142,11 +1144,18 @@ export class ReferencedCues extends ReferencedInMDScripts {
         if (element) {
           const cue = ReferencedCues.findCueElementForName(item.name, element);
           if (cue) {
+            let range = cue.nameRange;
+            if (cue.attributes && cue.attributes.length > 0) {
+              const attribute = cue.attributes.find((attr) => attr.name === 'name');
+              if (attribute) {
+                range = attribute.valueRange;
+              }
+            }
             const current = ['this', 'static'].includes(item.name) ? cue : ReferencedCues.findCueElementForName('this', element);
             const newItem = {
               name: item.name,
               scriptName: item.scriptName,
-              definition: new vscode.Location(document.uri, cue.nameRange),
+              definition: new vscode.Location(document.uri, range),
               references: [],
             };
             for (const reference of item.references) {
