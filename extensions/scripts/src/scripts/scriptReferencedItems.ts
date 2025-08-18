@@ -155,7 +155,7 @@ function initializeScriptReferencedItemsDetectionMap() {
         new ReferencedItemsWithExternalDefinitionsTracker(key, details.name, details.schema, details.options || {});
         break;
       case 'mdscript':
-        new ReferencedInMScripts(key, details.name, details.schema, details.options || {});
+        new ReferencedInMDScripts(key, details.name, details.schema, details.options || {});
         break;
       case 'cue':
         new ReferencedCues(key, details.name, details.schema, details.options || {});
@@ -899,13 +899,13 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 }
 
-export class ReferencedInMScripts extends ReferencedItemsWithExternalDefinitionsTracker {
+export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinitionsTracker {
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
   }
 }
 
-export class ReferencedCues extends ReferencedInMScripts {
+export class ReferencedCues extends ReferencedInMDScripts {
   private static readonly cueSpecialItems = ['this', 'parent', 'static', 'namespace'];
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
