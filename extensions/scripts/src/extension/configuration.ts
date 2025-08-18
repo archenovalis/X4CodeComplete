@@ -72,6 +72,12 @@ export class X4ConfigurationManager {
   private _config: X4CodeCompleteConfig;
   private _changeCallbacks: ConfigChangeCallbacks;
   private _disposables: vscode.Disposable[] = [];
+  /**
+   * Tracks the last known scope that provided each config key's value.
+   * Used to infer scope when a user reverts a value back to default (e.g., false),
+   * which makes inspect().workspaceValue/globalValue become undefined.
+   */
+  private _lastKnownScopes: Partial<Record<keyof X4CodeCompleteConfig, vscode.ConfigurationTarget | undefined>> = {};
 
   constructor() {
     this._config = this.createDefaultConfig();
@@ -117,23 +123,42 @@ export class X4ConfigurationManager {
    */
   private loadConfiguration(): void {
     const section = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    const pick = <T>(key: keyof X4CodeCompleteConfig, fallback: T) => {
+
+    const resolve = <K extends keyof X4CodeCompleteConfig, T = X4CodeCompleteConfig[K]>(
+      key: K,
+      fallback: T
+    ): { value: T; scope: vscode.ConfigurationTarget | undefined } => {
       const inspected = section.inspect<T>(key as string);
-      if (!inspected) return fallback;
+      if (!inspected) return { value: fallback, scope: undefined };
       // Ignore workspaceFolderValue intentionally – only honor workspace and global scopes
-      if (inspected.workspaceValue !== undefined) return inspected.workspaceValue as T;
-      if (inspected.globalValue !== undefined) return inspected.globalValue as T;
-      return (inspected.defaultValue as T) ?? fallback;
+      if (inspected.workspaceValue !== undefined) return { value: inspected.workspaceValue as T, scope: vscode.ConfigurationTarget.Workspace };
+      if (inspected.globalValue !== undefined) return { value: inspected.globalValue as T, scope: vscode.ConfigurationTarget.Global };
+      return { value: ((inspected.defaultValue as T) ?? fallback) as T, scope: undefined };
     };
 
+    const unpackedFileLocation = resolve('unpackedFileLocation', '');
+    const extensionsFolder = resolve('extensionsFolder', '');
+    const debug = resolve('debug', false);
+    const languageNumber = resolve('languageNumber', '44');
+    const limitLanguageOutput = resolve('limitLanguageOutput', false);
+
     this._config = {
-      unpackedFileLocation: pick('unpackedFileLocation', ''),
-      extensionsFolder: pick('extensionsFolder', ''),
-      debug: pick('debug', false),
-      languageNumber: pick('languageNumber', '44'),
-      limitLanguageOutput: pick('limitLanguageOutput', false),
+      unpackedFileLocation: unpackedFileLocation.value,
+      extensionsFolder: extensionsFolder.value,
+      debug: debug.value,
+      languageNumber: languageNumber.value,
+      limitLanguageOutput: limitLanguageOutput.value,
+      // Always start false; toggled via UI/commands
       reloadLanguageData: false,
     };
+
+    // Record last-known scopes for inference on future changes
+    this._lastKnownScopes.unpackedFileLocation = unpackedFileLocation.scope;
+    this._lastKnownScopes.extensionsFolder = extensionsFolder.scope;
+    this._lastKnownScopes.debug = debug.scope;
+    this._lastKnownScopes.languageNumber = languageNumber.scope;
+    this._lastKnownScopes.limitLanguageOutput = limitLanguageOutput.scope;
+    // reloadLanguageData is a transient flag; keep undefined initially
   }
 
   /**
@@ -171,7 +196,14 @@ export class X4ConfigurationManager {
       }
 
       if (this._config[key] !== value) {
-        (result as any)[key] = { value: value, scope: scope };
+        // Keep cache fresh when explicit scope is present
+        if (scope !== undefined) {
+          this._lastKnownScopes[key] = scope;
+        }
+        // If the new value has no explicit scope (e.g., reverted to default),
+        // fall back to the last known scope so callers can act accordingly.
+        const scopeToReport = scope ?? this._lastKnownScopes[key];
+        (result as any)[key] = { value: value, scope: scopeToReport };
       }
     }
     return result;
@@ -328,6 +360,8 @@ export class X4ConfigurationManager {
   ): Promise<void> {
     this._config[key] = value;
     if (target) {
+      // Update last-known scope when we explicitly set a value
+      this._lastKnownScopes[key] = target;
       await this.syncToConfigValue(key, target);
     }
   }
