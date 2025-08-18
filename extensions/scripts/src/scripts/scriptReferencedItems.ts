@@ -225,14 +225,18 @@ export function checkReferencedItemAttributeType(
   schema: string,
   element: object,
   attributeName: string,
-  attributeType: string
+  attributeType: string,
+  fileName: string = '',
+  definitionsOnly: boolean = false
 ): ScriptReferencedItemsDetectionItem | undefined {
   const references = scriptReferencedItemsDetectionList.filter((item) => {
     const result =
       scriptReferencedItemType.get(item.type)?.schema === schema &&
       (item.element === '*' || item.element === element?.['name']) &&
       (item.attribute === undefined || item.attribute === attributeName) &&
-      (item.attributeType === undefined || item.attributeType === attributeType);
+      (item.attributeType === undefined || item.attributeType === attributeType) &&
+      (fileName === '' || item.filePrefix === undefined || fileName.startsWith(item.filePrefix)) &&
+      (!definitionsOnly || item.class === 'definition');
     return result;
   });
   if (references.length === 0) {
@@ -652,11 +656,11 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   public static async collectExternalDefinitions(): Promise<void> {
     const config = configManager.config;
     const mainFolders: string[] = [];
-    if (config.unpackedFileLocation) {
-      mainFolders.push(config.unpackedFileLocation);
-    }
     if (config.extensionsFolder) {
       mainFolders.push(config.extensionsFolder);
+    }
+    if (config.unpackedFileLocation) {
+      mainFolders.push(config.unpackedFileLocation);
     }
     logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
 
