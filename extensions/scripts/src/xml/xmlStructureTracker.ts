@@ -262,6 +262,7 @@ export class XmlStructureTracker {
 
       const elements: XmlElement[] = [];
       const openElementStack: XmlElement[] = [];
+      let parserPositionOnOpenTag = 0;
 
       // Track parse position
       parser.startTagPosition = 0;
@@ -270,6 +271,7 @@ export class XmlStructureTracker {
       // Handle opening tags
       parser.onopentag = (node) => {
         try {
+          parserPositionOnOpenTag = parser.position;
           const tagStartPosPatched = parser.startTagPosition - 1;
           const tagStartPos = revertOffset(tagStartPosPatched, offsetMap);
           const tagEndPosPatched = parser.position;
@@ -375,11 +377,16 @@ export class XmlStructureTracker {
       };
 
       parser.onclosetag = (tagName: string) => {
-        if (openElementStack.length > 0) {
-          const lastOpenElement = openElementStack[openElementStack.length - 1];
-          if (lastOpenElement.name === tagName) {
-            lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(parser.position));
-            openElementStack.pop();
+        if (parser.position > parserPositionOnOpenTag) {
+          if (openElementStack.length > 0) {
+            const lastOpenElement = openElementStack[openElementStack.length - 1];
+            if (lastOpenElement.name === tagName) {
+              // && parser.position === document.offsetAt(lastOpenElement.range.start)
+              const tagEndPosPatched = parser.position;
+              const tagEndPos = revertOffset(tagEndPosPatched, offsetMap);
+              lastOpenElement.range = new vscode.Range(lastOpenElement.range.start, document.positionAt(tagEndPos));
+              openElementStack.pop();
+            }
           }
         }
       };
