@@ -90,9 +90,6 @@ interface ScriptReferencedItemsRegistryItem {
   tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues;
 }
 
-type ReferencesToCompletionItems = Map<string, Map<string, string[]>>;
-export const referencesToCompletionItems: ReferencesToCompletionItems = new Map();
-
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
 
 const scriptReferencedItemType: ScriptReferencedItemType = new Map([
@@ -290,45 +287,6 @@ export class ReferencedItemsTracker {
     logger.debug(`Registered tracker type ${typeof this} for item type: ${this.itemType}`);
   }
 
-  public static addReferencesForCompletion(type: string, script: string, name: string): void {
-    const typeInfo = scriptReferencedItemType.get(type as ScriptReferencedItemTypeId);
-    if (!typeInfo) {
-      return;
-    }
-    if (!typeInfo.options?.prepareExternalReferences) {
-      return; // Skip if prepareReferences is not enabled for this type
-    }
-    if (!referencesToCompletionItems.has(type)) {
-      referencesToCompletionItems.set(type, new Map<string, string[]>());
-    }
-    const typeCompletions = referencesToCompletionItems.get(type);
-    if (!typeCompletions.has(script)) {
-      typeCompletions.set(script, []);
-    }
-    typeCompletions.get(script)?.push(name);
-  }
-
-  public static removeReferencesForCompletion(type: string, script: string, name: string): void {
-    const typeCompletions = referencesToCompletionItems.get(type);
-    if (!typeCompletions) {
-      return;
-    }
-    const scriptCompletions = typeCompletions.get(script);
-    if (!scriptCompletions) {
-      return;
-    }
-    const index = scriptCompletions.indexOf(name);
-    if (index !== -1) {
-      scriptCompletions.splice(index, 1);
-    }
-    if (scriptCompletions.length === 0) {
-      typeCompletions.delete(script);
-    }
-    if (typeCompletions.size === 0) {
-      referencesToCompletionItems.delete(type);
-    }
-  }
-
   public addItemDefinition(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     // Get or create the label map for the document
     if (!this.documentReferencedItems.has(document)) {
@@ -351,7 +309,6 @@ export class ReferencedItemsTracker {
         existingItem.definition = new vscode.Location(document.uri, range);
       }
     }
-    ReferencedItemsTracker.addReferencesForCompletion(this.itemType, metadata.name, name);
   }
 
   public addItemReference(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
@@ -567,9 +524,6 @@ export class ReferencedItemsTracker {
     const thisDocumentData = this.documentReferencedItems.get(document);
     if (!thisDocumentData) {
       return; // No items to clear for this document
-    }
-    for (const item of thisDocumentData.values()) {
-      ReferencedItemsTracker.removeReferencesForCompletion(this.itemType, item.scriptName, item.name);
     }
     thisDocumentData.clear();
     this.documentReferencedItems.delete(document);
@@ -810,7 +764,6 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       references: [],
     };
     this.externalDefinitions.set(value, definitionItem);
-    ReferencedItemsTracker.addReferencesForCompletion(this.itemType, metadata.name, value);
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
@@ -922,7 +875,6 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   public clearExternalDefinitionsForFile(filePath: string): void {
     for (const [value, definition] of this.externalDefinitions.entries()) {
       if (definition.definition.uri.fsPath === filePath) {
-        ReferencedItemsTracker.removeReferencesForCompletion(this.itemType, definition.scriptName, definition.name);
         this.externalDefinitions.delete(value);
       }
     }
