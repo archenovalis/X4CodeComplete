@@ -1194,7 +1194,7 @@ export class ReferencedCues extends ReferencedInMDScripts {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
     }
     const itemsData = this.documentReferencedItems.get(document);
-    if (!itemsData.has(name) && ['this', 'parent', 'static', 'namespace'].includes(name)) {
+    if (!itemsData.has(name) && ReferencedCues.cueSpecialItems.includes(name)) {
       itemsData.set(name, {
         name: name,
         scriptName: metadata.name,
@@ -1219,17 +1219,26 @@ export class ReferencedCues extends ReferencedInMDScripts {
     const prefixSplitted = prefix.split('.');
     const position = prefixSplitted.length - 1;
     if (position === 0) {
-      for (const cueKey of ['this', 'parent', 'static', 'namespace']) {
+      for (const cueKey of [...ReferencedCues.cueSpecialItems, 'event']) {
         if (prefix === '' || cueKey.startsWith(prefix)) {
           let details: vscode.MarkdownString | undefined;
-          if (cueKey === 'this') {
-            const keyword = scriptProperties.getKeyword('this', mdScriptSchema);
+          if (['this', 'event'].includes(cueKey)) {
+            const keyword = scriptProperties.getKeyword(cueKey, mdScriptSchema);
             details = new vscode.MarkdownString(keyword?.details || '');
           } else {
             const type = scriptProperties.getType('cue');
             details = new vscode.MarkdownString(type?.properties.get(cueKey)?.details || '');
           }
           ScriptCompletion.addItem(items, this.itemType, cueKey, details, range);
+        }
+      }
+    } else if (position === 1 && prefixSplitted[0] === 'event') {
+      const prefixItem = prefixSplitted[1];
+      for (const eventProp of ['param', 'param2', 'param3']) {
+        if (prefixItem === '' || eventProp.startsWith(prefixItem)) {
+          const keyword = scriptProperties.getKeyword('event', mdScriptSchema);
+          const details = new vscode.MarkdownString(keyword?.properties.get(eventProp)?.details || '');
+          ScriptCompletion.addItem(items, this.itemType, eventProp, details, range);
         }
       }
     }
