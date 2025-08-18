@@ -637,15 +637,32 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     parser.write(fileContent).close();
   }
 
-  public static async collectExternalDefinitions(): Promise<void> {
+  public static collectMainFolders(): string[] {
     const config = configManager.config;
     const mainFolders: string[] = [];
+    if (vscode.workspace.workspaceFolders) {
+      for (const folder of vscode.workspace.workspaceFolders) {
+        if (fs.existsSync(folder.uri.fsPath) && !mainFolders.includes(folder.uri.fsPath)) {
+          mainFolders.push(folder.uri.fsPath);
+        }
+      }
+    }
     if (config.extensionsFolder) {
-      mainFolders.push(config.extensionsFolder);
+      if (fs.existsSync(config.extensionsFolder) && !mainFolders.includes(config.extensionsFolder)) {
+        mainFolders.push(config.extensionsFolder);
+      }
     }
     if (config.unpackedFileLocation) {
-      mainFolders.push(config.unpackedFileLocation);
+      if (fs.existsSync(config.unpackedFileLocation) && !mainFolders.includes(config.unpackedFileLocation)) {
+        mainFolders.push(config.unpackedFileLocation);
+      }
     }
+    return mainFolders;
+  }
+
+  public static async collectExternalDefinitions(): Promise<void> {
+    const config = configManager.config;
+    const mainFolders = this.collectMainFolders();
     logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
 
     const isDir = async (p: string): Promise<boolean> => {
