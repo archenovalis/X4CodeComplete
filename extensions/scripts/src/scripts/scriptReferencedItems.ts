@@ -1197,5 +1197,36 @@ export class ReferencedCues extends ReferencedInMDScripts {
     }
     super.addItemReference(metadata, name, document, range);
   }
+
+  public makeCompletionList(
+    items: Map<string, vscode.CompletionItem>,
+    document: vscode.TextDocument,
+    prefix: string = '',
+    range: vscode.Range,
+    token: vscode.CancellationToken
+  ): void {
+    const documentData = this.documentReferencedItems.get(document);
+    if (!documentData) {
+      return;
+    }
+    const prefixSplitted = prefix.split('.');
+    const position = prefixSplitted.length - 1;
+    if (position === 0) {
+      for (const cueKey of ['this', 'parent', 'static', 'namespace']) {
+        if (prefix === '' || cueKey.startsWith(prefix)) {
+          let details: vscode.MarkdownString | undefined;
+          if (cueKey === 'this') {
+            const keyword = scriptProperties.getKeyword('this', mdScriptSchema);
+            details = new vscode.MarkdownString(keyword?.details || '');
+          } else {
+            const type = scriptProperties.getType('cue');
+            details = new vscode.MarkdownString(type?.properties.get(cueKey)?.details || '');
+          }
+          ScriptCompletion.addItem(items, this.itemType, cueKey, details, range);
+        }
+      }
+    }
+    super.makeCompletionList(items, document, prefix, range, token);
+  }
 }
 initializeScriptReferencedItemsDetectionMap();
