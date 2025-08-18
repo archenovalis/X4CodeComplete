@@ -624,6 +624,10 @@ export class ScriptProperties {
     return this.keywordList.find((entry) => entry.name === name && (!entry.script || entry.script === schema));
   }
 
+  public getType(name: string): TypeEntry | undefined {
+    return this.typeDict.get(cleanStr(name));
+  }
+
   private makeCompletionList(items: Map<string, vscode.CompletionItem> | vscode.CompletionItem[], prefix: string = ''): vscode.CompletionList {
     if (items instanceof Map) {
       items = Array.from(items.values());
