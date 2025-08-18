@@ -376,13 +376,13 @@ export function activate(context: vscode.ExtensionContext) {
                   }
                 }
               } else {
-                const attribute = xmlTracker.attributeWithPosInName(document, position, element);
-                if (attribute) {
+                const attributeWithPosInName = xmlTracker.attributeWithPosInName(document, position, element);
+                if (attributeWithPosInName) {
                   const elementAttributes: EnhancedAttributeInfo[] = xsdReference.getElementAttributesWithTypes(schema, element.name, element.hierarchy);
-                  const attributeDefinition = elementAttributes.find((attr) => attr.name === attribute.name);
+                  const attributeDefinition = elementAttributes.find((attr) => attr.name === attributeWithPosInName.name);
                   if (attributeDefinition && attributeDefinition.location) {
                     logger.debug(
-                      `Definition found for attribute: ${attribute.name} at ${attributeDefinition.location.uri.toString()}:${attributeDefinition.location.line}:${attributeDefinition.location.column}}`
+                      `Definition found for attribute: ${attributeWithPosInName.name} at ${attributeDefinition.location.uri.toString()}:${attributeDefinition.location.line}:${attributeDefinition.location.column}}`
                     );
                     return new vscode.Location(
                       vscode.Uri.parse(attributeDefinition.location.uri),
@@ -396,29 +396,34 @@ export function activate(context: vscode.ExtensionContext) {
                     );
                   }
                 }
-              }
-            }
+                const attributeWithPosInValue = xmlTracker.attributeWithPosInValue(document, position, element);
+                if (attributeWithPosInValue) {
+                  // Check if cursor is on a variable
+                  const variableDefinition = variableTracker.getVariableDefinition(document, position);
+                  if (variableDefinition) {
+                    logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
+                    return variableDefinition.definition;
+                  }
 
-            // Check if cursor is on a variable
-            const variableDefinition = variableTracker.getVariableDefinition(document, position);
-            if (variableDefinition) {
-              logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
-              return variableDefinition.definition;
-            }
-
-            // Process trackers
-            for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-              if (token.isCancellationRequested) return undefined;
-              if (trackerInfo.tracker.schema === schema) {
-                const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
-                if (itemDefinition) {
-                  logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
-                  return itemDefinition.definition;
+                  const attrValue = attributeWithPosInValue.value;
+                  if (!attrValue.includes('$') && !attrValue.startsWith('event.') && !attrValue.startsWith('@event.')) {
+                    // Process trackers
+                    for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                      if (token.isCancellationRequested) return undefined;
+                      if (trackerInfo.tracker.schema === schema) {
+                        const itemDefinition = trackerInfo.tracker.getItemDefinition(document, position);
+                        if (itemDefinition) {
+                          logger.debug(`Definition found for ${itemType}: ${itemDefinition.name}`);
+                          return itemDefinition.definition;
+                        }
+                      }
+                    }
+                  }
+                  // Fallback to script properties
+                  return scriptProperties.provideDefinition(document, position, token);
                 }
               }
             }
-            // Fallback to script properties
-            return scriptProperties.provideDefinition(document, position, token);
           },
         })
       );
@@ -504,19 +509,20 @@ export function activate(context: vscode.ExtensionContext) {
                     logger.debug(`Hover will not be generated in comment or single-quoted attribute value: ${attribute.element.name}.${attribute.name}`);
                     return undefined;
                   }
-
-                  // Trackers specific hover information
-                  for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
-                    if (token.isCancellationRequested) return undefined;
-                    if (trackerInfo.tracker.schema === schema) {
-                      // Check for action definitions
-                      const itemHover = trackerInfo.tracker.getItemHover(document, position);
-                      if (itemHover) {
-                        return itemHover;
+                  const attrValue = attribute.value;
+                  if (!attrValue.includes('$') && !attrValue.startsWith('event.') && !attrValue.startsWith('@event.')) {
+                    // Trackers specific hover information
+                    for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
+                      if (token.isCancellationRequested) return undefined;
+                      if (trackerInfo.tracker.schema === schema) {
+                        // Check for action definitions
+                        const itemHover = trackerInfo.tracker.getItemHover(document, position);
+                        if (itemHover) {
+                          return itemHover;
+                        }
                       }
                     }
                   }
-
                   // Check for variable hover
                   const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
                   if (token.isCancellationRequested) return undefined;

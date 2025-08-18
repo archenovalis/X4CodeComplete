@@ -253,7 +253,13 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
       }
       const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attribute.name, attributeInfo.type || 'undefined');
       // Check if we're in a label or action context
-      if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion && !attributeValue.includes('$')) {
+      if (
+        referencedItemAttributeDetected &&
+        !referencedItemAttributeDetected.noCompletion &&
+        !attributeValue.includes('$') &&
+        !attributeValue.startsWith('event.') &&
+        !attributeValue.startsWith('@event.')
+      ) {
         const prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
         // if (prefix === '' && attributeValue !== '') {
         //   prefix = attributeValue; // If the prefix is empty, use the current attribute value
