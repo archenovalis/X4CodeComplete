@@ -48,6 +48,7 @@
     "mdscriptname",
     "moodtype",
     "moodtypelookup",
+    "onattribute",
     "onclosetag",
     "onopentag",
     "ontext",
