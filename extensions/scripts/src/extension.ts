@@ -748,19 +748,21 @@ export function activate(context: vscode.ExtensionContext) {
                 const trackerInfo = scriptReferencedItemsRegistry.get(itemType);
                 if (trackerInfo) {
                   const itemName = diagnostic.message.match(/'(.+)'/)?.[1];
-                  const similarItems = trackerInfo.tracker.getSimilarItems(document, itemName);
-                  similarItems.forEach((similarItem) => {
-                    if (token.isCancellationRequested) return;
-                    if (similarItem === itemName) {
-                      return; // Skip if the item is the same as the one causing the error
-                    }
-                    const replaceAction = new vscode.CodeAction(`Replace with existing ${itemType} '${similarItem}'`, vscode.CodeActionKind.QuickFix);
-                    replaceAction.edit = new vscode.WorkspaceEdit();
-                    replaceAction.edit.replace(document.uri, diagnostic.range, similarItem);
-                    replaceAction.diagnostics = [diagnostic];
-                    replaceAction.isPreferred = similarItems.indexOf(similarItem) === 0;
-                    actions.push(replaceAction);
-                  });
+                  if (itemName) {
+                    const similarItems = trackerInfo.tracker.getSimilarItems(document, itemName);
+                    similarItems.forEach((similarItem) => {
+                      if (token.isCancellationRequested) return;
+                      if (similarItem === itemName) {
+                        return; // Skip if the item is the same as the one causing the error
+                      }
+                      const replaceAction = new vscode.CodeAction(`Replace with existing ${itemType} '${similarItem}'`, vscode.CodeActionKind.QuickFix);
+                      replaceAction.edit = new vscode.WorkspaceEdit();
+                      replaceAction.edit.replace(document.uri, diagnostic.range, similarItem);
+                      replaceAction.diagnostics = [diagnostic];
+                      replaceAction.isPreferred = similarItems.indexOf(similarItem) === 0;
+                      actions.push(replaceAction);
+                    });
+                  }
                 } else {
                   logger.debug(`No tracker found for item type: ${itemType}`);
                 }

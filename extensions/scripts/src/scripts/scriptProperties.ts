@@ -620,7 +620,7 @@ export class ScriptProperties {
     return this.keywordList.filter((entry) => !entry.script || entry.script === schema);
   }
 
-  private getKeyword(name: string, schema: string): KeywordEntry | undefined {
+  public getKeyword(name: string, schema: string): KeywordEntry | undefined {
     return this.keywordList.find((entry) => entry.name === name && (!entry.script || entry.script === schema));
   }
 

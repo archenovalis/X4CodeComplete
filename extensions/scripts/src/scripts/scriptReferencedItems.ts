@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { logger } from '../logger/logger';
 import { configManager } from '../extension/configuration';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
+import { ScriptCompletion } from './scriptCompletion';
+import { scriptProperties } from './scriptProperties';
 import path from 'path';
 import fs from 'fs';
 import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
@@ -449,21 +451,34 @@ export class ReferencedItemsTracker {
     return { name: item.item.name, references };
   }
 
-  public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
-    const result: ScriptReferencedCompletion = new Map();
+  public makeCompletionList(
+    items: Map<string, vscode.CompletionItem>,
+    document: vscode.TextDocument,
+    prefix: string = '',
+    range: vscode.Range,
+    token: vscode.CancellationToken
+  ): void {
     const documentData = this.documentReferencedItems.get(document);
     if (!documentData) {
-      return result;
+      return;
     }
     // Process all labels
+    let i = 0;
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
         // Only add the item if it matches the prefix
-        result.set(itemName, this.getItemDetails(document, itemData, 'full'));
+        ScriptCompletion.addItem(items, this.itemType, itemName, this.getItemDetails(document, itemData, 'full'), range);
+        i++;
+        if (i % 32 === 0) {
+          // Process the items in batches
+          if (token.isCancellationRequested) {
+            return;
+          }
+        }
       }
     }
 
-    return result;
+    return;
   }
 
   public validateItems(document: vscode.TextDocument): vscode.Diagnostic[] {
@@ -797,21 +812,15 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
   }
 
   protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
-    const metadata = getDocumentMetadata(document);
     if (item.definition) {
-      if (metadata.schema === aiScriptSchema || item.scriptName === metadata.name) {
-        return super.getDefinition(document, item);
-      }
+      return super.getDefinition(document, item);
     } else {
       const definitions = Array.from(this.documentReferencedItems.values());
-      const externalDefinitions = definitions.filter(
-        (def) =>
-          def.has(item.name) && (metadata.schema === aiScriptSchema || def.get(item.name)?.scriptName === item.scriptName) && def.get(item.name)?.definition
-      );
+      const externalDefinitions = definitions.filter((def) => def.has(item.name) && def.get(item.name)?.definition);
       if (externalDefinitions && externalDefinitions.length > 0) {
         return externalDefinitions[0].get(item.name)?.definition;
       }
-      const externalDefinition = this.externalDefinitions.get(metadata.schema === aiScriptSchema ? item.name : `md.${item.scriptName}.${item.name}`);
+      const externalDefinition = this.externalDefinitions.get(item.name);
       if (externalDefinition) {
         return externalDefinition.definition;
       }
@@ -823,18 +832,32 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     return item.references || [];
   }
 
-  public getAllItemsForCompletion(document: vscode.TextDocument, prefix: string = ''): ScriptReferencedCompletion {
-    const result: ScriptReferencedCompletion = new Map();
+  public makeCompletionList(
+    items: Map<string, vscode.CompletionItem>,
+    document: vscode.TextDocument,
+    prefix: string = '',
+    range: vscode.Range,
+    token: vscode.CancellationToken
+  ): void {
     const documentData = this.documentReferencedItems.get(document);
     if (!documentData) {
-      return result;
+      return;
     }
-
+    const processedItems: Set<string> = new Set();
     // Process all labels
+    let i = 0;
     for (const [itemName, itemData] of documentData.entries()) {
       if (itemData.definition && (prefix === '' || itemName.startsWith(prefix))) {
         // Only add the item if it matches the prefix
-        result.set(itemName, this.getItemDetails(document, itemData, 'full'));
+        ScriptCompletion.addItem(items, this.itemType, itemName, this.getItemDetails(document, itemData, 'full'), range);
+        processedItems.add(itemName);
+        i++;
+        if (i % 32 === 0) {
+          // Process the items in batches
+          if (token.isCancellationRequested) {
+            return;
+          }
+        }
       }
     }
     const documentFolder = path.dirname(document.uri.fsPath);
@@ -845,8 +868,16 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       for (const [itemName, itemData] of docData.entries()) {
         if (itemData.definition && (prefix === '' || itemName.startsWith(prefix)) && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
           // Only add the item if it matches the prefix
-          if (!result.has(itemName)) {
-            result.set(itemName, this.getItemDetails(document, itemData, 'external'));
+          if (!processedItems.has(itemName)) {
+            ScriptCompletion.addItem(items, this.itemType, itemName, this.getItemDetails(document, itemData, 'external'), range);
+            processedItems.add(itemName);
+            i++;
+            if (i % 32 === 0) {
+              // Process the items in batches
+              if (token.isCancellationRequested) {
+                return;
+              }
+            }
           }
         }
       }
@@ -860,20 +891,31 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
         (prefix === '' || itemName.startsWith(prefix))
       ) {
         // Only add the item if it matches the prefix
-        if (!result.has(itemName)) {
-          result.set(
+        if (!processedItems.has(itemName)) {
+          ScriptCompletion.addItem(
+            items,
+            this.itemType,
             itemName,
             this.getItemDetails(
               document,
               { name: itemName, scriptName: externalDefinition.scriptName, definition: externalDefinition.definition, references: [] },
               'external'
-            )
+            ),
+            range
           );
+          processedItems.add(itemName);
+          i++;
+          if (i % 32 === 0) {
+            // Process the items in batches
+            if (token.isCancellationRequested) {
+              return;
+            }
+          }
         }
       }
     }
 
-    return result;
+    return;
   }
 
   protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
@@ -902,6 +944,162 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
 export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinitionsTracker {
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
+  }
+
+  protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
+    const metadata = getDocumentMetadata(document);
+    if (item.definition) {
+      if (item.scriptName === metadata.name) {
+        return super.getDefinition(document, item);
+      }
+    } else {
+      const definitions = Array.from(this.documentReferencedItems.values());
+      const externalDefinitions = definitions.filter(
+        (def) => def.has(item.name) && def.get(item.name)?.scriptName === item.scriptName && def.get(item.name)?.definition
+      );
+      if (externalDefinitions && externalDefinitions.length > 0) {
+        return externalDefinitions[0].get(item.name)?.definition;
+      }
+      const externalDefinition = this.externalDefinitions.get(`md.${item.scriptName}.${item.name}`);
+      if (externalDefinition) {
+        return externalDefinition.definition;
+      }
+    }
+    return undefined;
+  }
+
+  public makeCompletionList(
+    items: Map<string, vscode.CompletionItem>,
+    document: vscode.TextDocument,
+    prefix: string = '',
+    range: vscode.Range,
+    token: vscode.CancellationToken
+  ): void {
+    const documentData = this.documentReferencedItems.get(document);
+    if (!documentData) {
+      return;
+    }
+
+    const processedItems: Set<string> = new Set();
+    // Process all labels
+    let i = 0;
+    const prefixSplitted = prefix.split('.');
+    const position = prefixSplitted.length - 1;
+    if (position === 0) {
+      // Process all labels
+      const docData = Array.from(documentData.values()).filter((item) => item.definition && (prefix === '' || item.name.startsWith(prefix)));
+      for (const itemData of docData) {
+        if (itemData.definition && (prefix === '' || itemData.name.startsWith(prefix))) {
+          // Only add the item if it matches the prefix
+          ScriptCompletion.addItem(items, this.itemType, itemData.name, this.getItemDetails(document, itemData, 'full'), range);
+          processedItems.add(itemData.name);
+          i++;
+          if (i % 32 === 0) {
+            // Process the items in batches
+            if (token.isCancellationRequested) {
+              return;
+            }
+          }
+        }
+      }
+      if (prefix === '' || 'md'.includes(prefix)) {
+        ScriptCompletion.addItem(items, this.itemType, 'md', new vscode.MarkdownString(scriptProperties.getKeyword('md', mdScriptSchema).details || ''), range);
+      }
+    } else if (position <= 2 && prefixSplitted[0] === 'md') {
+      const prefixScriptName = prefixSplitted[1];
+      const prefixItemName = position === 2 ? prefixSplitted[2] : '';
+      let resultName = '';
+      let resultDetails: vscode.MarkdownString | undefined = undefined;
+      const documentFolder = path.dirname(document.uri.fsPath);
+      const documentsFiltered = Array.from(this.documentReferencedItems.keys()).filter((doc) => doc.uri.fsPath.startsWith(documentFolder) && doc !== document);
+      for (const doc of documentsFiltered) {
+        let docData = Array.from(this.documentReferencedItems.get(doc).values());
+        // Process all labels
+        if (position === 1) {
+          docData = docData
+            .filter((item) => prefixScriptName === '' || item.scriptName.startsWith(prefixScriptName))
+            .filter((obj, index, self) => self.findIndex((t) => t.scriptName === obj.scriptName) === index);
+        } else {
+          docData = docData.filter((item) => item.scriptName === prefixScriptName && (prefixItemName === '' || item.name.startsWith(prefixItemName)));
+        }
+        for (const itemData of docData) {
+          resultDetails = undefined;
+          if (itemData.definition && itemData.definition.uri.fsPath.startsWith(documentFolder)) {
+            if (position === 1) {
+              // Only add the item if it matches the prefix
+              resultName = `md.${itemData.scriptName}`;
+              if (!processedItems.has(resultName)) {
+                resultDetails = new vscode.MarkdownString(`*Script* **${itemData.scriptName}**: ${itemData.definition.uri.fsPath}`);
+              }
+            } else if (position === 2) {
+              resultName = `md.${itemData.scriptName}.${itemData.name}`;
+              if (!processedItems.has(resultName)) {
+                resultDetails = this.getItemDetails(document, itemData, 'external');
+              }
+            }
+            if (resultDetails !== undefined) {
+              processedItems.add(resultName);
+              ScriptCompletion.addItem(items, this.itemType, resultName, resultDetails, range);
+              i++;
+              if (i % 32 === 0) {
+                // Process the items in batches
+                if (token.isCancellationRequested) {
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }
+      let externalDefinitions = Array.from(this.externalDefinitions.values());
+      if (position === 1) {
+        externalDefinitions = externalDefinitions
+          .filter((item) => prefixScriptName === '' || item.scriptName.startsWith(prefixScriptName))
+          .filter((obj, index, self) => self.findIndex((t) => t.scriptName === obj.scriptName) === index);
+      } else {
+        externalDefinitions = externalDefinitions.filter(
+          (item) => item.scriptName === prefixScriptName && (prefixItemName === '' || item.name.startsWith(prefixItemName))
+        );
+      }
+      externalDefinitions = externalDefinitions.filter(
+        (item) =>
+          item.definition &&
+          (item.definition.uri.fsPath.startsWith(documentFolder) ||
+            item.definition.uri.fsPath.startsWith(configManager.config.extensionsFolder) ||
+            item.definition.uri.fsPath.startsWith(configManager.config.unpackedFileLocation))
+      );
+      for (const externalDefinition of externalDefinitions) {
+        resultDetails = undefined;
+        if (position === 1) {
+          // Only add the item if it matches the prefix
+          resultName = `md.${externalDefinition.scriptName}`;
+          if (!processedItems.has(resultName)) {
+            resultDetails = new vscode.MarkdownString(`*Script* **${externalDefinition.scriptName}**: ${externalDefinition.definition.uri.fsPath}`);
+          }
+        } else if (position === 2) {
+          resultName = `md.${externalDefinition.scriptName}.${externalDefinition.name}`;
+          if (!processedItems.has(resultName)) {
+            resultDetails = this.getItemDetails(
+              document,
+              { name: externalDefinition.name, scriptName: externalDefinition.scriptName, definition: externalDefinition.definition, references: [] },
+              'external'
+            );
+          }
+        }
+        if (resultDetails !== undefined) {
+          processedItems.add(resultName);
+          ScriptCompletion.addItem(items, this.itemType, resultName, resultDetails, range);
+          i++;
+          if (i % 32 === 0) {
+            // Process the items in batches
+            if (token.isCancellationRequested) {
+              return;
+            }
+          }
+        }
+      }
+    }
+    return;
   }
 }
 

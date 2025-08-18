@@ -254,28 +254,23 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
         return ScriptCompletion.makeCompletionList(items, prefix);
       }
       const referencedItemAttributeDetected = checkReferencedItemAttributeType(schema, element, attribute.name, attributeInfo.type || 'undefined');
-      let valueCompletion: ScriptReferencedCompletion = new Map();
       // Check if we're in a label or action context
       if (referencedItemAttributeDetected && !referencedItemAttributeDetected.noCompletion && !attributeValue.includes('$')) {
-        let prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
-        if (prefix === '' && attributeValue !== '') {
-          prefix = attributeValue; // If the prefix is empty, use the current attribute value
-        }
+        const prefix = document.getText(new vscode.Range(attribute.valueRange.start, position));
+        // if (prefix === '' && attributeValue !== '') {
+        //   prefix = attributeValue; // If the prefix is empty, use the current attribute value
+        // }
         if (scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)) {
           logger.debug(`Completion requested in referenced item attribute: ${element.name}.${attribute.name} of type ${referencedItemAttributeDetected.type}`);
           const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
           if (trackerInfo) {
-            valueCompletion = trackerInfo.tracker.getAllItemsForCompletion(document, prefix);
+            trackerInfo.tracker.makeCompletionList(items, document, prefix, attribute.valueRange, token);
           } else {
             logger.warn(`No tracker found for referenced item type: ${referencedItemAttributeDetected.type}`);
           }
         }
 
-        if (valueCompletion.size > 0) {
-          for (const [value, info] of valueCompletion.entries()) {
-            if (token?.isCancellationRequested) return undefined;
-            ScriptCompletion.addItem(items, referencedItemAttributeDetected.type, value, info, attribute.valueRange);
-          }
+        if (items.size > 0) {
           return ScriptCompletion.makeCompletionList(items, prefix);
         }
         return ScriptCompletion.emptyCompletion; // Skip if no items found
