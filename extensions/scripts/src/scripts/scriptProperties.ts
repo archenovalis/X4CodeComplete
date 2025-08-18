@@ -270,7 +270,7 @@ export class ScriptProperties {
   `;
   private static readonly enumsReAssigned: Map<string, string> = new Map<string, string>([['isalertlevel.<alertlevel>', 'defensiblealertlevel']]);
   private static readonly typesNotAssignableToVariable: Set<string> = new Set<string>(['cue', 'order']);
-  private static readonly attributesToPropertiesTypesConversion: Map<string, string> = new Map<string, string>([['cuename', 'cue']]);
+  private static readonly attributesToPropertiesTypesConversion: Map<string, string> = new Map<string, string>();
 
   private domParser: DOMParser = new DOMParser();
   private librariesFolder: string;
