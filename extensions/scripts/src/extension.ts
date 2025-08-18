@@ -610,7 +610,7 @@ export function activate(context: vscode.ExtensionContext) {
               scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
                 trackerInfo.tracker.clearItemsForDocument(document);
               });
-              ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
+              ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitionsForFile(scriptMetadata, document.uri.fsPath);
             }
             logger.debug(`Removed cached data for document: ${uri.toString()}`);
           } else {

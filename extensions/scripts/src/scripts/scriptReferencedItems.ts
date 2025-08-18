@@ -4,7 +4,8 @@ import { configManager } from '../extension/configuration';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { ScriptCompletion } from './scriptCompletion';
 import { scriptProperties } from './scriptProperties';
-import path from 'path';
+import * as sax from 'sax';
+import path, { parse } from 'path';
 import fs from 'fs';
 import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
 
@@ -536,6 +537,10 @@ export class ReferencedItemsTracker {
   public dispose(): void {
     this.documentReferencedItems.clear();
   }
+
+  public addExternalDefinition(metadata: ScriptMetadata, value: string, line: number, position: number, length: number, fileName: string): void {
+    return;
+  }
 }
 
 export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
@@ -584,57 +589,7 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
     }
   }
 
-  protected static collectExternalDefinitionsForTrackerAndFile(
-    trackerInfo: externalTrackerInfo,
-    filePath: string,
-    fileContent: string,
-    schema: string = '',
-    metadata?: ScriptMetadata
-  ): void {
-    const prefixes = trackerInfo.filePrefix ? trackerInfo.filePrefix.split('|') : [''];
-    const fileName = path.basename(filePath, '.xml');
-    if (prefixes.length === 0 || prefixes.some((prefix) => fileName.startsWith(prefix))) {
-      logger.debug(`Processing external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}`);
-      metadata = metadata || getMetadata(fileContent);
-      if (!metadata) {
-        logger.debug(`No metadata found for file: ${filePath}`);
-        return;
-      }
-      if (schema && metadata.schema !== schema) {
-        logger.debug(`Metadata schema mismatch for file: ${filePath}, expected: ${schema}, found: ${metadata.schema}`);
-        return; // Skip if metadata is invalid or schema does not match
-      }
-      const regex = new RegExp(`<${trackerInfo.elementName}[^>]*?${trackerInfo.attributeName}="([^"]+)"[^>]*?>`, 'g');
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(fileContent)) !== null) {
-        if (trackerInfo.filters.length > 0) {
-          const elementText = match[0];
-          let allowed = true;
-          for (const filter of trackerInfo.filters) {
-            const attributeString = `${filter.attribute}="${filter.value}"`;
-            if (
-              (filter.presented && (elementText === undefined || !elementText.includes(attributeString))) ||
-              (!filter.presented && elementText.includes(attributeString))
-            ) {
-              allowed = false;
-              break;
-            }
-          }
-          if (!allowed) {
-            continue; // skip this match if it doesn't pass the filters
-          }
-        }
-        const value = match[1];
-        const valueIndex = match.index + match[0].indexOf(`"${value}"`);
-        logger.debug(`Found external definition for ${trackerInfo.elementName}#${trackerInfo.attributeName} in file: ${filePath}, value: ${value}`);
-        const line = fileContent.substring(0, match.index).split(/\r\n|\r|\n/).length - 1;
-        const lineStart = Math.max(fileContent.lastIndexOf('\n', valueIndex), fileContent.lastIndexOf('\r', valueIndex));
-        trackerInfo.tracker.addExternalDefinition(metadata, value, line, valueIndex - lineStart, value.length, filePath);
-      }
-    }
-  }
-
-  public static async collectExternalDefinitionsForFile(schemaOfFile: string, filePath: string): Promise<void> {
+  public static async collectExternalDefinitionsForFile(metadata: ScriptMetadata, filePath: string): Promise<void> {
     let fileContent = '';
     try {
       fileContent = await fs.promises.readFile(filePath, 'utf8');
@@ -642,15 +597,44 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       logger.error(`Failed to read file: ${filePath}`);
       return;
     }
-    this.clearExternalDefinitionsForFile(schemaOfFile, filePath);
-    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      if (schema !== schemaOfFile) {
-        continue; // Skip if the schema does not match
+    this.parseFileForExternalDefinitions(filePath, fileContent, metadata);
+  }
+
+  public static parseFileForExternalDefinitions(filePath: string, fileContent: string, metadata?: ScriptMetadata): void {
+    const attributes = [];
+    const fileName = path.basename(filePath, '.xml');
+    metadata = metadata || getMetadata(fileContent);
+    this.clearExternalDefinitionsForFile(metadata.schema, filePath);
+    const parser = sax.parser(false, { lowercase: true });
+    parser.onopentag = (node) => {
+      // Handle opening tags
+      const element = { ...node, attributes: attributes };
+      for (const attr of attributes) {
+        const referencedItemAttributeDetected = checkReferencedItemAttributeType(metadata.schema, element, attr.name, '', fileName, true);
+        if (
+          referencedItemAttributeDetected &&
+          referencedItemAttributeDetected.class === 'definition' &&
+          scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)
+        ) {
+          const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
+          if (trackerInfo) {
+            const attrValue = attr.value || '';
+            const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
+            if (!value.includes('$') && trackerInfo.tracker) {
+              trackerInfo.tracker.addExternalDefinition(metadata, value, attr.line, attr.position - value.length - 1, value.length, filePath);
+            }
+          }
+        }
       }
-      for (const trackerInfo of trackersInfo) {
-        this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent);
-      }
-    }
+      attributes.splice(0, attributes.length); // Clear attributes for the next element
+    };
+    parser.onattribute = (attr) => {
+      attributes.push({ ...attr, line: parser.line, position: parser.position });
+    };
+    parser.onerror = (error) => {
+      logger.error(`Failed to parse file: ${filePath}, error: ${error.message}`);
+    };
+    parser.write(fileContent).close();
   }
 
   public static async collectExternalDefinitions(): Promise<void> {
@@ -704,43 +688,47 @@ export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedIte
       }
     }
 
-    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      logger.debug(`Collecting external definitions for ${folders.length} folders`);
-      for (const folder of folders) {
-        if (await isDir(folder)) {
-          logger.debug(`Processing folder: ${folder}`);
-          let entry: fs.Dirent[] = [];
-          try {
-            entry = await fs.promises.readdir(folder, { withFileTypes: true });
-          } catch {
-            entry = [];
-          }
-          const files = entry.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
-          for (const filePath of files) {
-            logger.debug(`Processing file: ${filePath}`);
-            let fileContent = '';
-            let fileMetadata: ScriptMetadata | undefined;
-            if (filesData.has(filePath)) {
-              const { content, metadata } = filesData.get(filePath)!;
-              fileContent = content;
-              fileMetadata = metadata;
-            } else {
-              try {
-                logger.debug(`Read file: ${filePath}`);
-                fileContent = await fs.promises.readFile(filePath, 'utf8');
-              } catch {
-                return; // skip unreadable files
-              }
-              fileMetadata = getMetadata(fileContent);
+    // for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+    logger.debug(`Collecting external definitions for ${folders.length} folders`);
+    for (const folder of folders) {
+      if (await isDir(folder)) {
+        logger.debug(`Processing folder: ${folder}`);
+        let entry: fs.Dirent[] = [];
+        try {
+          entry = await fs.promises.readdir(folder, { withFileTypes: true });
+        } catch {
+          entry = [];
+        }
+        const files = entry.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
+        for (const filePath of files) {
+          logger.debug(`Processing file: ${filePath}`);
+          let fileContent = '';
+          let fileMetadata: ScriptMetadata | undefined;
+          if (filesData.has(filePath)) {
+            const { content, metadata } = filesData.get(filePath)!;
+            fileContent = content;
+            fileMetadata = metadata;
+          } else {
+            try {
+              logger.debug(`Read file: ${filePath}`);
+              fileContent = await fs.promises.readFile(filePath, 'utf8');
+            } catch {
+              return; // skip unreadable files
+            }
+            fileMetadata = getMetadata(fileContent);
+            if (fileMetadata) {
               filesData.set(filePath, { content: fileContent, metadata: fileMetadata });
+            } else {
+              filesData.set(filePath, { content: '', metadata: undefined });
             }
-            for (const trackerInfo of trackersInfo) {
-              this.collectExternalDefinitionsForTrackerAndFile(trackerInfo, filePath, fileContent, schema, fileMetadata);
-            }
+          }
+          if (fileMetadata) {
+            this.parseFileForExternalDefinitions(filePath, fileContent, fileMetadata);
           }
         }
       }
     }
+    logger.debug(`Collecting external definitions finished.`);
   }
 
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
