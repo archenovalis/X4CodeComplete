@@ -62,6 +62,30 @@ export class LanguageFileProcessor {
       }
     }
 
+    if (vscode.workspace.workspaceFolders) {
+      for (const folder of vscode.workspace.workspaceFolders) {
+        logger.debug(`Checking workspace folder: ${folder.uri.fsPath}`);
+        if (folder && (await pathIsDir(folder.uri.fsPath))) {
+          try {
+            const tPath = path.join(folder.uri.fsPath, 't');
+            if (await pathIsDir(tPath)) {
+              tDirectories.push(tPath);
+            }
+            const entries = await fsp.readdir(folder.uri.fsPath, { withFileTypes: true });
+            for (const dirent of entries) {
+              if (!dirent.isDirectory()) continue;
+              const tPath = path.join(folder.uri.fsPath, dirent.name, 't');
+              if (await pathIsDir(tPath)) {
+                tDirectories.push(tPath);
+              }
+            }
+          } catch (err) {
+            logger.info(`Error reading workspace folder '${folder.uri.fsPath}': ${err}`);
+          }
+        }
+      }
+    }
+
     // Build allowed language set when limiting output
     const allowedLanguageIds: Set<string> = new Set<string>(['*']);
     if (preferredLanguage) {
@@ -75,6 +99,7 @@ export class LanguageFileProcessor {
     const filesToParse: string[] = [];
     for (const tDir of tDirectories) {
       try {
+        logger.debug(`Reading directory: ${tDir}`);
         const files = await fsp.readdir(tDir);
         // Detect wildcard file presence in this directory (0001.xml -> '*')
         let hasWildcardInDir = false;
