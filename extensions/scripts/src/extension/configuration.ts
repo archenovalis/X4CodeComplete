@@ -212,7 +212,7 @@ export class X4ConfigurationManager {
     // this.loadConfiguration();
 
     // Handle debug setting changes
-    if (changedKeys.includes('debug') && configurationChanged.debug.scope) {
+    if (changedKeys.includes('debug')) {
       if (this._changeCallbacks.onDebugChanged) {
         this._config.debug = configurationChanged.debug?.value ?? false;
         this._changeCallbacks.onDebugChanged(this._config.debug);
@@ -221,17 +221,17 @@ export class X4ConfigurationManager {
 
     // Check if language files need to be reloaded
 
-    const languageRelatedChanges = ['languageNumber', 'limitLanguageOutput', 'reloadLanguageData'].filter(
-      (x) => changedKeys.includes(x as keyof X4CodeCompleteConfig) && configurationChanged[x]?.scope !== undefined
+    const languageRelatedChanges = ['languageNumber', 'limitLanguageOutput', 'reloadLanguageData'].filter((x) =>
+      changedKeys.includes(x as keyof X4CodeCompleteConfig)
     );
 
     if (languageRelatedChanges.length > 0) {
       ['languageNumber', 'limitLanguageOutput']
-        .filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig) && configurationChanged[x]?.scope !== undefined)
+        .filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig))
         .forEach((key) => {
           this._config[key] = configurationChanged[key]?.value ?? this._config[key];
         });
-      if (configurationChanged.reloadLanguageData.value) {
+      if (configurationChanged.reloadLanguageData?.value) {
         await this.setConfigValue('reloadLanguageData', false, configurationChanged.reloadLanguageData.scope);
       }
       if (!changedKeys.includes('reloadLanguageData') || configurationChanged.reloadLanguageData.value) {
