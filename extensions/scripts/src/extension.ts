@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
       logger.info(`Debug logging ${isDebugEnabled ? 'enabled' : 'disabled'}`);
     },
 
-    onLanguageFilesReload: async (config: X4CodeCompleteConfig) => {
+    onLanguageFilesNeedToBeReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
       await vscode.commands.executeCommand('x4CodeComplete.reloadLanguageFiles');
     },
@@ -269,6 +269,11 @@ export function activate(context: vscode.ExtensionContext) {
     onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
       logger.info('Unpacked file location changed.');
       await vscode.commands.executeCommand('x4CodeComplete.reloadExtractedFiles');
+    },
+
+    onExternalDefinitionsNeedToBeReloaded: async (config: X4CodeCompleteConfig) => {
+      logger.info('External definitions need to be reloaded.');
+      await vscode.commands.executeCommand('x4CodeComplete.reloadExternalDefinitions');
     },
   };
 
@@ -712,6 +717,23 @@ export function activate(context: vscode.ExtensionContext) {
         codeCompleteStartupDone.fire();
       } catch (e) {
         logger.error('Unexpected error triggering extracted files reload:', e);
+      }
+    })
+  );
+
+  // Commands: Reload external definitions
+  context.subscriptions.push(
+    vscode.commands.registerCommand('x4CodeComplete.reloadExternalDefinitions', async () => {
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading external definitions...' },
+          async () => {
+            ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
+            await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions();
+          }
+        );
+      } catch (e) {
+        logger.error('Unexpected error reloading external definitions:', e);
       }
     })
   );
