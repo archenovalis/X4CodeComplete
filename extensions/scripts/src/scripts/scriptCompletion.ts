@@ -37,12 +37,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
 
   public static addItem(items: Map<string, vscode.CompletionItem>, type: string, completion: string, info?: vscode.MarkdownString, range?: vscode.Range): void {
     // TODO handle better
-    if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(completion) > -1) {
-      return;
-    }
+    // if (['', 'boolean', 'int', 'string', 'list', 'datatype'].indexOf(completion) > -1) {
+    //   return;
+    // }
 
     if (items.has(completion)) {
-      logger.debug('\t\tSkipped existing completion: ', completion);
       return;
     }
 
@@ -53,7 +52,6 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (range) {
       item.range = range;
     }
-    logger.debug('\t\tAdded completion: ' + completion + ' info: ' + item.detail);
     items.set(completion, item);
   }
 
