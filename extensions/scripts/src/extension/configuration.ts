@@ -125,42 +125,35 @@ export class X4ConfigurationManager {
    */
   private loadConfiguration(): void {
     const section = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    this.getConfiguration(section, true);
+    logger.debug('Loaded configuration:', this._config);
+  }
 
-    const resolve = <K extends keyof X4CodeCompleteConfig, T = X4CodeCompleteConfig[K]>(
-      key: K,
-      fallback: T
-    ): { value: T; scope: vscode.ConfigurationTarget | undefined } => {
-      const inspected = section.inspect<T>(key as string);
-      if (!inspected) return { value: fallback, scope: undefined };
-      // Ignore workspaceFolderValue intentionally – only honor workspace and global scopes
-      if (inspected.workspaceValue !== undefined) return { value: inspected.workspaceValue as T, scope: vscode.ConfigurationTarget.Workspace };
-      if (inspected.globalValue !== undefined) return { value: inspected.globalValue as T, scope: vscode.ConfigurationTarget.Global };
-      return { value: ((inspected.defaultValue as T) ?? fallback) as T, scope: undefined };
-    };
+  /**
+   * Resolves a configuration value with correct typing and scope, ignoring workspaceFolder scope.
+   */
+  private resolveConfigValue<K extends keyof X4CodeCompleteConfig>(
+    section: vscode.WorkspaceConfiguration,
+    key: K,
+    fallback?: X4CodeCompleteConfig[K],
+    update: boolean = false
+  ): { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined } {
+    // Type parameter is inferred from key via indexed access type
+    const inspected = section.inspect<X4CodeCompleteConfig[K]>(key as string);
+    if (!inspected) return { value: (fallback as X4CodeCompleteConfig[K])!, scope: undefined };
 
-    const unpackedFileLocation = resolve('unpackedFileLocation', '');
-    const extensionsFolder = resolve('extensionsFolder', '');
-    const debug = resolve('debug', false);
-    const languageNumber = resolve('languageNumber', '44');
-    const limitLanguageOutput = resolve('limitLanguageOutput', false);
+    let result: { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined };
+    if (inspected.workspaceValue !== undefined)
+      result = { value: inspected.workspaceValue as X4CodeCompleteConfig[K], scope: vscode.ConfigurationTarget.Workspace };
+    else if (inspected.globalValue !== undefined)
+      result = { value: inspected.globalValue as X4CodeCompleteConfig[K], scope: vscode.ConfigurationTarget.Global };
+    else result = { value: (inspected.defaultValue as X4CodeCompleteConfig[K]) ?? (fallback as X4CodeCompleteConfig[K])!, scope: undefined };
 
-    this._config = {
-      unpackedFileLocation: unpackedFileLocation.value,
-      extensionsFolder: extensionsFolder.value,
-      debug: debug.value,
-      languageNumber: languageNumber.value,
-      limitLanguageOutput: limitLanguageOutput.value,
-      // Always start false; toggled via UI/commands
-      reloadLanguageData: false,
-    };
+    if (update && result.scope !== undefined && this._config[key] !== result.value) {
+      this._config[key] = result.value;
+    }
 
-    // Record last-known scopes for inference on future changes
-    this._lastKnownScopes.unpackedFileLocation = unpackedFileLocation.scope;
-    this._lastKnownScopes.extensionsFolder = extensionsFolder.scope;
-    this._lastKnownScopes.debug = debug.scope;
-    this._lastKnownScopes.languageNumber = languageNumber.scope;
-    this._lastKnownScopes.limitLanguageOutput = limitLanguageOutput.scope;
-    // reloadLanguageData is a transient flag; keep undefined initially
+    return result;
   }
 
   /**
@@ -170,10 +163,13 @@ export class X4ConfigurationManager {
    * { value: <newValue>, scope: 'workspace' | 'global' | 'default' }
    * Note: property name 'value' matches user request.
    */
-  public getConfiguration(): Partial<{
+  public getConfiguration(
+    section?: vscode.WorkspaceConfiguration,
+    update: boolean = false
+  ): Partial<{
     [K in keyof X4CodeCompleteConfig]: { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined };
   }> {
-    const section = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    section = section ?? vscode.workspace.getConfiguration(CONFIG_SECTION);
     const result: Partial<{
       [K in keyof X4CodeCompleteConfig]: { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined };
     }> = {};
@@ -181,31 +177,14 @@ export class X4ConfigurationManager {
     const keys: (keyof X4CodeCompleteConfig)[] = Object.keys(this._config) as (keyof X4CodeCompleteConfig)[];
 
     for (const key of keys) {
-      const inspected = section.inspect<any>(key as string);
-      if (!inspected) continue;
-      // Resolve value ignoring folder scope (same precedence as loadConfiguration)
-      let value: any;
-      let scope: vscode.ConfigurationTarget | undefined;
-      if (inspected.workspaceValue !== undefined) {
-        value = inspected.workspaceValue;
-        scope = vscode.ConfigurationTarget.Workspace;
-      } else if (inspected.globalValue !== undefined) {
-        value = inspected.globalValue;
-        scope = vscode.ConfigurationTarget.Global;
-      } else {
-        value = inspected.defaultValue;
-        scope = undefined;
-      }
+      const previousValue = this._config[key];
+      const { value, scope } = this.resolveConfigValue(section, key, this._config[key], update);
 
-      if (this._config[key] !== value) {
-        // Keep cache fresh when explicit scope is present
-        if (scope !== undefined) {
-          this._lastKnownScopes[key] = scope;
+      if (previousValue !== value && scope !== undefined) {
+        (result as any)[key] = { value, scope };
+        if ((key === 'debug' || key === 'limitLanguageOutput') && value && scope === vscode.ConfigurationTarget.Global) {
+          section.update(key, value, scope);
         }
-        // If the new value has no explicit scope (e.g., reverted to default),
-        // fall back to the last known scope so callers can act accordingly.
-        const scopeToReport = scope ?? this._lastKnownScopes[key];
-        (result as any)[key] = { value: value, scope: scopeToReport };
       }
     }
     return result;
@@ -234,19 +213,31 @@ export class X4ConfigurationManager {
       return;
     }
 
-    logger.info('Configuration changed. Reloading settings...');
+    logger.debug('Configuration changed. Processing changes...');
 
-    // Store previous state
-    const previousConfig = { ...this._config };
-
-    const configurationChanged = this.getConfiguration();
+    const configurationChanged = this.getConfiguration(section);
     // Collect changed keys as an array and apply them to in-memory config
     const changedKeys = Object.keys(configurationChanged) as (keyof X4CodeCompleteConfig)[];
-    // Load new configuration
-    // this.loadConfiguration();
+
+    if (changedKeys.length === 0) {
+      // No relevant configuration changes detected
+      return;
+    }
+
+    for (const key of changedKeys) {
+      if (
+        (key === 'unpackedFileLocation' || key === 'extensionsFolder') &&
+        configurationChanged[key]?.scope === vscode.ConfigurationTarget.Workspace &&
+        configurationChanged[key]?.value === ''
+      ) {
+        // Prompt user to set folder if changed manually
+        section.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+        return;
+      }
+    }
 
     // Handle debug setting changes
-    if (changedKeys.includes('debug') && configurationChanged.debug.scope) {
+    if (changedKeys.includes('debug')) {
       if (this._changeCallbacks.onDebugChanged) {
         this._config.debug = configurationChanged.debug?.value ?? false;
         this._changeCallbacks.onDebugChanged(this._config.debug);
@@ -255,18 +246,18 @@ export class X4ConfigurationManager {
 
     // Check if language files need to be reloaded
 
-    const languageRelatedChanges = ['languageNumber', 'limitLanguageOutput', 'reloadLanguageData'].filter(
-      (x) => changedKeys.includes(x as keyof X4CodeCompleteConfig) && configurationChanged[x]?.scope !== undefined
+    const languageRelatedChanges = ['languageNumber', 'limitLanguageOutput', 'reloadLanguageData'].filter((x) =>
+      changedKeys.includes(x as keyof X4CodeCompleteConfig)
     );
 
     if (languageRelatedChanges.length > 0) {
       ['languageNumber', 'limitLanguageOutput']
-        .filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig) && configurationChanged[x]?.scope !== undefined)
+        .filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig))
         .forEach((key) => {
           this._config[key] = configurationChanged[key]?.value ?? this._config[key];
         });
       if (configurationChanged.reloadLanguageData.value) {
-        await this.setConfigValue('reloadLanguageData', false, configurationChanged.reloadLanguageData.scope);
+        await section.update('reloadLanguageData', false, configurationChanged.reloadLanguageData.scope);
       }
       if (!changedKeys.includes('reloadLanguageData') || configurationChanged.reloadLanguageData.value) {
         if (this._changeCallbacks.onLanguageFilesNeedToBeReload) {
@@ -279,14 +270,9 @@ export class X4ConfigurationManager {
       }
     }
 
-    if (
-      ['unpackedFileLocation', 'extensionsFolder'].filter(
-        (x) => changedKeys.includes(x as keyof X4CodeCompleteConfig) && configurationChanged[x]?.scope !== undefined
-      ).length > 0
-    ) {
+    if (['unpackedFileLocation', 'extensionsFolder'].filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig)).length > 0) {
       await this.promptToSetFolder(configurationChanged);
     }
-    await vscode.commands.executeCommand('workbench.action.openSettings', 'x4codecomplete');
   }
 
   /** Prompts user to select a folder if a path key changed manually (not by programmatic update) */
