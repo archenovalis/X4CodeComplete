@@ -409,7 +409,7 @@ export class ScriptProperties {
     const ignorePrefix = property?.$?.ignoreprefix === 'true' || false;
     const result = property?.$?.result || '';
     const type = property?.$?.type || '';
-    logger.info(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
+    logger.debug(`Attempting to import '${name}' via select: "${select}" and target: "${targetName}" from ${src}`);
     // Read the import file asynchronously
     const rawData = await fsp.readFile(srcPath, 'utf8');
     const parsedData = this.domParser.parseFromString(rawData, 'text/xml');

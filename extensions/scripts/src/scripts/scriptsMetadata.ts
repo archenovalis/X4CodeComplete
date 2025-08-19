@@ -105,7 +105,6 @@ export function getDocumentMetadata(document: vscode.TextDocument): ScriptMetada
 
   const scriptMetaData = scriptsMetadata.get(document)!;
   if (scriptMetaData && scriptMetaData.schema) {
-    logger.debug(`Document ${document.uri.toString()} is already recognized as script type: ${scriptMetaData.schema}`);
     return scriptMetaData; // Return the cached type if available
   }
 
