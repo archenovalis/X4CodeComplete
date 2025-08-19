@@ -64,7 +64,7 @@ export interface ScriptReferencedItemsDetectionItem {
   attributeType?: string; // The type of the attribute to check for references
   type: ScriptReferencedItemTypeId;
   class: 'definition' | 'reference';
-  filePrefix?: string; // Optional prefix for external definitions
+  filePrefixes?: string[]; // Optional prefix for external definitions
   noCompletion?: boolean; // Optional flag to disable completion for this item
   filters?: ScriptReferencedItemsFilterItem[]; // Optional filter for item detection
 }
@@ -80,13 +80,13 @@ interface externalTrackerInfo {
   elementName: string;
   attributeName: string;
   filters: ScriptReferencedItemsFilterItem[];
-  filePrefix: string; // Optional prefix for external definitions
-  tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues;
+  filePrefixes?: string[]; // Optional prefix for external definitions
+  tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedInMDScripts | ReferencedCues;
 }
 
 interface ScriptReferencedItemsRegistryItem {
   type: string;
-  tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues;
+  tracker: ReferencedItemsTracker | ReferencedItemsWithExternalDefinitionsTracker | ReferencedInMDScripts | ReferencedCues;
 }
 
 type ScriptReferencedItemsRegistry = Map<string, ScriptReferencedItemsRegistryItem>;
@@ -114,9 +114,9 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
   { element: 'resume', attribute: 'label', type: 'label', class: 'reference' },
   { element: 'run_interrupt_script', attribute: 'resume', type: 'label', class: 'reference' },
   { element: 'abort_called_scripts', attribute: 'resume', type: 'label', class: 'reference' },
-  { element: 'actions', attribute: 'name', type: 'actions', class: 'definition', noCompletion: true, filePrefix: 'lib.|interrupt.' },
+  { element: 'actions', attribute: 'name', type: 'actions', class: 'definition', noCompletion: true, filePrefixes: ['lib.', 'interrupt.'] },
   { element: 'include_interrupt_actions', attribute: 'ref', type: 'actions', class: 'reference' },
-  { element: 'handler', attribute: 'name', type: 'handler', class: 'definition', noCompletion: true, filePrefix: 'interrupt.' },
+  { element: 'handler', attribute: 'name', type: 'handler', class: 'definition', noCompletion: true, filePrefixes: ['interrupt.'] },
   { element: 'handler', attribute: 'ref', type: 'handler', class: 'reference' },
   { element: 'cue', attribute: 'name', type: 'cue', class: 'definition', noCompletion: true },
   { element: '*', attributeType: 'cuename', type: 'cue', class: 'reference' },
@@ -234,7 +234,7 @@ export function checkReferencedItemAttributeType(
       (item.element === '*' || item.element === element?.['name']) &&
       (item.attribute === undefined || item.attribute === attributeName) &&
       (item.attributeType === undefined || item.attributeType === attributeType) &&
-      (fileName === '' || item.filePrefix === undefined || fileName.startsWith(item.filePrefix)) &&
+      (fileName === '' || item.filePrefixes === undefined || item.filePrefixes.some((prefix) => fileName.startsWith(prefix))) &&
       (!definitionsOnly || item.class === 'definition');
     return result;
   });
@@ -268,13 +268,12 @@ export class TrackersWithExternalDefinitionsRegistry {
 
   constructor() {}
 
-  public registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues): void {
+  public registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedInMDScripts | ReferencedCues): void {
     const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.class === 'definition');
     if (!itemInfo) {
       logger.warn(`No item info found for item type: ${itemType}`);
       return;
     }
-    const filePrefix = itemInfo?.filePrefix || '';
     const schema = tracker.schema || '';
     if (schema) {
       if (!this.registry.has(schema)) {
@@ -284,7 +283,7 @@ export class TrackersWithExternalDefinitionsRegistry {
         elementName: itemInfo.element,
         attributeName: itemInfo.attribute,
         filters: itemInfo.filters || [],
-        filePrefix,
+        filePrefixes: itemInfo?.filePrefixes || [],
         tracker,
       });
     }
