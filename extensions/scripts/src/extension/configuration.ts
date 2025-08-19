@@ -55,11 +55,11 @@ export interface ConfigChangeCallbacks {
   /** Called when debug setting changes */
   onDebugChanged?: (isDebugEnabled: boolean) => void;
   /** Called when language files need to be reloaded */
-  onLanguageFilesNeedToBeReload?: (config: X4CodeCompleteConfig) => Promise<void>;
+  onLanguageFilesNeedToBeReload?: () => Promise<void>;
   /** Called when reloadLanguageData flag needs to be reset */
-  onExternalDefinitionsNeedToBeReloaded?: (config: X4CodeCompleteConfig) => Promise<void>;
+  onExternalDefinitionsNeedToBeReloaded?: () => Promise<void>;
   /** Called when unpacked file location changes */
-  onUnpackedFileLocationChanged?: (config: X4CodeCompleteConfig) => Promise<void>;
+  onUnpackedFileLocationChanged?: () => Promise<void>;
 }
 
 // ================================================================================================
@@ -251,7 +251,7 @@ export class X4ConfigurationManager {
       if (!changedKeys.includes('reloadLanguageData') || configurationChanged.reloadLanguageData.value) {
         if (this._changeCallbacks.onLanguageFilesNeedToBeReload) {
           try {
-            await this._changeCallbacks.onLanguageFilesNeedToBeReload(this._config);
+            await this._changeCallbacks.onLanguageFilesNeedToBeReload();
           } catch (error) {
             logger.error('Failed to reload language files:', error);
           }
@@ -320,10 +320,10 @@ export class X4ConfigurationManager {
     }
     if (isFolderSelected) {
       if (key === 'extensionsFolder' && this._changeCallbacks.onLanguageFilesNeedToBeReload) {
-        this._changeCallbacks.onLanguageFilesNeedToBeReload(this._config);
-        this._changeCallbacks.onExternalDefinitionsNeedToBeReloaded(this._config);
+        this._changeCallbacks.onLanguageFilesNeedToBeReload();
+        this._changeCallbacks.onExternalDefinitionsNeedToBeReloaded();
       } else if (key === 'unpackedFileLocation' && this._changeCallbacks.onUnpackedFileLocationChanged) {
-        this._changeCallbacks.onUnpackedFileLocationChanged(this._config);
+        this._changeCallbacks.onUnpackedFileLocationChanged();
       }
     }
   }

@@ -261,17 +261,17 @@ export function activate(context: vscode.ExtensionContext) {
       logger.info(`Debug logging ${isDebugEnabled ? 'enabled' : 'disabled'}`);
     },
 
-    onLanguageFilesNeedToBeReload: async (config: X4CodeCompleteConfig) => {
+    onLanguageFilesNeedToBeReload: async () => {
       logger.info('Reloading language files due to configuration changes...');
       await vscode.commands.executeCommand('x4CodeComplete.loadLanguageFiles');
     },
 
-    onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
+    onUnpackedFileLocationChanged: async () => {
       logger.info('Unpacked file location changed.');
       await vscode.commands.executeCommand('x4CodeComplete.loadExtractedFiles');
     },
 
-    onExternalDefinitionsNeedToBeReloaded: async (config: X4CodeCompleteConfig) => {
+    onExternalDefinitionsNeedToBeReloaded: async () => {
       logger.info('External definitions need to be reloaded.');
       await vscode.commands.executeCommand('x4CodeComplete.loadExternalDefinitions');
     },
