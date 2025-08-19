@@ -136,16 +136,17 @@ export class X4ConfigurationManager {
     section: vscode.WorkspaceConfiguration,
     key: K,
     fallback?: X4CodeCompleteConfig[K],
-    update: boolean = false
+    update: boolean = false,
+    exactScope: vscode.ConfigurationTarget | undefined = undefined
   ): { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined } {
     // Type parameter is inferred from key via indexed access type
     const inspected = section.inspect<X4CodeCompleteConfig[K]>(key as string);
     if (!inspected) return { value: (fallback as X4CodeCompleteConfig[K])!, scope: undefined };
 
     let result: { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined };
-    if (inspected.workspaceValue !== undefined)
+    if (inspected.workspaceValue !== undefined && (exactScope === undefined || exactScope === vscode.ConfigurationTarget.Workspace))
       result = { value: inspected.workspaceValue as X4CodeCompleteConfig[K], scope: vscode.ConfigurationTarget.Workspace };
-    else if (inspected.globalValue !== undefined)
+    else if (inspected.globalValue !== undefined && (exactScope === undefined || exactScope === vscode.ConfigurationTarget.Global))
       result = { value: inspected.globalValue as X4CodeCompleteConfig[K], scope: vscode.ConfigurationTarget.Global };
     else result = { value: (inspected.defaultValue as X4CodeCompleteConfig[K]) ?? (fallback as X4CodeCompleteConfig[K])!, scope: undefined };
 
@@ -224,18 +225,6 @@ export class X4ConfigurationManager {
       return;
     }
 
-    for (const key of changedKeys) {
-      if (
-        (key === 'unpackedFileLocation' || key === 'extensionsFolder') &&
-        configurationChanged[key]?.scope === vscode.ConfigurationTarget.Workspace &&
-        configurationChanged[key]?.value === ''
-      ) {
-        // Prompt user to set folder if changed manually
-        section.update(key, undefined, vscode.ConfigurationTarget.Workspace);
-        return;
-      }
-    }
-
     // Handle debug setting changes
     if (changedKeys.includes('debug')) {
       if (this._changeCallbacks.onDebugChanged) {
@@ -271,12 +260,13 @@ export class X4ConfigurationManager {
     }
 
     if (['unpackedFileLocation', 'extensionsFolder'].filter((x) => changedKeys.includes(x as keyof X4CodeCompleteConfig)).length > 0) {
-      await this.promptToSetFolder(configurationChanged);
+      await this.promptToSetFolder(section, configurationChanged);
     }
   }
 
   /** Prompts user to select a folder if a path key changed manually (not by programmatic update) */
   private async promptToSetFolder(
+    section: vscode.WorkspaceConfiguration,
     config: Partial<{
       [K in keyof X4CodeCompleteConfig]: { value: X4CodeCompleteConfig[K]; scope: vscode.ConfigurationTarget | undefined };
     }>
@@ -290,34 +280,44 @@ export class X4ConfigurationManager {
     if (!key) {
       return; // No relevant key to handle
     }
-
-    // If the new value seems valid (existing directory), skip prompting to avoid annoyance.
-    let folder = this._config[key] || '';
-    do {
-      if (folder && fs.existsSync(folder) && fs.statSync(folder).isDirectory()) {
-        break; // Valid folder found
+    let isFolderSelected = false;
+    if (config[key]?.scope === vscode.ConfigurationTarget.Workspace && config[key]?.value === '') {
+      // Prompt user to set folder if changed manually
+      const value = this.resolveConfigValue(section, key, config[key]?.value, false, vscode.ConfigurationTarget.Global).value;
+      if (value && this._config[key] !== value) {
+        this._config[key] = value;
+        section.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+        isFolderSelected = true;
       }
-      try {
-        folder = path.dirname(folder); // Move up one level
-      } catch {
-        folder = ''; // If dirname fails, fallback to empty string
-      }
-    } while (folder);
+    } else {
+      // If the new value seems valid (existing directory), skip prompting to avoid annoyance.
+      let folder = this._config[key] || '';
+      do {
+        if (folder && fs.existsSync(folder) && fs.statSync(folder).isDirectory()) {
+          break; // Valid folder found
+        }
+        try {
+          folder = path.dirname(folder); // Move up one level
+        } catch {
+          folder = ''; // If dirname fails, fallback to empty string
+        }
+      } while (folder);
 
-    const niceName = key === 'unpackedFileLocation' ? 'Unpacked Game Files Folder' : 'Extensions Folder';
-    const selection = await vscode.window.showOpenDialog({
-      defaultUri: folder ? vscode.Uri.file(folder) : undefined,
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: `Select ${niceName}`,
-      title: `Select ${niceName}`,
-    });
-    const isFolderSelected = selection && selection.length > 0;
-    if (isFolderSelected) {
-      this._config[key] = selection[0].fsPath;
+      const niceName = key === 'unpackedFileLocation' ? 'Unpacked Game Files Folder' : 'Extensions Folder';
+      const selection = await vscode.window.showOpenDialog({
+        defaultUri: folder ? vscode.Uri.file(folder) : undefined,
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: `Select ${niceName}`,
+        title: `Select ${niceName}`,
+      });
+      isFolderSelected = selection && selection.length > 0;
+      if (isFolderSelected) {
+        this._config[key] = selection[0].fsPath;
+      }
+      await this.syncToConfigValue(key, config[key]?.scope ?? vscode.ConfigurationTarget.Global);
     }
-    await this.syncToConfigValue(key, config[key]?.scope ?? vscode.ConfigurationTarget.Global);
     if (isFolderSelected) {
       if (key === 'extensionsFolder' && this._changeCallbacks.onLanguageFilesNeedToBeReload) {
         this._changeCallbacks.onLanguageFilesNeedToBeReload(this._config);
