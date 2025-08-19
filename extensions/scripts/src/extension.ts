@@ -316,7 +316,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Initialize language processor and load language files
       await languageProcessor
-        .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
+        .loadLanguageFiles()
         .then(() => {
           logger.info('Language files loaded successfully.');
         })
@@ -697,7 +697,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading language files...' }, async () => {
           await languageProcessor
-            .loadLanguageFiles(configManager.config.unpackedFileLocation, configManager.config.extensionsFolder)
+            .loadLanguageFiles()
             .then(() => logger.info('Language files reloaded via command.'))
             .catch((err) => {
               logger.error('Failed to reload language files via command:', err);

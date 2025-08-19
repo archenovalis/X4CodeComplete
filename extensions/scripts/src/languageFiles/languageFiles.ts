@@ -5,6 +5,8 @@ import * as path from 'path';
 import * as sax from 'sax';
 import { logger } from '../logger/logger';
 
+import { configManager } from '../extension/configuration';
+
 export class LanguageFileProcessor {
   /* matches: {1015,7} or {1015, 7} or readtext.{1015}.{7} or page="1015" line="7" */
   private static textPattern = /\{\s*(\d+)\s*,\s*(\d+)\s*\}|readtext\.\{\s*(\d+)\s*\}\.\{\s*(\d+)\s*\}|page="(\d+)"\s+line="(\d+)"/g;
@@ -17,20 +19,18 @@ export class LanguageFileProcessor {
 
   /**
    * Load and parse language files from specified directories
-   * @param basePath The base path containing the 't' directory
-   * @param extensionsFolder The extensions folder path containing subdirectories with 't' folders
    * @returns Promise that resolves when all language files are loaded
    */
-  public async loadLanguageFiles(basePath: string, extensionsFolder: string): Promise<void> {
-    const config = vscode.workspace.getConfiguration('x4CodeComplete');
-    const preferredLanguage: string = config.get('languageNumber') || '44';
-    const limitLanguage: boolean = config.get('limitLanguageOutput') || false;
+  public async loadLanguageFiles(): Promise<void> {
+    const preferredLanguage: string = configManager.config.languageNumber;
+    const limitLanguage: boolean = configManager.config.limitLanguageOutput;
 
     this.languageData.clear();
     logger.info('Loading Language Files.');
 
     const tDirectories: string[] = [];
-    const rootTPath = path.join(basePath || '', 't');
+    const basePath = configManager.config.unpackedFileLocation || '';
+    const rootTPath = path.join(basePath, 't');
 
     const pathIsDir = async (p: string): Promise<boolean> => {
       try {
@@ -44,44 +44,26 @@ export class LanguageFileProcessor {
     // Collect root t directory
     if (basePath && (await pathIsDir(rootTPath))) {
       tDirectories.push(rootTPath);
+    } else {
+      logger.info(`Root 't' directory not found: ${rootTPath}`);
     }
+
+    const extraFolders = [...vscode.workspace.workspaceFolders.map((folder) => folder.uri.fsPath), configManager.config.extensionsFolder];
 
     // Collect all sub-extension t directories
-    if (extensionsFolder && (await pathIsDir(extensionsFolder))) {
-      try {
-        const entries = await fsp.readdir(extensionsFolder, { withFileTypes: true });
-        for (const dirent of entries) {
-          if (!dirent.isDirectory()) continue;
-          const tPath = path.join(extensionsFolder, dirent.name, 't');
-          if (await pathIsDir(tPath)) {
-            tDirectories.push(tPath);
-          }
-        }
-      } catch (err) {
-        logger.info(`Error reading extensions folder '${extensionsFolder}': ${err}`);
-      }
-    }
-
-    if (vscode.workspace.workspaceFolders) {
-      for (const folder of vscode.workspace.workspaceFolders) {
-        logger.debug(`Checking workspace folder: ${folder.uri.fsPath}`);
-        if (folder && (await pathIsDir(folder.uri.fsPath))) {
-          try {
-            const tPath = path.join(folder.uri.fsPath, 't');
+    for (const extraFolder of extraFolders) {
+      if (extraFolder && (await pathIsDir(extraFolder))) {
+        try {
+          const entries = await fsp.readdir(extraFolder, { withFileTypes: true });
+          for (const dirent of entries) {
+            if (!dirent.isDirectory()) continue;
+            const tPath = path.join(extraFolder, dirent.name, 't');
             if (await pathIsDir(tPath)) {
               tDirectories.push(tPath);
             }
-            const entries = await fsp.readdir(folder.uri.fsPath, { withFileTypes: true });
-            for (const dirent of entries) {
-              if (!dirent.isDirectory()) continue;
-              const tPath = path.join(folder.uri.fsPath, dirent.name, 't');
-              if (await pathIsDir(tPath)) {
-                tDirectories.push(tPath);
-              }
-            }
-          } catch (err) {
-            logger.info(`Error reading workspace folder '${folder.uri.fsPath}': ${err}`);
           }
+        } catch (err) {
+          logger.info(`Error reading extra folder '${extraFolder}': ${err}`);
         }
       }
     }
@@ -236,9 +218,8 @@ export class LanguageFileProcessor {
    * @returns The formatted language text string
    */
   public findLanguageText(pageId: string, textId: string, getOnlyText: boolean = false): string {
-    const config = vscode.workspace.getConfiguration('x4CodeComplete');
-    let preferredLanguage: string = config.get('languageNumber') || '44';
-    const limitLanguage: boolean = config.get('limitLanguageOutput') || getOnlyText || false;
+    let preferredLanguage: string = configManager.config.languageNumber;
+    const limitLanguage: boolean = configManager.config.limitLanguageOutput || getOnlyText || false;
 
     const textData: Map<string, string> = this.languageData.get(`${pageId}:${textId}`);
     let result: string = '';
