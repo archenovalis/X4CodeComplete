@@ -45,7 +45,7 @@ import { logger, setLoggerLevel } from './logger/logger';
 import { xsdReference, XsdReference, AttributeInfo, EnhancedAttributeInfo, AttributeValidationResult } from 'xsd-lookup';
 
 // Script-specific functionality imports
-import { ReferencedItemsTracker, ReferencedItemsWithExternalDefinitionsTracker, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
+import { trackersWithExternalDefinitions, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { scriptProperties } from './scripts/scriptProperties';
 import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
 import { variableTracker, VariableTracker } from './scripts/scriptVariables';
@@ -568,7 +568,7 @@ export function activate(context: vscode.ExtensionContext) {
         const scriptMetadata = getDocumentMetadata(document);
         if (scriptMetadata) {
           logger.debug(`Document is opened: ${document.uri.toString()}`);
-          ReferencedItemsWithExternalDefinitionsTracker.clearExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
+          trackersWithExternalDefinitions.clearExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
           scriptDocumentTracker.trackScriptDocument(document, true);
         }
       })
@@ -608,7 +608,7 @@ export function activate(context: vscode.ExtensionContext) {
             scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
               trackerInfo.tracker.clearItemsForDocument(document);
             });
-            ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitionsForFile(scriptMetadata, document.uri.fsPath);
+            trackersWithExternalDefinitions.collectExternalDefinitionsForFile(scriptMetadata, document.uri.fsPath);
           }
           logger.debug(`Removed cached data for document: ${uri.toString()}`);
         } else {
@@ -722,8 +722,8 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: loading external definitions...' },
           async () => {
-            ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
-            await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions();
+            trackersWithExternalDefinitions.clearAllExternalDefinitions();
+            await trackersWithExternalDefinitions.collectExternalDefinitions();
             await refreshDocumentsInTabs();
           }
         );

@@ -263,6 +263,218 @@ export function checkReferencedItemAttributeType(
   return undefined;
 }
 
+export class TrackersWithExternalDefinitionsRegistry {
+  private registry: Map<string, externalTrackerInfo[]> = new Map();
+
+  constructor() {}
+
+  public registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues): void {
+    const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.class === 'definition');
+    if (!itemInfo) {
+      logger.warn(`No item info found for item type: ${itemType}`);
+      return;
+    }
+    const filePrefix = itemInfo?.filePrefix || '';
+    const schema = tracker.schema || '';
+    if (schema) {
+      if (!this.registry.has(schema)) {
+        this.registry.set(schema, []);
+      }
+      this.registry.get(schema)?.push({
+        elementName: itemInfo.element,
+        attributeName: itemInfo.attribute,
+        filters: itemInfo.filters || [],
+        filePrefix,
+        tracker,
+      });
+    }
+  }
+
+  public clearAllExternalDefinitions(): void {
+    for (const [schema, trackersInfo] of this.registry.entries()) {
+      for (const trackerInfo of trackersInfo) {
+        trackerInfo.tracker.clearAllExternalDefinitions();
+      }
+    }
+  }
+
+  public clearExternalDefinitionsForFile(schemaOfFile: string, filePath: string): void {
+    for (const [schema, trackersInfo] of this.registry.entries()) {
+      if (schema !== schemaOfFile) {
+        continue; // Skip if the schema does not match
+      }
+      for (const trackerInfo of trackersInfo) {
+        trackerInfo.tracker.clearExternalDefinitionsForFile(filePath);
+      }
+    }
+  }
+
+  public async collectExternalDefinitionsForFile(metadata: ScriptMetadata, filePath: string): Promise<void> {
+    let fileContent = '';
+    try {
+      fileContent = await fs.promises.readFile(filePath, 'utf8');
+    } catch {
+      logger.error(`Failed to read file: ${filePath}`);
+      return;
+    }
+    this.parseFileForExternalDefinitions(filePath, fileContent, metadata);
+  }
+
+  protected parseFileForExternalDefinitions(filePath: string, fileContent: string, metadata?: ScriptMetadata): void {
+    const attributes = [];
+    const fileName = path.basename(filePath, '.xml');
+    metadata = metadata || getMetadata(fileContent);
+    this.clearExternalDefinitionsForFile(metadata.schema, filePath);
+    const parser = sax.parser(false, { lowercase: true });
+    parser.onopentag = (node) => {
+      // Handle opening tags
+      const element = { ...node, attributes: attributes };
+      for (const attr of attributes) {
+        const referencedItemAttributeDetected = checkReferencedItemAttributeType(metadata.schema, element, attr.name, '', fileName, true);
+        if (
+          referencedItemAttributeDetected &&
+          referencedItemAttributeDetected.class === 'definition' &&
+          scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)
+        ) {
+          const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
+          if (trackerInfo) {
+            const attrValue = attr.value || '';
+            const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
+            if (!value.includes('$') && trackerInfo.tracker) {
+              trackerInfo.tracker.addExternalDefinition(metadata, value, attr.line, attr.position - value.length - 1, value.length, filePath);
+            }
+          }
+        }
+      }
+      attributes.splice(0, attributes.length); // Clear attributes for the next element
+    };
+    parser.onattribute = (attr) => {
+      attributes.push({ ...attr, line: parser.line, position: parser.position });
+    };
+    parser.onerror = (error) => {
+      logger.error(`Failed to parse file: ${filePath}, error: ${error.message}`);
+    };
+    parser.write(fileContent).close();
+  }
+
+  protected collectMainFolders(): string[] {
+    const config = configManager.config;
+    const mainFolders: string[] = [];
+    if (vscode.workspace.workspaceFolders) {
+      for (const folder of vscode.workspace.workspaceFolders) {
+        if (fs.existsSync(folder.uri.fsPath) && !mainFolders.includes(folder.uri.fsPath)) {
+          mainFolders.push(folder.uri.fsPath);
+        }
+      }
+    }
+    if (config.extensionsFolder) {
+      if (fs.existsSync(config.extensionsFolder) && !mainFolders.includes(config.extensionsFolder)) {
+        mainFolders.push(config.extensionsFolder);
+      }
+    }
+    if (config.unpackedFileLocation) {
+      if (fs.existsSync(config.unpackedFileLocation) && !mainFolders.includes(config.unpackedFileLocation)) {
+        mainFolders.push(config.unpackedFileLocation);
+      }
+    }
+    return mainFolders;
+  }
+
+  public async collectExternalDefinitions(): Promise<void> {
+    const config = configManager.config;
+    const mainFolders = this.collectMainFolders();
+    logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
+
+    const isDir = async (p: string): Promise<boolean> => {
+      try {
+        const st = await fs.promises.stat(p);
+        return st.isDirectory();
+      } catch {
+        return false;
+      }
+    };
+    const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
+    const folders: string[] = [];
+    for (const mainFolder of mainFolders) {
+      if (await isDir(mainFolder)) {
+        let firstLevel: fs.Dirent[] = [];
+        try {
+          firstLevel = await fs.promises.readdir(mainFolder, { withFileTypes: true });
+        } catch {
+          firstLevel = [];
+        }
+        for (const entry of firstLevel) {
+          if (entry.isDirectory()) {
+            const firstLevelPath = path.join(mainFolder, entry.name);
+            if (scriptsSchemas.includes(entry.name.toLowerCase())) {
+              folders.push(firstLevelPath);
+            } else {
+              try {
+                const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
+                for (const subEntry of secondLevel) {
+                  if (subEntry.isDirectory() && scriptsSchemas.includes(subEntry.name.toLowerCase())) {
+                    folders.push(path.join(firstLevelPath, subEntry.name));
+                  }
+                }
+              } catch {
+                // ignore subfolder read errors
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
+    logger.debug(`Collecting external definitions for ${folders.length} folders`);
+    for (const folder of folders) {
+      if (await isDir(folder)) {
+        logger.debug(`Processing folder: ${folder}`);
+        let entry: fs.Dirent[] = [];
+        try {
+          entry = await fs.promises.readdir(folder, { withFileTypes: true });
+        } catch {
+          entry = [];
+        }
+        const files = entry.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
+        for (const filePath of files) {
+          logger.debug(`Processing file: ${filePath}`);
+          let fileContent = '';
+          let fileMetadata: ScriptMetadata | undefined;
+          if (filesData.has(filePath)) {
+            const { content, metadata } = filesData.get(filePath)!;
+            fileContent = content;
+            fileMetadata = metadata;
+          } else {
+            try {
+              logger.debug(`Read file: ${filePath}`);
+              fileContent = await fs.promises.readFile(filePath, 'utf8');
+            } catch {
+              return; // skip unreadable files
+            }
+            fileMetadata = getMetadata(fileContent);
+            if (fileMetadata) {
+              filesData.set(filePath, { content: fileContent, metadata: fileMetadata });
+            } else {
+              filesData.set(filePath, { content: '', metadata: undefined });
+            }
+          }
+          if (fileMetadata) {
+            this.parseFileForExternalDefinitions(filePath, fileContent, fileMetadata);
+          }
+        }
+      }
+    }
+    logger.debug(`Collecting external definitions finished.`);
+  }
+
+  dispose(): void {
+    this.registry.clear();
+  }
+}
+
+export const trackersWithExternalDefinitions = new TrackersWithExternalDefinitionsRegistry();
+
 export class ReferencedItemsTracker {
   // Map to store labels per document: Map<DocumentURI, Map<LabelName, vscode.Location>>
   public schema: string;
@@ -544,211 +756,9 @@ export class ReferencedItemsTracker {
 export class ReferencedItemsWithExternalDefinitionsTracker extends ReferencedItemsTracker {
   protected externalDefinitions: Map<string, ScriptReferencedItemInfo> = new Map();
 
-  protected static trackersWithExternalDefinitions: Map<string, externalTrackerInfo[]> = new Map();
-
-  protected static registerTracker(itemType: string, tracker: ReferencedItemsWithExternalDefinitionsTracker | ReferencedCues): void {
-    const itemInfo = scriptReferencedItemsDetectionList.find((item) => item.type === itemType && item.class === 'definition');
-    if (!itemInfo) {
-      logger.warn(`No item info found for item type: ${itemType}`);
-      return;
-    }
-    const filePrefix = itemInfo?.filePrefix || '';
-    const schema = tracker.schema || '';
-    if (schema) {
-      if (!this.trackersWithExternalDefinitions.has(schema)) {
-        this.trackersWithExternalDefinitions.set(schema, []);
-      }
-      this.trackersWithExternalDefinitions.get(schema)?.push({
-        elementName: itemInfo.element,
-        attributeName: itemInfo.attribute,
-        filters: itemInfo.filters || [],
-        filePrefix,
-        tracker,
-      });
-    }
-  }
-
-  public static clearAllExternalDefinitions(): void {
-    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      for (const trackerInfo of trackersInfo) {
-        trackerInfo.tracker.clearAllExternalDefinitions();
-      }
-    }
-  }
-
-  public static clearExternalDefinitionsForFile(schemaOfFile: string, filePath: string): void {
-    for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-      if (schema !== schemaOfFile) {
-        continue; // Skip if the schema does not match
-      }
-      for (const trackerInfo of trackersInfo) {
-        trackerInfo.tracker.clearExternalDefinitionsForFile(filePath);
-      }
-    }
-  }
-
-  public static async collectExternalDefinitionsForFile(metadata: ScriptMetadata, filePath: string): Promise<void> {
-    let fileContent = '';
-    try {
-      fileContent = await fs.promises.readFile(filePath, 'utf8');
-    } catch {
-      logger.error(`Failed to read file: ${filePath}`);
-      return;
-    }
-    this.parseFileForExternalDefinitions(filePath, fileContent, metadata);
-  }
-
-  public static parseFileForExternalDefinitions(filePath: string, fileContent: string, metadata?: ScriptMetadata): void {
-    const attributes = [];
-    const fileName = path.basename(filePath, '.xml');
-    metadata = metadata || getMetadata(fileContent);
-    this.clearExternalDefinitionsForFile(metadata.schema, filePath);
-    const parser = sax.parser(false, { lowercase: true });
-    parser.onopentag = (node) => {
-      // Handle opening tags
-      const element = { ...node, attributes: attributes };
-      for (const attr of attributes) {
-        const referencedItemAttributeDetected = checkReferencedItemAttributeType(metadata.schema, element, attr.name, '', fileName, true);
-        if (
-          referencedItemAttributeDetected &&
-          referencedItemAttributeDetected.class === 'definition' &&
-          scriptReferencedItemsRegistry.has(referencedItemAttributeDetected.type)
-        ) {
-          const trackerInfo = scriptReferencedItemsRegistry.get(referencedItemAttributeDetected.type);
-          if (trackerInfo) {
-            const attrValue = attr.value || '';
-            const value = attrValue.startsWith('@') ? attrValue.substring(1) : attrValue;
-            if (!value.includes('$') && trackerInfo.tracker) {
-              trackerInfo.tracker.addExternalDefinition(metadata, value, attr.line, attr.position - value.length - 1, value.length, filePath);
-            }
-          }
-        }
-      }
-      attributes.splice(0, attributes.length); // Clear attributes for the next element
-    };
-    parser.onattribute = (attr) => {
-      attributes.push({ ...attr, line: parser.line, position: parser.position });
-    };
-    parser.onerror = (error) => {
-      logger.error(`Failed to parse file: ${filePath}, error: ${error.message}`);
-    };
-    parser.write(fileContent).close();
-  }
-
-  public static collectMainFolders(): string[] {
-    const config = configManager.config;
-    const mainFolders: string[] = [];
-    if (vscode.workspace.workspaceFolders) {
-      for (const folder of vscode.workspace.workspaceFolders) {
-        if (fs.existsSync(folder.uri.fsPath) && !mainFolders.includes(folder.uri.fsPath)) {
-          mainFolders.push(folder.uri.fsPath);
-        }
-      }
-    }
-    if (config.extensionsFolder) {
-      if (fs.existsSync(config.extensionsFolder) && !mainFolders.includes(config.extensionsFolder)) {
-        mainFolders.push(config.extensionsFolder);
-      }
-    }
-    if (config.unpackedFileLocation) {
-      if (fs.existsSync(config.unpackedFileLocation) && !mainFolders.includes(config.unpackedFileLocation)) {
-        mainFolders.push(config.unpackedFileLocation);
-      }
-    }
-    return mainFolders;
-  }
-
-  public static async collectExternalDefinitions(): Promise<void> {
-    const config = configManager.config;
-    const mainFolders = this.collectMainFolders();
-    logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
-
-    const isDir = async (p: string): Promise<boolean> => {
-      try {
-        const st = await fs.promises.stat(p);
-        return st.isDirectory();
-      } catch {
-        return false;
-      }
-    };
-    const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
-    const folders: string[] = [];
-    for (const mainFolder of mainFolders) {
-      if (await isDir(mainFolder)) {
-        let firstLevel: fs.Dirent[] = [];
-        try {
-          firstLevel = await fs.promises.readdir(mainFolder, { withFileTypes: true });
-        } catch {
-          firstLevel = [];
-        }
-        for (const entry of firstLevel) {
-          if (entry.isDirectory()) {
-            const firstLevelPath = path.join(mainFolder, entry.name);
-            if (scriptsSchemas.includes(entry.name.toLowerCase())) {
-              folders.push(firstLevelPath);
-            } else {
-              try {
-                const secondLevel = await fs.promises.readdir(firstLevelPath, { withFileTypes: true });
-                for (const subEntry of secondLevel) {
-                  if (subEntry.isDirectory() && scriptsSchemas.includes(subEntry.name.toLowerCase())) {
-                    folders.push(path.join(firstLevelPath, subEntry.name));
-                  }
-                }
-              } catch {
-                // ignore subfolder read errors
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // for (const [schema, trackersInfo] of this.trackersWithExternalDefinitions.entries()) {
-    logger.debug(`Collecting external definitions for ${folders.length} folders`);
-    for (const folder of folders) {
-      if (await isDir(folder)) {
-        logger.debug(`Processing folder: ${folder}`);
-        let entry: fs.Dirent[] = [];
-        try {
-          entry = await fs.promises.readdir(folder, { withFileTypes: true });
-        } catch {
-          entry = [];
-        }
-        const files = entry.filter((d) => d.isFile() && d.name.endsWith('.xml')).map((d) => path.join(folder, d.name));
-        for (const filePath of files) {
-          logger.debug(`Processing file: ${filePath}`);
-          let fileContent = '';
-          let fileMetadata: ScriptMetadata | undefined;
-          if (filesData.has(filePath)) {
-            const { content, metadata } = filesData.get(filePath)!;
-            fileContent = content;
-            fileMetadata = metadata;
-          } else {
-            try {
-              logger.debug(`Read file: ${filePath}`);
-              fileContent = await fs.promises.readFile(filePath, 'utf8');
-            } catch {
-              return; // skip unreadable files
-            }
-            fileMetadata = getMetadata(fileContent);
-            if (fileMetadata) {
-              filesData.set(filePath, { content: fileContent, metadata: fileMetadata });
-            } else {
-              filesData.set(filePath, { content: '', metadata: undefined });
-            }
-          }
-          if (fileMetadata) {
-            this.parseFileForExternalDefinitions(filePath, fileContent, fileMetadata);
-          }
-        }
-      }
-    }
-    logger.debug(`Collecting external definitions finished.`);
-  }
-
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
-    ReferencedItemsWithExternalDefinitionsTracker.registerTracker(itemType, this);
+    trackersWithExternalDefinitions.registerTracker(itemType, this);
   }
 
   protected registerTracker(): void {
