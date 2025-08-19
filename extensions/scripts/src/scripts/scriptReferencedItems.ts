@@ -39,8 +39,6 @@ export type ScriptReferencedItemClassId = 'basic' | 'external' | 'mdscript' | 'c
 type ScriptReferencedDetailsType = 'full' | 'hover' | 'external' | 'definition' | 'reference';
 interface ScriptReferencedItemOptions {
   skipNotUsed?: boolean; // Optional flag to ignore "not used" warnings
-  prepareExternalReferences?: boolean; // Optional flag to prepare references for completion
-  referenceAsExpression?: boolean; // Optional flag to treat references as expressions
 }
 export type ScriptReferencedItemDetails = {
   type: ScriptReferencedItemTypeId;
@@ -104,7 +102,7 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
       name: 'Cue',
       class: 'cue',
       schema: mdScriptSchema,
-      options: { skipNotUsed: true, prepareReferences: true, referenceAsExpression: true },
+      options: { skipNotUsed: true },
     },
   ],
   ['library_run', { type: 'library_run', name: 'Library run Action', class: 'mdscript', schema: mdScriptSchema }],
@@ -457,7 +455,7 @@ export class ReferencedItemsTracker {
     for (const [itemName, itemData] of documentData.entries()) {
       // Check if the item is invalid (has no definition or references)
       const definition = this.getDefinition(document, itemData);
-      if (!definition && !this.options.referenceAsExpression) {
+      if (!definition) {
         itemData.references.forEach((reference) => {
           const fullName = this.getItemFullName(itemData);
           const diagnostic = new vscode.Diagnostic(reference.range, `${this.itemName} '${fullName}' is not defined`, vscode.DiagnosticSeverity.Error);
