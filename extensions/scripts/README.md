@@ -2,6 +2,166 @@
 
 ## Version History
 
+### 1.6
+
+(1.6.0) Significant refactoring of internal logic
+
+- Improved processing expressions, as in an area of completion, as in information provided in a hover.
+- Added support of `<something>` constructions in expressions, with providing the appropriate completions, when possible.
+- Both type of expressions are supported - started by keyword or by variable name.
+- Refined and improved support of definition references for all type of items, including elements names, it's attributes, keywords and types, it's properties.
+- Mostly from all possible items of xml or script language you can open it's definition by F12 or context menu.
+- Added support of "external" definitions for `<include_interrupt_actions>` and `<handler>`.
+- Added support next pairs in Mission Directors scripts:
+  - `<library>` and `<run_actions>`;
+  - `<library>` and `<include_actions>`;
+  - `<cue>` and various elements which has attributes of `cuename` type.
+
+Older changelog entries can be found near to the bottom of this file.
+
+## README
+
+- You can simple take this extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4CodeComplete.x4codecomplete)
+
+- Or download the .vsix file from the [GitHub releases page](https://github.com/archenovalis/X4CodeComplete/releases) and then install it like any other program. (Or from "Extensions" in Visual Studio Code)
+
+It's highly recommended to use this in conjunction with [these instructions](https://forum.egosoft.com/viewtopic.php?f=181&t=416621) by ledhead900, but it's not technically a requirement.
+
+## Features
+
+### Core Script Support
+
+- **Script code completion** for Visual Studio Code supporting both AI Scripts and Mission Director Scripts
+- **XML code completion and validation** based on Egosoft xsd files
+- **Autocompletion** from scriptproperties.xml with intelligent context-aware suggestions
+- **Hover documentation** for script properties and XSD elements
+- **Variables support** support with completion and hover information and tracking
+- **Referenced items support** with completion and hover information and tracking
+- **Go to Definition** support for script properties
+
+### Language File Integration
+
+- **T-file text display** with hover tooltips for language references
+- Support for multiple formats: `{pageId,textId}`, `readtext.{pageId}.{textId}`, and `page="pageId" line="textId"`
+- **Multi-language support** with configurable preferred language
+- **Language filtering** options for cleaner output
+
+### Variables Support
+
+- **Intelligent variable completion** with `$` trigger for both AI Scripts and Mission Director Scripts
+- **Variables tracking** across the entire document with usage statistics
+- **Go to Definition**, **Find All References**, and **Symbol Rename** (F2) for variables
+- **Hover information** showing variable usage count and type
+- Support for both regular variables and table key/remote variables
+- **Automatic variable detection** in XML attributes and parameter definitions
+
+### AI Script Specific Features
+
+- **Label completion** for AI Script elements (`<resume>`, `<run_interrupt_script>`, `<abort_called_scripts>`)
+- **Action completion** for AI Script action references (`<include_interrupt_actions>`)
+- **Label and Action tracking** with Go to Definition and Find All References
+- **Hover tooltips** for labels and actions showing usage statistics and references
+- **Error diagnostics** for undefined labels and actions with quick fix suggestions
+- **Code actions** to create missing labels/actions or replace with similar existing ones
+
+### Mission Director Script Specific Features
+
+- **Cue completion** for Mission Director Script elements (for any element in attribute with `cuename` type)
+- **Library completion** for Mission Director Script action references (`<include_actions>` or `<run_actions>`)
+- **Cue and Library tracking** with Go to Definition and Find All References
+- **Hover tooltips** for cues and libraries showing usage statistics and references
+- **Error diagnostics** for undefined cues and libraries
+
+### Intelligent Context Detection
+
+- **Context-aware completion** that automatically detects when you're typing variables, expressions or other elements
+- **Smart completion triggering** that prevents conflicts between different completion types
+- **Automatic suggestion display** when typing in specialized contexts
+
+### Error Detection and Quick Fixes
+
+- **Real-time validation** of xml elements, labels, actions, handlers, cues and libraries
+- **Quick fix suggestions** for undefined references with similarity-based recommendations
+- **Code actions** to automatically create missing definitions
+- **Diagnostic highlighting** of undefined references
+
+## Extension Settings
+
+| Setting                               | Description                                          | Default         |
+| ------------------------------------- | ---------------------------------------------------- | --------------- |
+| `x4CodeComplete.exceedinglyVerbose`   | Verbose logging for debugging purposes.              | false           |
+| `x4CodeComplete.extensionsFolder`     | Path to extensions "library" folder                  | none (required) |
+| `x4CodeComplete.languageNumber`       | Preferred language number (e.g., '44' for English)   | "44"            |
+| `x4CodeComplete.limitLanguageOutput`  | Show only preferred language in hover text           | false           |
+| `x4CodeComplete.reloadLanguageData`   | Reload language files (resets to false after reload) | false           |
+| `x4CodeComplete.unpackedFileLocation` | Path to folder with vanilla extracted files          | none (required) |
+
+## Supported File Types
+
+- **AI Scripts** (`.xml` files with `<aiscript>` root element)
+- **Mission Director Scripts** (`.xml` files with `<mdscript>` root element)
+
+## Video Demonstration
+
+- All features up to version 1.4.1
+
+  [X4CodeComplete Demo: all features up to version 1.4.1](https://www.youtube.com/watch?v=0gBYUklBU_o)
+
+- Features added in version 1.5.1
+
+  [X4CodeComplete Demo: features added in version 1.5.1](https://www.youtube.com/watch?v=bTkF7GMg5gw)
+
+- Features added and fixed in version 1.5.4
+
+  [Features added and fixed in version 1.5.4](https://www.youtube.com/watch?v=1SZED2J-xlg)
+
+## Usage Examples
+
+### Variable Completion
+
+```xml
+<set_value name="$myVariable" />
+<!-- Type $ to see all available variables -->
+<!-- Hover over $myVariable to see usage statistics -->
+```
+
+### Label Support (AI Scripts)
+
+```xml
+<label name="start" />
+<!-- ... -->
+<resume label="start" /> <!-- Completion available after typing " -->
+```
+
+### Action Support (AI Scripts)
+
+```xml
+<library>
+  <actions name="myAction">
+    <!-- action content -->
+  </actions>
+</library>
+<!-- ... -->
+<include_interrupt_actions ref="myAction" /> <!-- Completion available -->
+```
+
+### Language File References
+
+```xml
+<!-- Hover over any of these to see translated text -->
+<set_value name="$text" exact="{1001,100}" />
+<debug_text text="readtext.{1001}.{100}" />
+<speak actor="$ship" page="1001" line="100" />
+```
+
+## Known Limitations
+
+- **Variable scope**: Currently limited to file scope (no namespace support)
+- **Cross-file references**: Labels and actions are tracked per-file only
+- **Complex expressions**: Advanced variable expressions in table lookups may not be fully parsed
+
+## Previous Version History
+
 ### 1.5
 
 (1.5.4) Restore properties completion and implement basic variable definitions detection
@@ -115,136 +275,6 @@
 - Enhanced keyword and datatype information display
 - Improved scriptproperties.xml parsing and processing
 - Whitespace handling improvements
-
-## README
-
-- You can simple take this extension from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4CodeComplete.x4codecomplete)
-
-- Or download the .vsix file from the [GitHub releases page](https://github.com/archenovalis/X4CodeComplete/releases) and then install it like any other program. (Or from "Extensions" in Visual Studio Code)
-
-It's highly recommended to use this in conjunction with [these instructions](https://forum.egosoft.com/viewtopic.php?f=181&t=416621) by ledhead900, but it's not technically a requirement.
-
-## Features
-
-### Core Script Support
-
-- **XML code completion** for Visual Studio Code supporting both AI Scripts and Mission Director Scripts
-- **Autocompletion** from scriptproperties.xml with intelligent context-aware suggestions
-- **Hover documentation** for script properties and XSD elements
-- **Go to Definition** and **Peek Definition** support for script properties
-
-### Language File Integration
-
-- **T-file text display** with hover tooltips for language references
-- Support for multiple formats: `{pageId,textId}`, `readtext.{pageId}.{textId}`, and `page="pageId" line="textId"`
-- **Multi-language support** with configurable preferred language
-- **Language filtering** options for cleaner output
-
-### Variable Support
-
-- **Intelligent variable completion** with `$` trigger for both AI Scripts and Mission Director Scripts
-- **Variable tracking** across the entire document with usage statistics
-- **Go to Definition**, **Find All References**, and **Symbol Rename** (F2) for variables
-- **Hover information** showing variable usage count and type
-- Support for both regular variables and table key/remote variables
-- **Automatic variable detection** in XML attributes and parameter definitions
-
-### AI Script Specific Features
-
-- **Label completion** for AI Script elements (`<resume>`, `<run_interrupt_script>`, `<abort_called_scripts>`)
-- **Action completion** for AI Script action references (`<include_interrupt_actions>`)
-- **Label and Action tracking** with Go to Definition and Find All References
-- **Hover tooltips** for labels and actions showing usage statistics
-- **Error diagnostics** for undefined labels and actions with quick fix suggestions
-- **Code actions** to create missing labels/actions or replace with similar existing ones
-
-### Intelligent Context Detection
-
-- **Context-aware completion** that automatically detects when you're typing variables, labels, or actions
-- **Smart completion triggering** that prevents conflicts between different completion types
-- **Automatic suggestion display** when typing in specialized contexts
-
-### Error Detection and Quick Fixes
-
-- **Real-time validation** of label and action references in AI Scripts
-- **Quick fix suggestions** for undefined references with similarity-based recommendations
-- **Code actions** to automatically create missing definitions
-- **Diagnostic highlighting** of undefined references
-
-## Extension Settings
-
-| Setting                               | Description                                          | Default         |
-| ------------------------------------- | ---------------------------------------------------- | --------------- |
-| `x4CodeComplete.unpackedFileLocation` | Path to vanilla extracted files folder               | none (required) |
-| `x4CodeComplete.extensionsFolder`     | Path to extensions folder                            | none (required) |
-| `x4CodeComplete.exceedinglyVerbose`   | Enable debug logging                                 | false           |
-| `x4CodeComplete.languageNumber`       | Preferred language ID for t-file display             | "44" (English)  |
-| `x4CodeComplete.limitLanguageOutput`  | Show only preferred language in hover text           | false           |
-| `x4CodeComplete.reloadLanguageData`   | Reload language files (resets to false after reload) | false           |
-
-## Supported File Types
-
-- **AI Scripts** (`.xml` files with `<aiscript>` root element)
-- **Mission Director Scripts** (`.xml` files with `<mdscript>` root element)
-
-## Video Demonstration
-
-- All features up to version 1.4.1
-
-  [X4CodeComplete Demo: all features up to version 1.4.1](https://www.youtube.com/watch?v=0gBYUklBU_o)
-
-- Features added in version 1.5.1
-
-  [X4CodeComplete Demo: features added in version 1.5.1](https://www.youtube.com/watch?v=bTkF7GMg5gw)
-
-- Features added and fixed in version 1.5.4
-
-  [Features added and fixed in version 1.5.4](https://www.youtube.com/watch?v=1SZED2J-xlg)
-
-## Usage Examples
-
-### Variable Completion
-
-```xml
-<set_value name="$myVariable" />
-<!-- Type $ to see all available variables -->
-<!-- Hover over $myVariable to see usage statistics -->
-```
-
-### Label Support (AI Scripts)
-
-```xml
-<label name="start" />
-<!-- ... -->
-<resume label="start" /> <!-- Completion available after typing " -->
-```
-
-### Action Support (AI Scripts)
-
-```xml
-<library>
-  <actions name="myAction">
-    <!-- action content -->
-  </actions>
-</library>
-<!-- ... -->
-<include_interrupt_actions ref="myAction" /> <!-- Completion available -->
-```
-
-### Language File References
-
-```xml
-<!-- Hover over any of these to see translated text -->
-<set_value name="$text" exact="{1001,100}" />
-<debug_text text="readtext.{1001}.{100}" />
-<speak actor="$ship" page="1001" line="100" />
-```
-
-## Known Limitations
-
-- **Variable scope**: Currently limited to file scope (no namespace support)
-- **Cross-file references**: Labels and actions are tracked per-file only
-- **Complex expressions**: Advanced variable expressions in table lookups may not be fully parsed
 
 ## Original Release Notes (thank you Cgetty)
 
