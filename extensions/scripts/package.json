@@ -24,12 +24,12 @@
   "contributes": {
     "commands": [
       {
-        "command": "x4CodeComplete.reloadLanguageFiles",
-        "title": "X4 Code Complete: Reload Language Files"
+        "command": "x4CodeComplete.loadLanguageFiles",
+        "title": "X4 Code Complete: Process Language Files"
       },
       {
-        "command": "x4CodeComplete.reloadExtractedFiles",
-        "title": "X4 Code Complete: Reload Extracted Files"
+        "command": "x4CodeComplete.loadExtractedFiles",
+        "title": "X4 Code Complete: Process Extracted Files"
       }
     ],
     "configuration": {
@@ -39,32 +39,32 @@
         "x4CodeComplete.unpackedFileLocation": {
           "type": "string",
           "default": "",
-          "description": "Path to unpacked vanilla files."
+          "description": "Path to folder with vanilla extracted files"
         },
         "x4CodeComplete.extensionsFolder": {
           "type": "string",
           "default": "",
-          "description": "Path to your extensions directory."
+          "description": "Path to extensions \"library\" folder"
         },
         "x4CodeComplete.languageNumber": {
           "type": "string",
           "default": "44",
-          "description": "Preferred language number (e.g., '44' for English). Files matching this number will be displayed first."
+          "description": "Preferred language number (e.g., '44' for English). Files matching this number will be displayed first"
         },
         "x4CodeComplete.limitLanguageOutput": {
           "type": "boolean",
           "default": false,
-          "description": "Limits the language output to show only the preferred language."
+          "description": "Show only preferred language in hover text"
         },
         "x4CodeComplete.debug": {
           "type": "boolean",
           "default": false,
-          "description": "Enables verbose logging for debugging purposes. This will log detailed information and may degrade performance."
+          "description": "Verbose logging for debugging purposes. This will log detailed information and may degrade performance."
         },
         "x4CodeComplete.reloadLanguageData": {
           "type": "boolean",
           "default": false,
-          "description": "Reloads the language data when toggled. Useful for refreshing language files without restarting the extension."
+          "description": "Reload language files (resets to false after reload). Useful for refreshing language files without restarting the extension."
         }
       }
     }
