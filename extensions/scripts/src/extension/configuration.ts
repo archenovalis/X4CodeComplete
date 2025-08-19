@@ -251,7 +251,9 @@ export class X4ConfigurationManager {
       if (!changedKeys.includes('reloadLanguageData') || configurationChanged.reloadLanguageData.value) {
         if (this._changeCallbacks.onLanguageFilesNeedToBeReload) {
           try {
-            await this._changeCallbacks.onLanguageFilesNeedToBeReload();
+            setTimeout(() => {
+              this._changeCallbacks.onLanguageFilesNeedToBeReload();
+            }, 200);
           } catch (error) {
             logger.error('Failed to reload language files:', error);
           }
@@ -320,10 +322,14 @@ export class X4ConfigurationManager {
     }
     if (isFolderSelected) {
       if (key === 'extensionsFolder' && this._changeCallbacks.onLanguageFilesNeedToBeReload) {
-        this._changeCallbacks.onLanguageFilesNeedToBeReload();
-        this._changeCallbacks.onExternalDefinitionsNeedToBeReloaded();
+        setTimeout(() => {
+          this._changeCallbacks.onLanguageFilesNeedToBeReload();
+          this._changeCallbacks.onExternalDefinitionsNeedToBeReloaded();
+        }, 200);
       } else if (key === 'unpackedFileLocation' && this._changeCallbacks.onUnpackedFileLocationChanged) {
-        this._changeCallbacks.onUnpackedFileLocationChanged();
+        setTimeout(() => {
+          this._changeCallbacks.onUnpackedFileLocationChanged();
+        }, 200);
       }
     }
   }
