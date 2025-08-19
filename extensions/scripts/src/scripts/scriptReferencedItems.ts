@@ -356,7 +356,7 @@ export class TrackersWithExternalDefinitionsRegistry {
     parser.write(fileContent).close();
   }
 
-  protected collectMainFolders(): string[] {
+  protected async collectMainFolders(): Promise<string[]> {
     const config = configManager.config;
     const mainFolders: string[] = [];
     if (vscode.workspace.workspaceFolders) {
@@ -374,6 +374,18 @@ export class TrackersWithExternalDefinitionsRegistry {
     if (config.unpackedFileLocation) {
       if (fs.existsSync(config.unpackedFileLocation) && !mainFolders.includes(config.unpackedFileLocation)) {
         mainFolders.push(config.unpackedFileLocation);
+        const extensionsPath = path.join(config.unpackedFileLocation, 'extensions');
+        if (await isDir(extensionsPath)) {
+          const extensions = await fs.promises.readdir(extensionsPath, { withFileTypes: true });
+          for (const ext of extensions) {
+            if (ext.isDirectory()) {
+              const extPath = path.join(extensionsPath, ext.name);
+              if (!mainFolders.includes(extPath)) {
+                mainFolders.push(extPath);
+              }
+            }
+          }
+        }
       }
     }
     return mainFolders;
@@ -381,17 +393,9 @@ export class TrackersWithExternalDefinitionsRegistry {
 
   public async collectExternalDefinitions(): Promise<void> {
     const config = configManager.config;
-    const mainFolders = this.collectMainFolders();
+    const mainFolders = await this.collectMainFolders();
     logger.debug(`Collecting external definitions from main folders: ${mainFolders.join(', ')}`);
 
-    const isDir = async (p: string): Promise<boolean> => {
-      try {
-        const st = await fs.promises.stat(p);
-        return st.isDirectory();
-      } catch {
-        return false;
-      }
-    };
     const filesData: Map<string, { content: string; metadata: ScriptMetadata }> = new Map();
     const folders: string[] = [];
     for (const mainFolder of mainFolders) {
@@ -1252,4 +1256,14 @@ export class ReferencedCues extends ReferencedInMDScripts {
     super.makeCompletionList(items, document, prefix, range, token);
   }
 }
+
+async function isDir(p: string): Promise<boolean> {
+  try {
+    const st = await fs.promises.stat(p);
+    return st.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 initializeScriptReferencedItemsDetectionMap();
