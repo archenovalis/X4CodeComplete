@@ -263,17 +263,17 @@ export function activate(context: vscode.ExtensionContext) {
 
     onLanguageFilesNeedToBeReload: async (config: X4CodeCompleteConfig) => {
       logger.info('Reloading language files due to configuration changes...');
-      await vscode.commands.executeCommand('x4CodeComplete.reloadLanguageFiles');
+      await vscode.commands.executeCommand('x4CodeComplete.loadLanguageFiles');
     },
 
     onUnpackedFileLocationChanged: async (config: X4CodeCompleteConfig) => {
       logger.info('Unpacked file location changed.');
-      await vscode.commands.executeCommand('x4CodeComplete.reloadExtractedFiles');
+      await vscode.commands.executeCommand('x4CodeComplete.loadExtractedFiles');
     },
 
     onExternalDefinitionsNeedToBeReloaded: async (config: X4CodeCompleteConfig) => {
       logger.info('External definitions need to be reloaded.');
-      await vscode.commands.executeCommand('x4CodeComplete.reloadExternalDefinitions');
+      await vscode.commands.executeCommand('x4CodeComplete.loadExternalDefinitions');
     },
   };
 
@@ -629,21 +629,17 @@ export function activate(context: vscode.ExtensionContext) {
           }
         })
       );
-      ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
-      ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions().then(() => {
-        refreshDocumentsInTabs();
-      });
+      await vscode.commands.executeCommand('x4CodeComplete.loadExternalDefinitions');
       isActivated = true;
     };
     try {
-      if (isActivated) {
-        // Show a progress notification that auto-closes when initialization completes
-        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: refreshing data...' }, async () => {
+      // Show a progress notification that auto-closes when initialization completes
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: preparing script language data...' },
+        async () => {
           await performHeavyInitialization();
-        });
-      } else {
-        await performHeavyInitialization();
-      }
+        }
+      );
     } catch (error) {
       logger.error('Error during heavy services initialization:', error);
       vscode.window.showErrorMessage('Error initializing X4CodeComplete services: ' + error);
@@ -701,7 +697,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Commands: Reload language files
   context.subscriptions.push(
-    vscode.commands.registerCommand('x4CodeComplete.reloadLanguageFiles', async () => {
+    vscode.commands.registerCommand('x4CodeComplete.loadLanguageFiles', async () => {
       try {
         await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading language files...' }, async () => {
           await languageProcessor
@@ -720,7 +716,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Commands: Reload extracted files (full heavy re-initialization)
   context.subscriptions.push(
-    vscode.commands.registerCommand('x4CodeComplete.reloadExtractedFiles', async () => {
+    vscode.commands.registerCommand('x4CodeComplete.loadExtractedFiles', async () => {
       try {
         codeCompleteStartupDone.fire();
       } catch (e) {
@@ -731,10 +727,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Commands: Reload external definitions
   context.subscriptions.push(
-    vscode.commands.registerCommand('x4CodeComplete.reloadExternalDefinitions', async () => {
+    vscode.commands.registerCommand('x4CodeComplete.loadExternalDefinitions', async () => {
       try {
         await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: reloading external definitions...' },
+          { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: loading external definitions...' },
           async () => {
             ReferencedItemsWithExternalDefinitionsTracker.clearAllExternalDefinitions();
             await ReferencedItemsWithExternalDefinitionsTracker.collectExternalDefinitions();
