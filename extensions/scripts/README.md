@@ -96,6 +96,66 @@ It's highly recommended to use this in conjunction with [these instructions](htt
 | `x4CodeComplete.reloadLanguageData`   | Reload language files (resets to false after reload) | false           |
 | `x4CodeComplete.unpackedFileLocation` | Path to folder with vanilla extracted files          | none (required) |
 
+### Short explanation of used folders and expected structure
+
+#### Extensions Folder
+
+The `extensionsFolder` is expected to contain mods, data from which is can be used for the development of new ones in current workspace.
+
+```
+extensions
+├── extension_one
+│   ├── aiscripts
+│   │   ├── aiscript_one_first.xml
+│   │   └── ...
+│   ├── libraries
+│   │   └── ...
+│   ├── md
+│   │   ├── mdscript_one_first.xml
+│   │   └── ...
+│   ├── t
+│   │   ├── 0001.xml
+│   │   └── ...
+... ...
+|   └── ... 
+...
+```
+
+#### Unpacked Folder Structure
+
+Should contain the full extraction of base game files from 08 and 09 .cat/.dat files, i.e. `aiscripts`, `md` and `t` subfolders.
+
+And in addition it is recommended to have an unpacked files from Egosoft DLC's if you have somehow to refer on the data from them.
+
+```
+├── aiscripts
+├── aiscript_one_first.xml
+│   └── ...
+├──extensions
+│   ├── ego_dlc_one
+│   │   ├── aiscripts
+│   │   │   ├── aiscript_ego_dlc_one_first.xml
+│   │   │   └── ...
+│   │   ├── libraries
+│   │   │   └── ...
+│   │   ├── md
+│   │   │   ├── mdscript_ego_dlc_one_first.xml
+│   │   │   └── ...
+│   │   └── ...
+│   └── ...
+│
+├── md
+│   ├── mdscript_one_first.xml
+│   └── ...
+└── t
+│   ├── 0001.xml
+│   └── ...
+```
+
+### Workspace folder structure
+
+You can have as only one mod subfolder structure, i.e. `aiscripts`. `md`, `t`, `libraries`, etc. on a first level, without "header" folder, as the any count of mods subfolders, which will contains respectively all these subfolders ...
+
 ## Supported File Types
 
 - **AI Scripts** (`.xml` files with `<aiscript>` root element)
