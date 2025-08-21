@@ -61,6 +61,7 @@
     "relationrangelookup",
     "savegame",
     "scriptproperties",
+    "subfolders",
     "trafficlevel"
   ],
   "ignoreWords": [],
