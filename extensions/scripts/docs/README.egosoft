@@ -97,6 +97,66 @@ It's highly recommended to use this in conjunction with [url=https://forum.egoso
 | [b]x4CodeComplete.reloadLanguageData[/b]   | Reload language files (resets to false after reload) | false           |
 | [b]x4CodeComplete.unpackedFileLocation[/b] | Path to folder with vanilla extracted files          | none (required) |
 
+[size=125][u]Short explanation of used folders and expected structure[/u][/size]
+
+[size=120][u]Extensions Folder[/u][/size]
+
+The [b]extensionsFolder[/b] is expected to contain mods, data from which is can be used for the development of new ones in current workspace.
+
+[code]
+extensions
+├── extension_one
+│   ├── aiscripts
+│   │   ├── aiscript_one_first.xml
+│   │   └── ...
+│   ├── libraries
+│   │   └── ...
+│   ├── md
+│   │   ├── mdscript_one_first.xml
+│   │   └── ...
+│   ├── t
+│   │   ├── 0001.xml
+│   │   └── ...
+... ...
+|   └── ... 
+...
+[/code]
+
+[size=120][u]Unpacked Folder Structure[/u][/size]
+
+Should contain the full extraction of base game files from 08 and 09 .cat/.dat files, i.e. [b]aiscripts[/b], [b]md[/b] and [b]t[/b] subfolders.
+
+And in addition it is recommended to have an unpacked files from Egosoft DLC's if you have somehow to refer on the data from them.
+
+[code]
+├── aiscripts
+├── aiscript_one_first.xml
+│   └── ...
+├──extensions
+│   ├── ego_dlc_one
+│   │   ├── aiscripts
+│   │   │   ├── aiscript_ego_dlc_one_first.xml
+│   │   │   └── ...
+│   │   ├── libraries
+│   │   │   └── ...
+│   │   ├── md
+│   │   │   ├── mdscript_ego_dlc_one_first.xml
+│   │   │   └── ...
+│   │   └── ...
+│   └── ...
+│
+├── md
+│   ├── mdscript_one_first.xml
+│   └── ...
+└── t
+│   ├── 0001.xml
+│   └── ...
+[/code]
+
+[size=125][u]Workspace folder structure[/u][/size]
+
+You can have as only one mod subfolder structure, i.e. [b]aiscripts[/b]. [b]md[/b], [b]t[/b], [b]libraries[/b], etc. on a first level, without "header" folder, as the any count of mods subfolders, which will contains respectively all these subfolders ...
+
 [size=130][u]Supported File Types[/u][/size]
 [list]
 [*] [b]AI Scripts[/b] ([b].xml[/b] files with [b]<aiscript>[/b] root element)
