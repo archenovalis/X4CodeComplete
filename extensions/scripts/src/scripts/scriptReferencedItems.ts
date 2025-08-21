@@ -1111,8 +1111,20 @@ export class ReferencedInMDScripts extends ReferencedItemsWithExternalDefinition
 
 export class ReferencedCues extends ReferencedInMDScripts {
   private static readonly cueSpecialItems = ['this', 'parent', 'static', 'namespace'];
+  private static readonly cueSpecialEventProperties = ['param', 'param2', 'param3'];
   constructor(itemType: string, itemName: string, schema: string, options?: ScriptReferencedItemOptions) {
     super(itemType, itemName, schema, options);
+  }
+
+  protected static isInSpecialCueContext(name: string, noEvent: boolean = false): boolean {
+    if (this.cueSpecialItems.includes(name)) {
+      return true;
+    } else if (name.startsWith('this.') && name.split('.').length === 2 && this.cueSpecialItems.includes(name.split('.')[1])) {
+      return true;
+    } else if (!noEvent && name.startsWith('event.') && name.split('.').length === 2 && this.cueSpecialEventProperties.includes(name.split('.')[1])) {
+      return true;
+    }
+    return false;
   }
 
   protected definitionToMarkdown(document: vscode.TextDocument, item: ScriptReferencedItemInfo, detailsType: ScriptReferencedDetailsType): string {
@@ -1149,11 +1161,18 @@ export class ReferencedCues extends ReferencedInMDScripts {
   }
 
   protected updateSpecificItem(document: vscode.TextDocument, item: ScriptReferencedItemInfo): ScriptReferencedItemInfo {
-    if (ReferencedCues.cueSpecialItems.includes(item.name)) {
+    if (ReferencedCues.isInSpecialCueContext(item.name, true)) {
       if (this.lastLocation) {
         const element = xmlTracker.elementWithPosInStartTag(document, this.lastLocation?.range.start);
         if (element) {
-          const cue = ReferencedCues.findCueElementForName(item.name, element);
+          let name = item.name;
+          if (name.startsWith('this.')) {
+            const nameSplitted = name.split('.');
+            if (nameSplitted.length === 2 && ReferencedCues.cueSpecialItems.includes(nameSplitted[1])) {
+              name = nameSplitted[1];
+            }
+          }
+          const cue = ReferencedCues.findCueElementForName(name, element);
           if (cue) {
             let range = cue.nameRange;
             if (cue.attributes && cue.attributes.length > 0) {
@@ -1162,7 +1181,7 @@ export class ReferencedCues extends ReferencedInMDScripts {
                 range = attribute.valueRange;
               }
             }
-            const current = ['this', 'static'].includes(item.name) ? cue : ReferencedCues.findCueElementForName('this', element);
+            const current = ['this', 'static'].includes(name) ? cue : ReferencedCues.findCueElementForName('this', element);
             const newItem = {
               name: item.name,
               scriptName: item.scriptName,
@@ -1192,20 +1211,12 @@ export class ReferencedCues extends ReferencedInMDScripts {
     return item;
   }
 
-  // protected getDefinition(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location | undefined {
-  //   return super.getDefinition(document, this.updateSpecificItem(document, item));
-  // }
-
-  // protected getReferences(document: vscode.TextDocument, item: ScriptReferencedItemInfo): vscode.Location[] {
-  //   return super.getReferences(document, this.updateSpecificItem(document, item));
-  // }
-
   public addItemReference(metadata: ScriptMetadata, name: string, document: vscode.TextDocument, range: vscode.Range): void {
     if (!this.documentReferencedItems.has(document)) {
       this.documentReferencedItems.set(document, new Map<string, ScriptReferencedItemInfo>());
     }
     const itemsData = this.documentReferencedItems.get(document);
-    if (!itemsData.has(name) && ReferencedCues.cueSpecialItems.includes(name)) {
+    if (!itemsData.has(name) && ReferencedCues.isInSpecialCueContext(name)) {
       itemsData.set(name, {
         name: name,
         scriptName: metadata.name,
@@ -1245,13 +1256,17 @@ export class ReferencedCues extends ReferencedInMDScripts {
       }
     } else if (position === 1 && prefixSplitted[0] === 'event') {
       const prefixItem = prefixSplitted[1];
-      for (const eventProp of ['param', 'param2', 'param3']) {
+      for (const eventProp of ReferencedCues.cueSpecialEventProperties) {
         if (prefixItem === '' || eventProp.startsWith(prefixItem)) {
           const keyword = scriptProperties.getKeyword('event', mdScriptSchema);
           const details = new vscode.MarkdownString(keyword?.properties.get(eventProp)?.details || '');
           ScriptCompletion.addItem(items, this.itemType, eventProp, details, range);
         }
       }
+    } else if (position === 1 && prefixSplitted[0] === 'this' && ReferencedCues.cueSpecialItems.includes(prefixSplitted[1])) {
+      const type = scriptProperties.getType('cue');
+      const details = new vscode.MarkdownString(type?.properties.get(prefixSplitted[1])?.details || '');
+      ScriptCompletion.addItem(items, this.itemType, prefixSplitted[1], details, range);
     }
     super.makeCompletionList(items, document, prefix, range, token);
   }
