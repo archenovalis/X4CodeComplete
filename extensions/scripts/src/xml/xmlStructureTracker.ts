@@ -248,14 +248,15 @@ export class XmlStructureTracker {
   }
 
   // Make this method return the parsed elements
-  public parseDocument(document: vscode.TextDocument, metadata: ScriptMetadata, diagnostics: vscode.Diagnostic[]): XmlElement[] {
+  public async parseDocument(document: vscode.TextDocument, metadata: ScriptMetadata, diagnostics: vscode.Diagnostic[]): Promise<void> {
     let documentInfo = this.prepareDocumentInfo(document);
     if (this.checkDocumentParsed(document, documentInfo)) {
       // If the document has not changed since last parse, return cached elements
-      return documentInfo.elements;
+      return;
     }
     ScriptDocumentTracker.clearTrackingData(document, metadata);
     try {
+      logger.debug(`Document ${document.uri.toString()} structure tracking started.`);
       const text = document.getText();
       const { patchedText, offsetMap } = patchUnclosedTags(text);
       documentInfo.offsets = offsetMap;
@@ -272,7 +273,7 @@ export class XmlStructureTracker {
       parser.position = 0;
 
       // Handle opening tags
-      parser.onopentag = (node) => {
+      parser.onopentag = async (node) => {
         try {
           parserPositionOnOpenTag = parser.position;
           const tagStartPosPatched = parser.startTagPosition - 1;
@@ -372,12 +373,15 @@ export class XmlStructureTracker {
           if (!node.isSelfClosing) {
             openElementStack.push(newElement);
           }
+          if (elements.length % 32 === 0) {
+            await new Promise((r) => setImmediate(r));
+          }
         } catch (tagError) {
           // Skip this tag but continue parsing
         }
       };
 
-      parser.onclosetag = (tagName: string) => {
+      parser.onclosetag = async (tagName: string) => {
         if (parser.position > parserPositionOnOpenTag) {
           if (openElementStack.length > 0) {
             const lastOpenElement = openElementStack[openElementStack.length - 1];
@@ -417,9 +421,6 @@ export class XmlStructureTracker {
     }
     if (documentInfo === undefined) {
       this.documentInfoMap.delete(document);
-      return [];
-    } else {
-      return documentInfo.elements;
     }
   }
 

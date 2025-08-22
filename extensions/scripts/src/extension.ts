@@ -61,6 +61,7 @@ import { scriptCompletion, ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
 import { scriptDocumentTracker } from './scripts/scriptDocumentTracker';
 import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
+import { log } from 'console';
 
 // ================================================================================================
 // 2. TYPE DEFINITIONS AND CONSTANTS
@@ -103,42 +104,37 @@ export const onCodeCompleteStartupProcessed = codeCompleteStartupDone.event;
 
 let lastDocumentInput: vscode.TextDocument | undefined;
 let inputDebounceTimeout: NodeJS.Timeout | undefined;
-
-async function debounceInput(callback: () => void, delay: number) {
-  if (inputDebounceTimeout) {
-    clearTimeout(inputDebounceTimeout);
-  }
-  inputDebounceTimeout = setTimeout(() => {
-    callback();
-  }, delay);
-}
-function stopDebounceInput() {
-  if (inputDebounceTimeout) {
-    clearTimeout(inputDebounceTimeout);
-  }
-}
+let inputLastTimeStamp: number = Date.now();
 
 /**
  * Handles document change events with batching and debouncing
  */
 async function onDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
   const { document, contentChanges } = event;
+  if (contentChanges.length === 0) {
+    return; // No actual content changes
+  }
   if (document.uri.scheme !== 'file') {
     return;
   }
+  logger.debug(`Document ${document.uri.toString()} changed.`);
   const metadata = getDocumentMetadata(document);
   if (!metadata || !metadata.schema) {
     return;
   }
-  if (!lastDocumentInput && lastDocumentInput !== document) {
-    // Skip processing if the same document is being edited rapidly
-    stopDebounceInput();
+  if (Date.now() - inputLastTimeStamp > 2000) {
+    inputLastTimeStamp = Date.now();
     scriptDocumentTracker.trackScriptDocument(document);
-    lastDocumentInput = document;
   } else {
-    debounceInput(() => {
+    if (inputDebounceTimeout && lastDocumentInput && lastDocumentInput === document) {
+      clearTimeout(inputDebounceTimeout);
+    }
+    lastDocumentInput = document;
+    inputLastTimeStamp = Date.now();
+    inputDebounceTimeout = setTimeout(() => {
+      logger.debug(`Document ${document.uri.toString()} debounced.`);
       scriptDocumentTracker.trackScriptDocument(document);
-    }, 400); // 400ms debounce delay
+    }, 200);
   }
 }
 
@@ -449,7 +445,7 @@ export function activate(context: vscode.ExtensionContext) {
     disposables.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor && scriptsMetadataSet(editor.document)) {
-          scriptDocumentTracker.trackScriptDocument(editor.document, false);
+          scriptDocumentTracker.trackScriptDocument(editor.document);
         }
       })
     );
@@ -467,7 +463,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (scriptMetadata) {
           logger.debug(`Document is opened: ${document.uri.toString()}`);
           trackersWithExternalDefinitions.clearExternalDefinitionsForFile(scriptMetadata.schema, document.uri.fsPath);
-          scriptDocumentTracker.trackScriptDocument(document, true);
+          scriptDocumentTracker.trackScriptDocument(document);
         }
       })
     );
@@ -479,7 +475,7 @@ export function activate(context: vscode.ExtensionContext) {
     disposables.push(
       vscode.workspace.onDidSaveTextDocument((document) => {
         if (scriptsMetadataSet(document, true)) {
-          scriptDocumentTracker.trackScriptDocument(document, true);
+          scriptDocumentTracker.trackScriptDocument(document);
         }
       })
     );
@@ -534,13 +530,13 @@ export function activate(context: vscode.ExtensionContext) {
         const openedDoc = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString());
         if (openedDoc) {
           logger.debug(`Document found on startup: ${openedDoc.uri.toString()}`);
-          scriptDocumentTracker.trackScriptDocument(openedDoc, isActivated);
+          scriptDocumentTracker.trackScriptDocument(openedDoc);
           openDocument();
         } else {
           vscode.workspace.openTextDocument(uri).then((doc) => {
             logger.debug(`Document re-opened on startup: ${doc.uri.toString()}`);
             if (isActivated) {
-              scriptDocumentTracker.trackScriptDocument(doc, isActivated);
+              scriptDocumentTracker.trackScriptDocument(doc);
             }
             openDocument();
           });

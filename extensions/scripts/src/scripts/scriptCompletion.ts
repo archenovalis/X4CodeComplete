@@ -154,22 +154,22 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     return this.emptyCompletion;
   }
 
-  public provideCompletionItems(
+  public async provideCompletionItems(
     document: vscode.TextDocument,
     position: vscode.Position,
     token?: vscode.CancellationToken,
     context?: vscode.CompletionContext
-  ): vscode.CompletionItem[] | vscode.CompletionList | undefined {
+  ): Promise<vscode.CompletionItem[] | vscode.CompletionList | undefined> {
     if (token?.isCancellationRequested) {
       return undefined;
     }
-    logger.debug(`Providing completion items for document: ${document.uri} with context: ${JSON.stringify(context)}`);
+    logger.debug(`Document ${document.uri}: providing completion items with context: ${JSON.stringify(context)}`);
     const schema = getDocumentScriptType(document);
     if (schema == '') {
       return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
     }
     if (context.triggerKind > vscode.CompletionTriggerKind.Invoke) {
-      scriptDocumentTracker.trackScriptDocument(document);
+      await scriptDocumentTracker.trackScriptDocument(document);
     }
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;

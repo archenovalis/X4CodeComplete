@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { xsdReference, XsdReference } from 'xsd-lookup';
-import { diagnosticCollection, lValueTypes } from '../extension/shared';
+import { diagnosticCollection, lValueTypes, logToFile } from '../extension/shared';
 import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { variableTracker, VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
@@ -250,7 +250,7 @@ export class ScriptDocumentTracker {
    * @param update - Whether this is an update to existing tracking data
    * @param position - Optional cursor position for context-aware analysis
    */
-  public trackScriptDocument(document: vscode.TextDocument, update: boolean = false, position?: vscode.Position): void {
+  public async trackScriptDocument(document: vscode.TextDocument): Promise<void> {
     // Get the script schema type (aiscript, mdscript, etc.)
     const metadata = getDocumentMetadata(document);
     if (!metadata || !metadata.schema) {
@@ -259,7 +259,7 @@ export class ScriptDocumentTracker {
     const diagnostics: vscode.Diagnostic[] = [];
 
     // Parse XML structure and handle any offset issues from unclosed tags
-    xmlTracker.parseDocument(document, metadata, diagnostics);
+    await xmlTracker.parseDocument(document, metadata, diagnostics);
     const offsets = xmlTracker.getOffsets(document);
 
     // Create diagnostics for unclosed XML tags
@@ -290,7 +290,7 @@ export class ScriptDocumentTracker {
 
     // Update diagnostics for the document
     diagnosticCollection.set(document.uri, diagnostics);
-    logger.debug(`Document ${document.uri.toString()} ${update === true ? 're-' : ''}tracked.`);
+    logger.debug(`Document ${document.uri.toString()} tracked.`);
   }
 
   dispose(): void {}
