@@ -34,6 +34,14 @@ export class ScriptDocumentTracker {
     return diagnostics;
   }
 
+  /**
+   * Process each XML element for validation and tracking
+   * This function handles:
+   * - Element validation against XSD schema
+   * - Attribute validation and processing
+   * - Variable detection and tracking
+   * - Label and action reference tracking
+   */
   public static processElement(element: XmlElement, document: vscode.TextDocument, metadata: ScriptMetadata, diagnostics: vscode.Diagnostic[]) {
     if (element.parent) {
       const parentName = element.parent?.name || '';
@@ -249,21 +257,6 @@ export class ScriptDocumentTracker {
       return; // Skip processing if the document is not a valid script type
     }
     const diagnostics: vscode.Diagnostic[] = [];
-    /**
-     * Process each XML element for validation and tracking
-     * This function handles:
-     * - Element validation against XSD schema
-     * - Attribute validation and processing
-     * - Variable detection and tracking
-     * - Label and action reference tracking
-     */
-
-    // Check if document is already parsed to avoid redundant work
-    const isXMLParsed = xmlTracker.checkDocumentParsed(document);
-    if (isXMLParsed) {
-      logger.debug(`Document ${document.uri.toString()} is already parsed.`);
-      return;
-    }
 
     // Parse XML structure and handle any offset issues from unclosed tags
     xmlTracker.parseDocument(document, metadata, diagnostics);
