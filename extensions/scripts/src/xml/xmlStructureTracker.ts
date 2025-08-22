@@ -371,9 +371,6 @@ export class XmlStructureTracker {
           ScriptDocumentTracker.processElement(newElement, document, metadata, diagnostics);
           if (!node.isSelfClosing) {
             openElementStack.push(newElement);
-          } else {
-            const tagEndPos = revertOffset(tagEndPosPatched, offsetMap);
-            newElement.range = new vscode.Range(newElement.range.start, document.positionAt(tagEndPos));
           }
         } catch (tagError) {
           // Skip this tag but continue parsing
