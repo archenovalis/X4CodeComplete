@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { ScriptMetadata } from '../scripts/scriptsMetadata';
+import { ScriptDocumentTracker } from '../scripts/scriptDocumentTracker';
 import * as sax from 'sax';
 
 export interface XmlElement {
@@ -232,9 +234,9 @@ export class XmlStructureTracker {
   }
 
   // New method to ensure a document is parsed only when needed
-  public checkDocumentParsed(document: vscode.TextDocument): boolean {
+  public checkDocumentParsed(document: vscode.TextDocument, documentInfo?: DocumentInfo): boolean {
     const lastModified = document.version;
-    const documentInfo = this.documentInfoMap.get(document);
+    documentInfo = documentInfo || this.documentInfoMap.get(document);
     if (!documentInfo) {
       // If no document info exists, we need to parse it
       return false;
@@ -242,16 +244,17 @@ export class XmlStructureTracker {
     const lastParsed = documentInfo.lastParsed;
 
     // Parse only if not parsed before or if the document has changed
-    return lastParsed && lastParsed > lastModified ? true : false;
+    return !lastParsed || lastParsed !== lastModified ? false : true;
   }
 
   // Make this method return the parsed elements
-  public parseDocument(document: vscode.TextDocument): XmlElement[] {
+  public parseDocument(document: vscode.TextDocument, metadata: ScriptMetadata, diagnostics: vscode.Diagnostic[]): XmlElement[] {
     let documentInfo = this.prepareDocumentInfo(document);
-    if (document.version === documentInfo.lastParsed) {
+    if (this.checkDocumentParsed(document, documentInfo)) {
       // If the document has not changed since last parse, return cached elements
       return documentInfo.elements;
     }
+    ScriptDocumentTracker.clearTrackingData(document, metadata);
     try {
       const text = document.getText();
       const { patchedText, offsetMap } = patchUnclosedTags(text);
@@ -364,7 +367,8 @@ export class XmlStructureTracker {
           }
 
           elements.push(newElement);
-
+          // processElement(newElement);
+          ScriptDocumentTracker.processElement(newElement, document, metadata, diagnostics);
           if (!node.isSelfClosing) {
             openElementStack.push(newElement);
           } else {
