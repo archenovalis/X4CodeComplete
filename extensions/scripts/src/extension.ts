@@ -518,7 +518,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   const refreshDocumentsInTabs = async () => {
     logger.info(`Doing refresh of opened documents ...`);
-    const documentsUris: vscode.Uri[] = [];
+    const UrisForReOpen: vscode.Uri[] = [];
+    const documentsForRefresh: vscode.TextDocument[] = [];
+    xmlTracker.dispose();
 
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
@@ -526,17 +528,24 @@ export function activate(context: vscode.ExtensionContext) {
           const uri = (tab.input as any).uri as vscode.Uri;
           if (uri.fsPath.endsWith('.xml') && uri.scheme === 'file') {
             logger.debug(`Tab found on startup: ${uri.toString()}`);
-            if (vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString()) === undefined) {
-              documentsUris.push(uri);
+            const document = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString());
+            if (document === undefined) {
+              UrisForReOpen.push(uri);
+            } else {
+              const metadata = getDocumentMetadata(document);
+              if (metadata && metadata.schema) {
+                documentsForRefresh.push(document);
+              }
             }
           }
         }
       }
     }
-    logger.debug(`Documents URIs collected on startup: ${documentsUris.length}`);
-    const reopenPromises = documentsUris.map((uri) => vscode.workspace.openTextDocument(uri));
+    logger.debug(`Documents URIs collected on startup: ${UrisForReOpen.length}`);
+    const reopenPromises: any[] = UrisForReOpen.map((uri) => vscode.workspace.openTextDocument(uri));
+    const refreshPromises: any[] = documentsForRefresh.map((doc) => scriptDocumentTracker.trackScriptDocument(doc));
     // Wait for all documents to be reopened
-    await Promise.all(reopenPromises);
+    await Promise.all(reopenPromises.concat(refreshPromises));
   };
 
   context.subscriptions.push(codeCompleteStartupDone);
