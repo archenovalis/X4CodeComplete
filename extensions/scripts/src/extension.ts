@@ -524,39 +524,23 @@ export function activate(context: vscode.ExtensionContext) {
     logger.info(`Doing refresh of opened documents ...`);
     const documentsUris: vscode.Uri[] = [];
 
-    const openDocument = () => {
-      const uri = documentsUris.shift();
-      if (uri) {
-        const openedDoc = vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString());
-        if (openedDoc) {
-          logger.debug(`Document found on startup: ${openedDoc.uri.toString()}`);
-          scriptDocumentTracker.trackScriptDocument(openedDoc);
-          openDocument();
-        } else {
-          vscode.workspace.openTextDocument(uri).then((doc) => {
-            logger.debug(`Document re-opened on startup: ${doc.uri.toString()}`);
-            if (isActivated) {
-              scriptDocumentTracker.trackScriptDocument(doc);
-            }
-            openDocument();
-          });
-        }
-      }
-    };
-
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (tab.input && (tab.input as any).uri) {
           const uri = (tab.input as any).uri as vscode.Uri;
           if (uri.fsPath.endsWith('.xml') && uri.scheme === 'file') {
             logger.debug(`Tab found on startup: ${uri.toString()}`);
-            documentsUris.push(uri);
+            if (vscode.workspace.textDocuments.find((doc) => doc.uri.toString() === uri.toString()) === undefined) {
+              documentsUris.push(uri);
+            }
           }
         }
       }
     }
     logger.debug(`Documents URIs collected on startup: ${documentsUris.length}`);
-    openDocument();
+    const reopenPromises = documentsUris.map((uri) => vscode.workspace.openTextDocument(uri));
+    // Wait for all documents to be reopened
+    await Promise.all(reopenPromises);
   };
 
   context.subscriptions.push(codeCompleteStartupDone);
