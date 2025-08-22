@@ -37,7 +37,7 @@ import * as path from 'path';
 
 // Configuration imports
 import { X4CodeCompleteConfig, configManager, ConfigChangeCallbacks } from './extension/configuration';
-import { diagnosticCollection } from './extension/shared'; // Moved diagnosticCollection to shared for easier access
+import { diagnosticCollection, updateLValueTypes } from './extension/shared'; // Moved diagnosticCollection to shared for easier access
 
 // Core functionality imports
 import { xmlTracker, XmlElement, XmlStructureTracker } from './xml/xmlStructureTracker';
@@ -47,7 +47,15 @@ import { xsdReference, XsdReference, AttributeInfo, EnhancedAttributeInfo, Attri
 // Script-specific functionality imports
 import { trackersWithExternalDefinitions, scriptReferencedItemsRegistry } from './scripts/scriptReferencedItems';
 import { scriptProperties } from './scripts/scriptProperties';
-import { getDocumentScriptType, scriptsMetadata, getDocumentMetadata, scriptsMetadataSet, scriptsMetadataClearAll } from './scripts/scriptsMetadata';
+import {
+  getDocumentScriptType,
+  scriptsMetadata,
+  getDocumentMetadata,
+  scriptsMetadataSet,
+  scriptsMetadataClearAll,
+  mdScriptSchema,
+  aiScriptSchema,
+} from './scripts/scriptsMetadata';
 import { variableTracker, VariableTracker } from './scripts/scriptVariables';
 import { scriptCompletion, ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
@@ -317,6 +325,8 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand('x4CodeComplete.loadLanguageFiles');
 
     xsdReference.init(configManager.librariesPath);
+
+    updateLValueTypes(xsdReference.getSimpleTypesWithBaseType(aiScriptSchema, 'lvalueexpression'));
 
     await scriptProperties.init(path.join(configManager.librariesPath, '/'));
 
