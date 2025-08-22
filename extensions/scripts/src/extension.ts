@@ -174,6 +174,11 @@ export function activate(context: vscode.ExtensionContext) {
       logger.info('External definitions need to be reloaded.');
       await vscode.commands.executeCommand('x4CodeComplete.loadExternalDefinitions');
     },
+
+    onValidateXmlStructureChanged: async () => {
+      logger.info('XML structure validation settings changed.');
+      await vscode.commands.executeCommand('x4CodeComplete.refreshDocumentsInTabs');
+    },
   };
 
   // Initialize configuration manager
@@ -607,11 +612,27 @@ export function activate(context: vscode.ExtensionContext) {
           async () => {
             trackersWithExternalDefinitions.clearAllExternalDefinitions();
             await trackersWithExternalDefinitions.collectExternalDefinitions();
-            await refreshDocumentsInTabs();
+            await vscode.commands.executeCommand('x4CodeComplete.refreshDocumentsInTabs');
           }
         );
       } catch (e) {
         logger.error('Unexpected error reloading external definitions:', e);
+      }
+    })
+  );
+
+  // Commands: Reload XML validation
+  context.subscriptions.push(
+    vscode.commands.registerCommand('x4CodeComplete.refreshDocumentsInTabs', async () => {
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'X4CodeComplete: refreshing documents in tabs...' },
+          async () => {
+            await refreshDocumentsInTabs();
+          }
+        );
+      } catch (e) {
+        logger.error('Unexpected error reloading XML validation:', e);
       }
     })
   );

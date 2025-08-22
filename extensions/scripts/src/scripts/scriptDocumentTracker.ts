@@ -5,6 +5,7 @@ import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { variableTracker, VariableTracker, variablePattern, tableKeyPattern } from './scriptVariables';
 import { checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
 import { getDocumentScriptType, getDocumentMetadata, scriptsMetadataUpdateName, aiScriptSchema, mdScriptSchema, ScriptMetadata } from './scriptsMetadata';
+import { configManager } from '../extension/configuration';
 
 export class ScriptDocumentTracker {
   constructor() {
@@ -43,7 +44,14 @@ export class ScriptDocumentTracker {
    * - Label and action reference tracking
    */
   public static processElement(element: XmlElement, document: vscode.TextDocument, metadata: ScriptMetadata, diagnostics: vscode.Diagnostic[]) {
-    if (element.parent) {
+    if ((metadata.schema === aiScriptSchema && element.name === 'aiscript') || (metadata.schema === mdScriptSchema && element.name === 'mdscript')) {
+      const nameOfScript = element.attributes.find((attr) => attr.name === 'name')?.value || '';
+      if (metadata.name !== nameOfScript) {
+        metadata.name = nameOfScript;
+        scriptsMetadataUpdateName(document, metadata.name);
+      }
+    }
+    if (element.parent && configManager.config.validateXmlStructure) {
       const parentName = element.parent?.name || '';
       const parentHierarchy = element.parent.hierarchy || [];
       const previousName = element.previous?.name || '';
@@ -58,13 +66,6 @@ export class ScriptDocumentTracker {
         diagnostic.source = 'X4CodeComplete';
         diagnostics.push(diagnostic);
         return;
-      }
-    }
-    if ((metadata.schema === aiScriptSchema && element.name === 'aiscript') || (metadata.schema === mdScriptSchema && element.name === 'mdscript')) {
-      const nameOfScript = element.attributes.find((attr) => attr.name === 'name')?.value || '';
-      if (metadata.name !== nameOfScript) {
-        metadata.name = nameOfScript;
-        scriptsMetadataUpdateName(document, metadata.name);
       }
     }
     // Validate element against XSD schema

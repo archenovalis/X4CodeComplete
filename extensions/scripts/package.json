@@ -36,10 +36,10 @@
       "type": "object",
       "title": "X4 Code Complete Settings",
       "properties": {
-        "x4CodeComplete.unpackedFileLocation": {
-          "type": "string",
-          "default": "",
-          "description": "Path to folder with vanilla extracted files"
+        "x4CodeComplete.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Verbose logging for debugging purposes. This will log detailed information and may degrade performance."
         },
         "x4CodeComplete.extensionsFolder": {
           "type": "string",
@@ -56,15 +56,20 @@
           "default": false,
           "description": "Show only preferred language in hover text"
         },
-        "x4CodeComplete.debug": {
-          "type": "boolean",
-          "default": false,
-          "description": "Verbose logging for debugging purposes. This will log detailed information and may degrade performance."
-        },
         "x4CodeComplete.reloadLanguageData": {
           "type": "boolean",
           "default": false,
           "description": "Reload language files (resets to false after reload). Useful for refreshing language files without restarting the extension."
+        },
+        "x4CodeComplete.unpackedFileLocation": {
+          "type": "string",
+          "default": "",
+          "description": "Path to folder with vanilla extracted files"
+        },
+        "x4CodeComplete.validateXmlStructure": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable XML structure validation and warnings (may impact performance)"
         }
       }
     }

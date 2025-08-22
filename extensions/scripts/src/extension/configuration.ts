@@ -28,6 +28,8 @@ export interface X4CodeCompleteConfig {
   limitLanguageOutput: boolean;
   /** Flag to trigger reloading of language data */
   reloadLanguageData: boolean;
+  /** Flag to validate XML structure */
+  validateXmlStructure: boolean;
 }
 
 // ================================================================================================
@@ -60,6 +62,8 @@ export interface ConfigChangeCallbacks {
   onExternalDefinitionsNeedToBeReloaded?: () => Promise<void>;
   /** Called when unpacked file location changes */
   onUnpackedFileLocationChanged?: () => Promise<void>;
+  /** Called when validateXmlStructure flag needs to be reset */
+  onValidateXmlStructureChanged?: () => Promise<void>;
 }
 
 // ================================================================================================
@@ -117,6 +121,7 @@ export class X4ConfigurationManager {
       languageNumber: '44',
       limitLanguageOutput: false,
       reloadLanguageData: false,
+      validateXmlStructure: false,
     };
   }
 
@@ -183,7 +188,7 @@ export class X4ConfigurationManager {
 
       if (previousValue !== value && scope !== undefined) {
         (result as any)[key] = { value, scope };
-        if ((key === 'debug' || key === 'limitLanguageOutput') && value && scope === vscode.ConfigurationTarget.Global) {
+        if ((key === 'debug' || key === 'limitLanguageOutput' || key === 'validateXmlStructure') && value && scope === vscode.ConfigurationTarget.Global) {
           section.update(key, value, scope);
         }
       }
@@ -230,6 +235,13 @@ export class X4ConfigurationManager {
       if (this._changeCallbacks.onDebugChanged) {
         this._config.debug = configurationChanged.debug?.value ?? false;
         this._changeCallbacks.onDebugChanged(this._config.debug);
+      }
+    }
+
+    if (changedKeys.includes('validateXmlStructure')) {
+      if (this._changeCallbacks.onValidateXmlStructureChanged) {
+        this._config.validateXmlStructure = configurationChanged.validateXmlStructure?.value ?? false;
+        this._changeCallbacks.onValidateXmlStructureChanged();
       }
     }
 
