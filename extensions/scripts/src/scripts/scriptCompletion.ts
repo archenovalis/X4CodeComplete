@@ -7,6 +7,7 @@ import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptRef
 import { variableTracker, ScriptVariableAtPosition } from './scriptVariables';
 import { getNearestBreakSymbolIndexForExpressions, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
 import { logger } from '../logger/logger';
+import { scriptDocumentTracker } from './scriptDocumentTracker';
 
 export type CompletionsMap = Map<string, vscode.CompletionItem>;
 
@@ -21,15 +22,11 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     ['value', vscode.CompletionItemKind.Value],
   ]);
 
-  private processQueuedDocumentChanges: () => void;
-
   constructor() {
     return;
   }
 
-  init(processQueuedDocumentChanges: () => void) {
-    this.processQueuedDocumentChanges = processQueuedDocumentChanges;
-  }
+  init() {}
 
   private static getType(type: string): vscode.CompletionItemKind {
     return this.completionTypes.get(type) || vscode.CompletionItemKind.Text;
@@ -171,8 +168,8 @@ export class ScriptCompletion implements vscode.CompletionItemProvider {
     if (schema == '') {
       return ScriptCompletion.emptyCompletion; // Skip if the document is not valid
     }
-    if (context.triggerKind > vscode.CompletionTriggerKind.Invoke && this.processQueuedDocumentChanges) {
-      this.processQueuedDocumentChanges();
+    if (context.triggerKind > vscode.CompletionTriggerKind.Invoke) {
+      scriptDocumentTracker.trackScriptDocument(document);
     }
     const items = new Map<string, vscode.CompletionItem>();
     const currentLine = position.line;
