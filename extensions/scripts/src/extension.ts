@@ -59,7 +59,7 @@ import {
 import { variableTracker, VariableTracker } from './scripts/scriptVariables';
 import { scriptCompletion, ScriptCompletion } from './scripts/scriptCompletion';
 import { languageProcessor } from './languageFiles/languageFiles';
-import { scriptDocumentTracker } from './scripts/scriptDocumentTracker';
+import { scriptDocumentTracker, ScriptDocumentTracker } from './scripts/scriptDocumentTracker';
 import { isInsideSingleQuotedString, isSingleQuoteExclusion } from './scripts/scriptUtilities';
 import { log } from 'console';
 
@@ -442,19 +442,19 @@ export function activate(context: vscode.ExtensionContext) {
     logger.info('XSD schemas loaded successfully.');
 
     // Listen for editor changes to parse documents as they become active
-    disposables.push(
-      vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && scriptsMetadataSet(editor.document)) {
-          scriptDocumentTracker.trackScriptDocument(editor.document);
-        }
-      })
-    );
+    // disposables.push(
+    //   vscode.window.onDidChangeActiveTextEditor((editor) => {
+    //     if (editor && scriptsMetadataSet(editor.document)) {
+    //       scriptDocumentTracker.trackScriptDocument(editor.document);
+    //     }
+    //   })
+    // );
 
-    disposables.push(
-      vscode.window.onDidChangeVisibleTextEditors((editors) => {
-        logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
-      })
-    );
+    // disposables.push(
+    //   vscode.window.onDidChangeVisibleTextEditors((editors) => {
+    //     logger.debug(`Visible editors changed. Total visible editors: ${editors.length}`);
+    //   })
+    // );
 
     // Parse newly opened documents only if they become the active document
     disposables.push(
@@ -495,18 +495,14 @@ export function activate(context: vscode.ExtensionContext) {
             return input?.uri?.toString() === uri.toString();
           });
 
-        if (!stillOpenInTab) {
-          const scriptMetadata = scriptsMetadata.get(document);
-          if (scriptMetadata) {
+        const metadata = scriptsMetadata.get(document);
+        if (metadata) {
+          if (!stillOpenInTab) {
             diagnosticCollection.delete(uri);
-            scriptReferencedItemsRegistry.forEach((trackerInfo, itemType) => {
-              trackerInfo.tracker.clearItemsForDocument(document);
-            });
-            trackersWithExternalDefinitions.collectExternalDefinitionsForFile(scriptMetadata, document.uri.fsPath);
           }
+          ScriptDocumentTracker.clearTrackingData(document, metadata);
+          trackersWithExternalDefinitions.collectExternalDefinitionsForFile(metadata, document.uri.fsPath);
           logger.debug(`Removed cached data for document: ${uri.toString()}`);
-        } else {
-          logger.debug(`Skipped removing diagnostics for: ${uri.toString()} (still open in a tab)`);
         }
       })
     );
