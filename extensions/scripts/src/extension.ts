@@ -301,10 +301,9 @@ export function activate(context: vscode.ExtensionContext) {
               const attributeWithPosInValue = xmlTracker.attributeWithPosInValue(document, position, element);
               if (attributeWithPosInValue) {
                 // Check if cursor is on a variable
-                const variableDefinition = variableTracker.getVariableDefinition(document, position);
+                const variableDefinition: vscode.Location | undefined = variableTracker.getVariableDefinition(document, position);
                 if (variableDefinition) {
-                  logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variableDefinition.name}`);
-                  return variableDefinition.definition;
+                  return variableDefinition;
                 }
 
                 const attrValue = attributeWithPosInValue.value;
@@ -425,8 +424,8 @@ export function activate(context: vscode.ExtensionContext) {
                 const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
                 if (token.isCancellationRequested) return undefined;
                 if (variableAtPosition) {
-                  logger.debug(`Hovering over variable: ${variableAtPosition.variable.name}`);
-                  const hoverText = VariableTracker.getVariableDetails(variableAtPosition.variable);
+                  logger.debug(`Hovering over variable: ${variableAtPosition.name}`);
+                  const hoverText = VariableTracker.getVariableDetails(variableAtPosition);
                   return new vscode.Hover(hoverText, variableAtPosition.location.range);
                 }
 
@@ -714,11 +713,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Check if we're on a variable
-        const variableReferences = variableTracker.getVariableLocations(document, position);
+        const variableReferences: vscode.Location[] | undefined = variableTracker.getVariableLocations(document, position);
         if (variableReferences) {
-          logger.debug(`References found for variable: ${variableReferences.name}`);
-          return variableReferences.references;
+          return variableReferences;
         }
+
         for (const [itemType, trackerInfo] of scriptReferencedItemsRegistry) {
           if (token.isCancellationRequested) return undefined;
           if (trackerInfo.tracker.schema === schema) {

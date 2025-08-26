@@ -4,7 +4,7 @@ import { xmlTracker, XmlElement } from '../xml/xmlStructureTracker';
 import { getDocumentScriptType } from './scriptsMetadata';
 import { scriptProperties } from './scriptProperties';
 import { ScriptReferencedCompletion, checkReferencedItemAttributeType, scriptReferencedItemsRegistry } from './scriptReferencedItems';
-import { variableTracker, ScriptVariableAtPosition } from './scriptVariables';
+import { variableTracker } from './scriptVariables';
 import { getNearestBreakSymbolIndexForExpressions, isInsideSingleQuotedString, isSingleQuoteExclusion } from './scriptUtilities';
 import { logger } from '../logger/logger';
 import { scriptDocumentTracker } from './scriptDocumentTracker';

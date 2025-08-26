@@ -19,13 +19,13 @@ export interface ScriptVariableInfo {
 }
 
 class ScriptVariablesIndex {
-  private definitionIndex: IntervalTree<ScriptVariableAtPosition>;
-  private referenceIndex: IntervalTree<ScriptVariableAtPosition>;
+  private definitionIndex: IntervalTree<ScriptVariableWithLocation>;
+  private referenceIndex: IntervalTree<ScriptVariableWithLocation>;
   private list: Record<string, ScriptVariableInfo>;
 
   constructor() {
-    this.definitionIndex = new IntervalTree<ScriptVariableAtPosition>();
-    this.referenceIndex = new IntervalTree<ScriptVariableAtPosition>();
+    this.definitionIndex = new IntervalTree<ScriptVariableWithLocation>();
+    this.referenceIndex = new IntervalTree<ScriptVariableWithLocation>();
     this.list = {};
   }
 
@@ -44,7 +44,7 @@ class ScriptVariablesIndex {
     }
     current.definition = new vscode.Location(document.uri, range);
     const [start, end] = this.rangeToIndexes(document, range);
-    this.definitionIndex.insert(start, end, { variable: current, location: current.definition });
+    this.definitionIndex.insert(start, end, { ...current, location: current.definition });
   }
 
   public addReference(document: vscode.TextDocument, variable: ScriptVariableInfo, range: vscode.Range): void {
@@ -56,20 +56,20 @@ class ScriptVariablesIndex {
     }
     current.references.push(new vscode.Location(document.uri, range));
     const [start, end] = this.rangeToIndexes(document, range);
-    this.referenceIndex.insert(start, end, { variable: current, location: new vscode.Location(document.uri, range) });
+    this.referenceIndex.insert(start, end, { ...current, location: new vscode.Location(document.uri, range) });
   }
 
-  public getByDefinitionOffset(offset: number): ScriptVariableAtPosition | undefined {
+  public getByDefinitionOffset(offset: number): ScriptVariableWithLocation | undefined {
     const results = this.definitionIndex.search(offset, offset);
     return results.length > 0 ? results[0] : undefined;
   }
 
-  public getByReferenceOffset(offset: number): ScriptVariableAtPosition | undefined {
+  public getByReferenceOffset(offset: number): ScriptVariableWithLocation | undefined {
     const results = this.referenceIndex.search(offset, offset);
     return results.length > 0 ? results[0] : undefined;
   }
 
-  public findByPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | undefined {
+  public findByPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableWithLocation | undefined {
     const offset = document.offsetAt(position);
     const definitionResults = this.definitionIndex.search(offset, offset);
     if (definitionResults.length > 0) {
@@ -94,24 +94,11 @@ class ScriptVariablesIndex {
   }
 }
 
-type ScriptVariablesMap = Map<string, ScriptVariableInfo>;
-type ScriptVariablesPerType = Map<string, ScriptVariablesMap>;
 type ScriptVariablesPerDocument = WeakMap<vscode.TextDocument, ScriptVariablesIndex>;
 
-export type ScriptVariableAtPosition = {
-  variable: ScriptVariableInfo;
+export interface ScriptVariableWithLocation extends ScriptVariableInfo {
   location: vscode.Location;
-};
-
-export type ScriptVariableDefinition = {
-  name: string;
-  definition: vscode.Location;
-};
-
-export type ScriptVariableReferences = {
-  name: string;
-  references: vscode.Location[];
-};
+}
 
 const variableTypes = {
   normal: 'usual variable',
@@ -129,9 +116,8 @@ type ScopeInfo = {
   externalDefinitions: Set<string>;
 };
 
-export class ScopeParser {
-  // Implementation for scope parsing
-  public static tableKey: ScopeInfo = {
+export class VariableTracker {
+  private static tableKey: ScopeInfo = {
     name: 'tableKey',
     attributesPresented: new Set(),
     attributesExcluded: new Set(),
@@ -141,7 +127,8 @@ export class ScopeParser {
     topParent: true,
     externalDefinitions: new Set(),
   };
-  public static aiScriptScopes: ScopeInfo[] = [
+
+  private static aiScriptScopes: ScopeInfo[] = [
     {
       name: 'aiscript',
       attributesPresented: new Set(),
@@ -243,7 +230,8 @@ export class ScopeParser {
       externalDefinitions: new Set(['top-parent']),
     },
   ];
-  public static mdScriptScopes: ScopeInfo[] = [
+
+  private static mdScriptScopes: ScopeInfo[] = [
     {
       name: 'cue',
       attributesPresented: new Set(),
@@ -255,9 +243,7 @@ export class ScopeParser {
       externalDefinitions: new Set(),
     },
   ];
-}
 
-export class VariableTracker {
   // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
   documentVariables: ScriptVariablesPerDocument = new WeakMap<vscode.TextDocument, ScriptVariablesIndex>();
 
@@ -286,9 +272,9 @@ export class VariableTracker {
       schema: schema,
       type: type,
       references: [],
-      scope: schema === aiScriptSchema ? ScopeParser.aiScriptScopes[0] : ScopeParser.mdScriptScopes[0],
+      scope: schema === aiScriptSchema ? VariableTracker.aiScriptScopes[0] : VariableTracker.mdScriptScopes[0],
     };
-    if (type === 'tableKey') variable.scope = ScopeParser.tableKey;
+    if (type === 'tableKey') variable.scope = VariableTracker.tableKey;
     if (isDefinition) {
       variablesIndex.addDefinition(document, variable, range);
     } else {
@@ -320,7 +306,7 @@ export class VariableTracker {
     // }
   }
 
-  public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableAtPosition | undefined {
+  public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableWithLocation | undefined {
     // Navigate through the map levels
     const variablesIndex = this.documentVariables.get(document);
     if (!variablesIndex) return undefined;
@@ -328,23 +314,26 @@ export class VariableTracker {
     return variablesIndex.findByPosition(document, position);
   }
 
-  public getVariableDefinition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableDefinition | undefined {
-    const variable = this.getVariableAtPosition(document, position);
+  public getVariableDefinition(document: vscode.TextDocument, position: vscode.Position, variable?: ScriptVariableWithLocation): vscode.Location | undefined {
+    if (!variable) variable = this.getVariableAtPosition(document, position);
     if (!variable) return undefined;
 
-    return { name: variable.variable.name, definition: variable.variable.definition };
+    logger.debug(`Variable definition found at position: ${position.line + 1}:${position.character} for variable: ${variable.name}`);
+
+    return variable.definition;
   }
 
-  public getVariableLocations(document: vscode.TextDocument, position: vscode.Position): ScriptVariableReferences | undefined {
-    const variable = this.getVariableAtPosition(document, position);
+  public getVariableLocations(document: vscode.TextDocument, position: vscode.Position, variable?: ScriptVariableWithLocation): vscode.Location[] | undefined {
+    if (!variable) variable = this.getVariableAtPosition(document, position);
     if (!variable) return undefined;
 
-    const references = [...variable.variable.references];
-    if (variable.variable.definition) {
-      references.unshift(variable.variable.definition);
+    logger.debug(`References found for variable: ${variable.name}`);
+    const references = [...variable.references];
+    if (variable.definition) {
+      references.unshift(variable.definition);
     }
 
-    return { name: variable.variable.name, references: references };
+    return references;
   }
 
   public updateVariableName(
@@ -359,13 +348,9 @@ export class VariableTracker {
 
     const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
     if (variableAtPosition) {
-      const variableName = variableAtPosition.variable.name;
-      const variableType = variableAtPosition.variable.type;
-      const locations = variableAtPosition.variable.references;
-      if (variableAtPosition.variable.definition) {
-        // If the variable has a definition, use its range for the rename
-        locations.unshift(variableAtPosition.variable.definition);
-      }
+      const variableName = variableAtPosition.name;
+      const variableType = variableAtPosition.type;
+      const locations = this.getVariableLocations(document, position, variableAtPosition);
 
       // Debug log: Print old name, new name, and locations
       logger.debug(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
