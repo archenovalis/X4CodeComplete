@@ -160,7 +160,7 @@ export class ScriptDocumentTracker {
 
           // Special handling for parameter definitions in AI scripts
           if (
-            metadata.schema === aiScriptSchema &&
+            // metadata.schema === aiScriptSchema &&
             element.name === 'param' &&
             attr.name === 'name' &&
             element.hierarchy.length > 0 &&

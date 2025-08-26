@@ -117,6 +117,7 @@
   },
   "dependencies": {
     "@xmldom/xmldom": "~0.9.8",
+    "node-interval-tree": "^2.1.2",
     "sax": "^1.4.1",
     "winston": "^3.17.0",
     "winston-transport-vscode": "^0.1.0",

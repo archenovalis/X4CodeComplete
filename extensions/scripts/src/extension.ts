@@ -743,34 +743,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (schema == '') {
           return undefined; // Skip if the document is not valid
         }
-        const variableAtPosition = variableTracker.getVariableAtPosition(document, position);
-        if (variableAtPosition) {
-          const variableName = variableAtPosition.variable.name;
-          const variableType = variableAtPosition.variable.type;
-          const locations = variableAtPosition.variable.locations;
-          if (variableAtPosition.variable.definition) {
-            // If the variable has a definition, use its range for the rename
-            locations.unshift(variableAtPosition.variable.definition);
-          }
-
-          // Debug log: Print old name, new name, and locations
-          logger.debug(`Renaming variable: ${variableName} -> ${newName}`); // Updated to use variableAtPosition[0]
-          logger.debug(`Variable type: ${variableType}`);
-          logger.debug(`Locations to update:`, locations);
-          const workspaceEdit = new vscode.WorkspaceEdit();
-          locations.forEach((location) => {
-            if (token.isCancellationRequested) return;
-            // Debug log: Print each edit
-            const rangeText = location.range ? document.getText(location.range) : '';
-            const replacementText = rangeText.startsWith('$') ? `$${newName}` : newName;
-            logger.debug(`Editing file: ${location.uri.fsPath}, Range: ${location.range}, Old Text: ${rangeText}, New Text: ${replacementText}`);
-            workspaceEdit.replace(location.uri, location.range, replacementText);
-          });
-
-          // Update the tracker with the new name
-          variableTracker.updateVariableName(variableType, variableName, newName, document);
-
-          return workspaceEdit;
+        const edit: vscode.WorkspaceEdit | undefined = variableTracker.updateVariableName(document, position, newName, token);
+        if (edit) {
+          return edit;
         }
 
         // Debug log: No variable name found
