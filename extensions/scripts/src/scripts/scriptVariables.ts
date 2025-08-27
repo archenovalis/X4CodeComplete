@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
-import { aiScriptSchema, getDocumentScriptType, scriptIdDescription } from './scriptsMetadata';
-import { XmlElement } from '../xml/xmlStructureTracker';
+import { aiScriptSchema, getDocumentScriptType, mdScriptSchema, scriptIdDescription } from './scriptsMetadata';
+import { XmlElement, XmlElementAttribute } from '../xml/xmlStructureTracker';
 import IntervalTree from 'node-interval-tree';
+import { EnhancedAttributeInfo } from 'xsd-lookup';
+import { lValueTypes } from '../extension/shared';
+import path from 'path/win32';
 
 /** Regular expressions and constants for pattern matching */
 export const variablePattern = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
@@ -12,21 +15,35 @@ export interface ScriptVariableInfo {
   name: string;
   schema: string;
   type: string;
-  scope: ScopeInfo;
+  scope: string;
+  definitionPath: string;
+  definedBy?: XmlElement;
+  removedBy?: XmlElement;
+  validIn?: XmlElement;
   definition?: vscode.Location;
   definitionPriority?: number;
   references: vscode.Location[];
 }
+export interface ScriptVariableWithLocation extends ScriptVariableInfo {
+  location: vscode.Location;
+}
+
+interface ScriptVariableAndLocation {
+  variable: ScriptVariableInfo;
+  location: vscode.Location;
+}
 
 class ScriptVariablesIndex {
-  private definitionIndex: IntervalTree<ScriptVariableWithLocation>;
-  private referenceIndex: IntervalTree<ScriptVariableWithLocation>;
+  private definitionIndex: IntervalTree<ScriptVariableAndLocation>;
+  private referenceIndex: IntervalTree<ScriptVariableAndLocation>;
   private list: Record<string, ScriptVariableInfo>;
+  private scopePaths: Record<string, Set<string>>;
 
   constructor() {
-    this.definitionIndex = new IntervalTree<ScriptVariableWithLocation>();
-    this.referenceIndex = new IntervalTree<ScriptVariableWithLocation>();
+    this.definitionIndex = new IntervalTree<ScriptVariableAndLocation>();
+    this.referenceIndex = new IntervalTree<ScriptVariableAndLocation>();
     this.list = {};
+    this.scopePaths = {};
   }
 
   private rangeToIndexes(document: vscode.TextDocument, range: vscode.Range): [number, number] {
@@ -35,48 +52,90 @@ class ScriptVariablesIndex {
     return [startOffset, endOffset];
   }
 
-  public addDefinition(document: vscode.TextDocument, variable: ScriptVariableInfo, range: vscode.Range): void {
-    const key: string = `${variable.scope.name}:${variable.name}`;
-    let current: ScriptVariableInfo | undefined = this.list[key];
-    if (!current) {
-      current = variable;
-      this.list[key] = variable;
+  public addVariable(
+    schema: string,
+    document: vscode.TextDocument,
+    variable: ScriptVariableInfo,
+    range: vscode.Range,
+    scopeKey: string,
+    scope: ScopeInfo,
+    elem: XmlElement,
+    isDefinition: boolean
+  ): void {
+    let existing: ScriptVariableInfo | undefined;
+    let key: string | undefined;
+    let path: string | undefined;
+    if (scope.externalDefinitions && scope.externalDefinitions.size > 0) {
+      for (const scopeId of scope.externalDefinitions) {
+        const paths = this.scopePaths[scopeId] || [];
+        for (path of paths) {
+          key = `${variable.name}:${path}`;
+          existing = this.list[key] as ScriptVariableWithLocation | undefined;
+          if (existing) {
+            break;
+          }
+        }
+        if (existing) {
+          break;
+        }
+      }
     }
-    current.definition = new vscode.Location(document.uri, range);
-    const [start, end] = this.rangeToIndexes(document, range);
-    this.definitionIndex.insert(start, end, { ...current, location: current.definition });
-  }
-
-  public addReference(document: vscode.TextDocument, variable: ScriptVariableInfo, range: vscode.Range): void {
-    const key: string = `${variable.scope.name}:${variable.name}`;
-    let current: ScriptVariableInfo | undefined = this.list[key];
-    if (!current) {
-      current = variable;
-      this.list[key] = variable;
+    if (!existing) {
+      path = elem ? VariableTracker.makeScopePath(schema, elem) : scopeKey;
+      key = `${variable.name}:${path}`;
+      existing = this.list[key] as ScriptVariableWithLocation | undefined;
     }
-    current.references.push(new vscode.Location(document.uri, range));
-    const [start, end] = this.rangeToIndexes(document, range);
-    this.referenceIndex.insert(start, end, { ...current, location: new vscode.Location(document.uri, range) });
+    let addScopePath: string | undefined;
+    if (!existing || (isDefinition && !existing.definition)) {
+      if (!existing) {
+        variable.definitionPath = path;
+        variable.scope = scopeKey;
+        this.list[key] = variable;
+        existing = variable;
+        addScopePath = path;
+      } else if (isDefinition && existing.definitionPath !== path) {
+        delete this.list[`${existing.name}:${existing.definitionPath}`];
+        this.list[`${existing.name}:${path}`] = existing;
+        addScopePath = path;
+        existing.definitionPath = path;
+        existing.scope = scopeKey;
+      }
+    }
+    if (isDefinition && (!existing || !existing.definition)) {
+      existing.definition = new vscode.Location(document.uri, range);
+      const [start, end] = this.rangeToIndexes(document, range);
+      this.definitionIndex.insert(start, end, { variable: existing, location: existing.definition });
+    } else {
+      existing.references.push(new vscode.Location(document.uri, range));
+      const [start, end] = this.rangeToIndexes(document, range);
+      this.referenceIndex.insert(start, end, { variable: existing, location: new vscode.Location(document.uri, range) });
+    }
+    if (addScopePath) {
+      if (!this.scopePaths[scopeKey]) {
+        this.scopePaths[scopeKey] = new Set<string>();
+      }
+      this.scopePaths[scopeKey].add(addScopePath);
+    }
   }
 
   public getByDefinitionOffset(offset: number): ScriptVariableWithLocation | undefined {
     const results = this.definitionIndex.search(offset, offset);
-    return results.length > 0 ? results[0] : undefined;
+    return results.length > 0 ? { ...results[0].variable, location: results[0].location } : undefined;
   }
 
   public getByReferenceOffset(offset: number): ScriptVariableWithLocation | undefined {
     const results = this.referenceIndex.search(offset, offset);
-    return results.length > 0 ? results[0] : undefined;
+    return results.length > 0 ? { ...results[0].variable, location: results[0].location } : undefined;
   }
 
   public findByPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableWithLocation | undefined {
     const offset = document.offsetAt(position);
     const definitionResults = this.definitionIndex.search(offset, offset);
     if (definitionResults.length > 0) {
-      return definitionResults[0];
+      return { ...definitionResults[0].variable, location: definitionResults[0].location };
     }
     const referenceResults = this.referenceIndex.search(offset, offset);
-    return referenceResults.length > 0 ? referenceResults[0] : undefined;
+    return referenceResults.length > 0 ? { ...referenceResults[0].variable, location: referenceResults[0].location } : undefined;
   }
 
   public getAllVariables(): ScriptVariableInfo[] {
@@ -84,8 +143,8 @@ class ScriptVariablesIndex {
   }
 
   public renameVariable(variable: ScriptVariableInfo, newName: string): void {
-    const oldKey = `${variable.scope.name}:${variable.name}`;
-    const newKey = `${variable.scope.name}:${newName}`;
+    const oldKey = `${variable.definitionPath}:${variable.name}`;
+    const newKey = `${variable.definitionPath}:${newName}`;
     if (this.list[oldKey]) {
       variable.name = newName;
       this.list[newKey] = variable;
@@ -96,10 +155,6 @@ class ScriptVariablesIndex {
 
 type ScriptVariablesPerDocument = WeakMap<vscode.TextDocument, ScriptVariablesIndex>;
 
-export interface ScriptVariableWithLocation extends ScriptVariableInfo {
-  location: vscode.Location;
-}
-
 const variableTypes = {
   normal: 'usual variable',
   tableKey: 'remote or table variable',
@@ -107,12 +162,16 @@ const variableTypes = {
 
 type ScopeInfo = {
   name: string;
-  attributesPresented: Set<string>;
-  attributesExcluded: Set<string>;
+  attributesPresented?: Set<string>;
+  attributesExcluded?: Set<string>;
   priority: number;
   parent?: string;
   asScope?: string;
+  exactScopeIndex?: number;
+  shortPath?: boolean;
   topParent?: boolean;
+  inlineScope?: string;
+  pathAttribute?: string;
   externalDefinitions: Set<string>;
 };
 
@@ -122,127 +181,122 @@ export class VariableTracker {
     attributesPresented: new Set(),
     attributesExcluded: new Set(),
     priority: 0,
-    parent: undefined,
     asScope: undefined,
     topParent: true,
+    inlineScope: undefined,
     externalDefinitions: new Set(),
   };
 
-  private static aiScriptScopes: ScopeInfo[] = [
-    {
+  private static aiScriptScopes: Record<string, ScopeInfo> = {
+    aiscript: {
       name: 'aiscript',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
       priority: 100,
-      parent: undefined,
-      asScope: undefined,
+      asScope: 'self',
       topParent: true,
       externalDefinitions: new Set(),
     },
-    {
-      name: 'params',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
+    params: {
+      name: 'param',
+      parent: 'params',
       priority: 0,
-      parent: undefined,
-      asScope: 'aiscript',
+      asScope: 'self',
       topParent: false,
       externalDefinitions: new Set(),
     },
-    {
+    order: {
+      name: 'order',
+      priority: 0,
+      asScope: 'self',
+      topParent: true,
+      externalDefinitions: new Set(['params']),
+    },
+    init: {
       name: 'init',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
       priority: 10,
-      parent: undefined,
-      asScope: 'aiscript',
-      topParent: false,
+      asScope: 'self',
+      topParent: true,
       externalDefinitions: new Set(),
     },
-    {
+    handler: {
+      name: 'handler',
+      attributesExcluded: new Set(['name', 'ref']),
+      priority: 200,
+      asScope: 'self',
+      topParent: true,
+      externalDefinitions: new Set(['params', 'init', 'attention', 'any']),
+    },
+    handlerNamed: {
       name: 'handler',
       attributesPresented: new Set(['name']),
-      attributesExcluded: new Set(),
+      pathAttribute: 'name',
       priority: 200,
-      parent: undefined,
-      asScope: undefined,
+      asScope: 'self',
       topParent: true,
-      externalDefinitions: new Set(['any', 'aiscript']),
+      externalDefinitions: new Set(['params', 'init', 'attention', 'any']),
     },
-    {
+    actions: {
       name: 'actions',
       attributesPresented: new Set(['name']),
-      attributesExcluded: new Set(),
+      pathAttribute: 'name',
       priority: 200,
-      parent: undefined,
-      asScope: undefined,
+      asScope: 'self',
+      parent: 'library',
       topParent: true,
-      externalDefinitions: new Set(['any', 'aiscript']),
+      externalDefinitions: new Set(['params', 'init', 'attention', 'any']),
     },
-    {
-      name: 'actions',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(['name']),
+    attention: {
+      name: 'attention',
+      pathAttribute: 'min',
       priority: 100,
-      parent: undefined,
-      asScope: 'aiscript',
-      topParent: false,
-      externalDefinitions: new Set(),
+      asScope: 'self',
+      topParent: true,
+      externalDefinitions: new Set(['params', 'init', 'actions', 'any']),
     },
-    {
+    do_all: {
       name: 'do_all',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
       priority: 150,
-      parent: undefined,
-      asScope: undefined,
-      topParent: false,
-      externalDefinitions: new Set(['top-parent']),
-    },
-    {
-      name: 'do_for_each',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
-      priority: 150,
-      parent: undefined,
-      asScope: undefined,
-      topParent: false,
-      externalDefinitions: new Set(['top-parent']),
-    },
-    {
-      name: 'do_any',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
-      priority: 150,
-      parent: undefined,
-      asScope: undefined,
-      topParent: false,
+      asScope: 'top-parent',
+      inlineScope: 'self',
       externalDefinitions: new Set(),
     },
-    {
-      name: 'do_while',
-      attributesPresented: new Set(),
-      attributesExcluded: new Set(),
+    do_for_each: {
+      name: 'do_for_each',
       priority: 150,
-      parent: undefined,
-      asScope: 'parent',
-      topParent: false,
-      externalDefinitions: new Set(['top-parent']),
+      asScope: 'top-parent',
+      inlineScope: 'self',
+      externalDefinitions: new Set(),
     },
-  ];
+    do_any: {
+      name: 'do_any',
+      priority: 150,
+      asScope: 'top-parent',
+      inlineScope: 'self',
+      externalDefinitions: new Set(),
+    },
+    do_while: {
+      name: 'do_while',
+      priority: 150,
+      asScope: 'top-parent',
+      inlineScope: 'self',
+      externalDefinitions: new Set(),
+    },
+  };
 
-  private static mdScriptScopes: ScopeInfo[] = [
-    {
+  private static aiScriptScopesKeys: string[] = Object.keys(VariableTracker.aiScriptScopes).sort();
+
+  private static mdScriptScopes: Record<string, ScopeInfo> = {
+    cue: {
       name: 'cue',
       attributesPresented: new Set(),
       attributesExcluded: new Set(),
       priority: 100,
-      parent: undefined,
-      asScope: undefined,
+      asScope: 'self',
       topParent: true,
       externalDefinitions: new Set(),
     },
-  ];
+  };
+
+  private static mdScriptScopesKeys: string[] = Object.keys(VariableTracker.mdScriptScopes).sort();
 
   // Map to store variables per document: Map<scriptType, Map<DocumentURI, Map<variablesType, Map<variableName, {...}>>>>
   documentVariables: ScriptVariablesPerDocument = new WeakMap<vscode.TextDocument, ScriptVariablesIndex>();
@@ -253,9 +307,8 @@ export class VariableTracker {
     schema: string,
     document: vscode.TextDocument,
     range: vscode.Range,
-    isDefinition: boolean = false,
-    definitionPriority?: number,
-    element?: XmlElement
+    attribute?: XmlElementAttribute,
+    attributeDefinition?: EnhancedAttributeInfo
   ): void {
     const normalizedName = name.startsWith('$') ? name.substring(1) : name;
 
@@ -267,43 +320,130 @@ export class VariableTracker {
     } else {
       variablesIndex = this.documentVariables.get(document)!;
     }
-    const variable = {
+    const element: XmlElement = attribute.element;
+    const variable: ScriptVariableInfo = {
       name: normalizedName,
       schema: schema,
+      definitionPath: '',
       type: type,
       references: [],
-      scope: schema === aiScriptSchema ? VariableTracker.aiScriptScopes[0] : VariableTracker.mdScriptScopes[0],
+      scope: '',
     };
-    if (type === 'tableKey') variable.scope = VariableTracker.tableKey;
-    if (isDefinition) {
-      variablesIndex.addDefinition(document, variable, range);
-    } else {
-      variablesIndex.addReference(document, variable, range);
+    let isDefinition: boolean = VariableTracker.isDefinition(attribute, element, attributeDefinition);
+    if (isDefinition && element.name === 'remove_value') {
+      isDefinition = false;
     }
+    if (type === 'tableKey') {
+      variablesIndex.addVariable(schema, document, variable, range, 'table', VariableTracker.tableKey, undefined, isDefinition);
+    } else {
+      // if (element.name === 'remove_value') {
+      //   variable.removedBy = element;
+      // }
+      const { key, scope, elem } = this.processVariableScope(schema, element, isDefinition);
+      variablesIndex.addVariable(schema, document, variable, range, key, scope, elem, isDefinition);
+    }
+  }
 
-    // // Get or create the variable type level
-    // if (!variablesIndex.has(type)) {
-    //   variablesIndex.set(type, new Map());
-    // }
-    // const typeMap = variablesIndex.get(type)!;
+  private static isDefinition(attribute: XmlElementAttribute, element: XmlElement, attributeDefinition: EnhancedAttributeInfo): boolean {
+    // Check if the attribute is a definition based on its definition info
+    if (element.name === 'param' && attribute.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
+      return true;
+    } else if (lValueTypes.includes(attributeDefinition?.type || '')) {
+      return true;
+    }
+    return false;
+  }
 
-    // // Get or create the variable name level
-    // if (!typeMap.has(normalizedName)) {
-    //   typeMap.set(normalizedName, { name: normalizedName, schema: schema, type: type, references: [], scope: new ScopeInfo() });
-    // }
-    // const variableData = typeMap.get(normalizedName)!;
+  private static getScopeWithKey(schema: string, elem: XmlElement): { key: string | undefined; scope: ScopeInfo | undefined } {
+    let scopeKey: string | undefined;
 
-    // // Add to locations
-    // variableData.references.push(new vscode.Location(document.uri, range));
+    const scopes = schema === aiScriptSchema ? this.aiScriptScopes : this.mdScriptScopes;
+    const scopesKeys = schema === aiScriptSchema ? this.aiScriptScopesKeys : this.mdScriptScopesKeys;
 
-    // // Handle definition if this is marked as one
-    // if (isDefinition && definitionPriority !== undefined) {
-    //   // Only set definition if we don't have one, or if this has higher priority (lower number = higher priority)
-    //   if (!variableData.definition || !variableData.definitionPriority || definitionPriority < variableData.definitionPriority) {
-    //     variableData.definition = new vscode.Location(document.uri, range);
-    //     variableData.definitionPriority = definitionPriority;
-    //   }
-    // }
+    for (const key of scopesKeys) {
+      const scope = scopes[key];
+
+      // 1. Name must match
+      if (scope.name !== elem.name) continue;
+
+      // 2. If attributesPresented is defined, at least one must match
+      if (scope.attributesPresented && !elem.attributes.some((a) => scope.attributesPresented!.has(a.name))) continue;
+
+      // 3. If attributesExcluded is defined, none may match
+      if (scope.attributesExcluded && elem.attributes.some((a) => scope.attributesExcluded!.has(a.name))) continue;
+
+      // 4. Parent logic: undefined or positive/negated match
+      const parentName = elem.parent?.name;
+      if (scope.parent !== undefined) {
+        const negated = scope.parent[0] === '!';
+        const target = negated ? scope.parent.slice(1) : scope.parent;
+        if (negated ? parentName === target : parentName !== target) {
+          continue;
+        }
+      }
+
+      // Found a matching key → assign and break out
+      scopeKey = key;
+      break;
+    }
+    return { key: scopeKey, scope: scopes[scopeKey || ''] };
+  }
+
+  public static makeScopePath(schema: string, element: XmlElement): string {
+    let path = '';
+    while (element) {
+      path += `${path ? '.' : ''}${element.name}`;
+      const { key: _key, scope } = VariableTracker.getScopeWithKey(schema, element);
+      if (scope) {
+        if (scope.pathAttribute) {
+          const attribute = element.attributes.find((a) => a.name === scope.pathAttribute);
+          if (attribute) {
+            path += `(${scope.pathAttribute}="${attribute.value || ''}")`;
+          }
+        }
+        if (scope.topParent) {
+          break;
+        }
+      }
+      element = element.parent;
+    }
+    return path;
+  }
+
+  private processVariableScope(schema: string, element: XmlElement, isDefinition: boolean): { key: string; scope: ScopeInfo; elem: XmlElement } {
+    const scopes = schema === aiScriptSchema ? VariableTracker.aiScriptScopes : VariableTracker.mdScriptScopes;
+    let scope: ScopeInfo | undefined;
+    let elem: XmlElement | undefined = element;
+    let breakOnTopParent = false;
+    let scopeKey: string | undefined;
+    while (elem) {
+      if (!scope) {
+        const { key, scope: foundScope } = VariableTracker.getScopeWithKey(schema, elem);
+        scopeKey = key;
+        scope = foundScope;
+      }
+      if (scope && elem.name === scope.name) {
+        if (isDefinition && elem === element && scope.inlineScope) {
+          break;
+        }
+        if (scope.asScope === 'top-parent') {
+          breakOnTopParent = true;
+        } else if (scope.asScope === 'self') {
+          break;
+        } else if (scope.asScope) {
+          scopeKey = scope.asScope;
+          scope = scopes[scopeKey];
+          elem = elem.parent;
+          continue;
+        }
+        if (breakOnTopParent && scope.topParent) {
+          break;
+        }
+      }
+      elem = elem.parent;
+      scope = undefined;
+    }
+    return { key: scopeKey, scope, elem };
   }
 
   public getVariableAtPosition(document: vscode.TextDocument, position: vscode.Position): ScriptVariableWithLocation | undefined {

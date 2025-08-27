@@ -159,43 +159,21 @@ export class ScriptDocumentTracker {
           }
 
           // Special handling for parameter definitions in AI scripts
-          if (
-            // metadata.schema === aiScriptSchema &&
-            element.name === 'param' &&
-            attr.name === 'name' &&
-            element.hierarchy.length > 0 &&
-            element.hierarchy[0] === 'params'
-          ) {
+          if (element.name === 'param' && attr.name === 'name' && element.hierarchy.length > 0 && element.hierarchy[0] === 'params') {
             variableTracker.addVariable(
               'normal',
               attrValue,
               metadata.schema,
               document,
               new vscode.Range(attr.valueRange.start, attr.valueRange.end),
-              true, // isDefinition
-              0
+              attr,
+              attrDefinition
             );
           }
 
           // Process variables within attribute values
           const tableIsFound = tableKeyPattern.test(attrValue);
           let match: RegExpExecArray | null;
-          let priority = -1;
-
-          // Determine variable definition priority based on script section
-          const isLValueAttribute: boolean = lValueTypes.includes(attrDefinition?.type || '');
-          if (metadata.schema === aiScriptSchema && isLValueAttribute) {
-            if (element.hierarchy.includes('library')) {
-              priority = 10;
-            } else if (element.hierarchy.includes('init')) {
-              priority = 20;
-            } else if (element.hierarchy.includes('patch')) {
-              priority = 30;
-            } else if (element.hierarchy.includes('attention')) {
-              priority = 40;
-            }
-          }
-
           // Find and track all variables in the attribute value
           while ((match = variablePattern.exec(attrValue)) !== null) {
             const variableName = match[1];
@@ -212,22 +190,8 @@ export class ScriptDocumentTracker {
               // !TODO: handle real MD remote variables
             }
             const variableRange = new vscode.Range(start, end);
-
-            if (end.isEqual(attr.valueRange.end) && priority >= 0) {
-              // This is a variable definition
-              variableTracker.addVariable(
-                variableType,
-                variableName,
-                metadata.schema,
-                document,
-                variableRange,
-                true, // isDefinition
-                priority
-              );
-            } else {
-              // This is a variable reference
-              variableTracker.addVariable(variableType, variableName, metadata.schema, document, variableRange);
-            }
+            // This is a variable definition
+            variableTracker.addVariable(variableType, variableName, metadata.schema, document, variableRange, attr, attrDefinition);
           }
         }
       });
