@@ -217,6 +217,15 @@ export class VariableTracker {
       topParent: true,
       externalDefinitions: new Set(),
     },
+    patch: {
+      name: 'patch',
+      priority: 0,
+      asScope: 'self',
+      topParent: true,
+      parent: 'aiscript',
+      pathAttribute: 'sinceversion',
+      externalDefinitions: new Set(['params', 'init', 'attention']),
+    },
     handler: {
       name: 'handler',
       attributesExcluded: new Set(['name', 'ref']),
