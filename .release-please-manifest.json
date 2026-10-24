@@ -1,6 +1,6 @@
 {
  "extensions/lua": "1.1.1",
  "extensions/lua-FILLER": "0.0.0",
- "extensions/scripts": "1.5.4",
+ "extensions/scripts": "1.6.0",
  "extensions/scripts-FILLER": "0.0.0"
 }
