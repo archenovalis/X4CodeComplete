@@ -7,7 +7,7 @@ import { scriptProperties } from './scriptProperties';
 import * as sax from 'sax';
 import path, { parse } from 'path';
 import fs from 'fs';
-import { aiScriptSchema, mdScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
+import { aiScriptSchema, mdScriptSchema, libScriptSchema, scriptsSchemas, getMetadata, getDocumentMetadata, ScriptMetadata } from './scriptsMetadata';
 
 export interface ScriptReferencedItemInfo {
   name: string;
@@ -34,7 +34,7 @@ export interface ScriptReferencedItemsReferences {
   references: vscode.Location[];
 }
 
-export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include';
+export type ScriptReferencedItemTypeId = 'label' | 'actions' | 'handler' | 'cue' | 'library_run' | 'library_include' | 'job';
 export type ScriptReferencedItemClassId = 'basic' | 'external' | 'mdscript' | 'cue';
 type ScriptReferencedDetailsType = 'full' | 'hover' | 'external' | 'definition' | 'reference';
 interface ScriptReferencedItemOptions {
@@ -107,6 +107,7 @@ const scriptReferencedItemType: ScriptReferencedItemType = new Map([
   ],
   ['library_run', { type: 'library_run', name: 'Library run Action', class: 'mdscript', schema: mdScriptSchema }],
   ['library_include', { type: 'library_include', name: 'Library include Action', class: 'mdscript', schema: mdScriptSchema }],
+  ['job', { type: 'job', name: 'Job', class: 'external', schema: libScriptSchema, options: { skipNotUsed: true } }],
 ]);
 
 const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
@@ -138,6 +139,8 @@ const scriptReferencedItemsDetectionList: ScriptReferencedItemsDetectionList = [
     filters: [{ attribute: 'purpose', value: 'run_actions', presented: false }],
   },
   { element: 'include_actions', attribute: 'ref', type: 'library_include', class: 'reference' },
+  { element: 'job', attribute: 'id', type: 'job', class: 'definition', noCompletion: true },
+  { element: '*', attribute: 'job', type: 'job', class: 'reference' },
 ];
 
 export const scriptReferencedItemsRegistry: ScriptReferencedItemsRegistry = new Map();

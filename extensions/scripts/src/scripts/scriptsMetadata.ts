@@ -42,17 +42,21 @@ export function scriptsMetadataClearAll(): void {
 const schemaKeyId = 'xsi:noNamespaceSchemaLocation'.toLowerCase();
 export const aiScriptSchema = 'aiscripts';
 export const mdScriptSchema = 'md';
+export const libScriptSchema = 'libraries';
 const aiScriptNodeName = 'aiscript';
 const mdScriptNodeName = 'mdscript';
+const jobScriptNodeName = 'jobs';
 const nodeNameToSchema = {
   [aiScriptNodeName]: aiScriptSchema,
   [mdScriptNodeName]: mdScriptSchema,
+  [jobScriptNodeName]: libScriptSchema,
 };
 const keysIds = Object.keys(nodeNameToSchema);
 export const scriptsSchemas = Object.values(nodeNameToSchema);
 export const scriptIdDescription = {
   aiscripts: 'AI Script',
   md: 'Mission Director Script',
+  jobs: 'Root element of jobs.xml',
 };
 
 function getFirstNode(xml: string): sax.Tag | sax.QualifiedTag | undefined {
